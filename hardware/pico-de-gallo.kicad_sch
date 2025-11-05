@@ -3,7 +3,17 @@
 	(generator "eeschema")
 	(generator_version "9.0")
 	(uuid "409a2a34-92f9-4daa-b11b-cb64dd13f272")
-	(paper "A4")
+	(paper "USLetter")
+	(title_block
+		(title "${PROJECT}")
+		(date "2025-08-29")
+		(rev "${REVISION}")
+		(company "${COMPANY}")
+		(comment 1 "Designed by: ${AUTHOR}")
+		(comment 2 "https://creativecommons.org/licenses/by-sa/4.0/")
+		(comment 3 "Attribution Share-Alike 4.0 License")
+		(comment 4 "Released under the Creative Commons")
+	)
 	(lib_symbols
 		(symbol "Connector_Generic:Conn_01x02"
 			(pin_names
