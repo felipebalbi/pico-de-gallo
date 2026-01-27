@@ -167,7 +167,7 @@ latest Firmware. In order to do so, we download the latest
 page from our [Github
 repository](https://github.com/OpenDevicePartnership/pico-de-gallo). At
 the time of this writing, that is [Fimware
-v0.4.1](https://github.com/OpenDevicePartnership/pico-de-gallo/releases/tag/firmware-v0.4.1).
+v0.5.0](https://github.com/OpenDevicePartnership/pico-de-gallo/releases/tag/firmware-v0.5.0).
 
 It's very easy to update firmware on *Pico de Gallo*, simply:
 
@@ -196,7 +196,7 @@ Once you have the correct binary, run the `version` command:
 
 ```console
 $ gallo version
-Pico de Gallo FW v0.4.1
+Pico de Gallo FW v0.5.0
 ```
 
 Success 🎉. With this completed we can get familiarized with the other
