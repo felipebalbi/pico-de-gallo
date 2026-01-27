@@ -39,6 +39,8 @@ pub enum Status {
     SetConfigFailed = -13,
     /// Version failed
     VersionFailed = -14,
+    /// I2c Write Read failed
+    I2cWriteReadFailed = -15,
 }
 
 // ----------------------------- Library Lifetime -----------------------------
@@ -275,18 +277,13 @@ pub unsafe extern "C" fn gallo_i2c_write_read(
     // Safety: caller must ensure rxbuf is valid for rxlen bytes.
     let rxbuf = unsafe { std::slice::from_raw_parts_mut(rxbuf, rxlen) };
 
-    let result = block_on(gallo.0.i2c_write(address, txbuf));
-    if result.is_err() {
-        return Status::I2cWriteFailed;
-    }
-
-    let result = block_on(gallo.0.i2c_read(address, rxlen as u16));
+    let result = block_on(gallo.0.i2c_write_read(address, txbuf, rxlen as u16));
     match result {
         Ok(data) => {
             rxbuf.copy_from_slice(&data);
             Status::Ok
         }
-        Err(_) => Status::I2cReadFailed,
+        Err(_) => Status::I2cWriteReadFailed,
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "pico-de-gallo-ffi"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "C-FFI for Pico de Gallo device"
 readme = "README.md"
@@ -11,7 +11,8 @@ repository = "https://github.com/OpenDevicePartnership/pico-de-gallo"
 
 [dependencies]
 futures = "0.3.31"
-pico-de-gallo-lib = "0.1.0"
+pico-de-gallo-lib = { version = "0.2.0", path = "../pico-de-gallo-lib" }
+
 [build-dependencies]
 cbindgen = "0.29"
 

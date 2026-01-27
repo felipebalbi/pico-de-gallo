@@ -2,9 +2,9 @@ use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
     GpioGet, GpioGetFail, GpioGetRequest, GpioPut, GpioPutFail, GpioPutRequest, GpioWaitFail, GpioWaitForAny,
     GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cRead, I2cReadFail,
-    I2cReadRequest, I2cWrite, I2cWriteFail, I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, SetConfiguration,
-    SetConfigurationFail, SetConfigurationRequest, SpiFlush, SpiFlushFail, SpiRead, SpiReadFail, SpiReadRequest,
-    SpiWrite, SpiWriteFail, SpiWriteRequest, Version,
+    I2cReadRequest, I2cWrite, I2cWriteFail, I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest, I2cWriteRequest,
+    MICROSOFT_VID, PICO_DE_GALLO_PID, SetConfiguration, SetConfigurationFail, SetConfigurationRequest, SpiFlush,
+    SpiFlushFail, SpiRead, SpiReadFail, SpiReadRequest, SpiWrite, SpiWriteFail, SpiWriteRequest, Version,
 };
 
 pub use pico_de_gallo_internal::{GpioState, SpiPhase, SpiPolarity, VersionInfo};
@@ -115,9 +115,14 @@ impl PicoDeGallo {
     }
 
     /// Write `contents` to the I2C device at `address` and read back `count` bytes.
-    pub async fn i2c_write_read(&self, address: u8, contents: &[u8]) -> Result<(), PicoDeGalloError<I2cWriteFail>> {
+    pub async fn i2c_write_read(
+        &self,
+        address: u8,
+        contents: &[u8],
+        count: u16,
+    ) -> Result<Vec<u8>, PicoDeGalloError<I2cWriteReadFail>> {
         self.client
-            .send_resp::<I2cWrite>(&I2cWriteReadRequest {
+            .send_resp::<I2cWriteRead>(&I2cWriteReadRequest {
                 address,
                 contents,
                 count,

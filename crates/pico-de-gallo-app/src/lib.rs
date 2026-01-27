@@ -278,8 +278,28 @@ impl Cli {
     }
 
     async fn i2c_write_then_read(&self, address: &u8, bytes: &[u8], count: &usize) -> Result<()> {
-        self.i2c_write(address, bytes).await?;
-        self.i2c_read(address, count).await
+        let pg = if self.serial_number.is_some() {
+            PicoDeGallo::new_with_serial_number(self.serial_number.as_ref().unwrap())
+        } else {
+            PicoDeGallo::new()
+        };
+
+        let buf = match pg.i2c_write_read(*address, bytes, *count as u16).await {
+            Ok(data) => data,
+            Err(_) => return Err(eyre!("i2c_read failed")),
+        };
+
+        for (i, b) in buf.iter().enumerate() {
+            if i > 0 && i % 16 == 0 {
+                println!();
+            }
+
+            print!("{:02x} ", b);
+        }
+
+        println!();
+
+        Ok(())
     }
 
     async fn spi_read(&self, count: &usize) -> Result<()> {
