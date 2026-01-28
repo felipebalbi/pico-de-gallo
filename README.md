@@ -6,6 +6,10 @@
 A collection of tools that make it easier to write and test embedded
 rust drivers for discrete I2C/SPI components.
 
+## Book
+
+The Pico de Gallo book. How to build it, how to use it.
+
 ## Crates
 
 All relevant crates are housed in this folder: firmware, app, lib, a C
@@ -15,7 +19,7 @@ FFI, etc.
 
 The firmware proper to run on Pico de Gallo hardware. Written using
 `embassy` and `postcard-rpc`, it provides a REST-style endpoint-based
-API for communication with the host.
+API for communicating with the host over USB.
 
 ### Lib
 
@@ -58,5 +62,3 @@ regular Pico2 board.
 This folder contains a 3D printable case, designed with
 [FreeCAD](https://freecad.org), that can house the board. The case is
 designed in two parts &mdash; body and lid &mdash; which snap together.
-
-A simple tool for testing Embedded Rust drivers for discrete I2C/SPI components.
