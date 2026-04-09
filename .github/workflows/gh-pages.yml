@@ -1,0 +1,32 @@
+name: Publish book to Github Pages
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: Install mdbook
+        run: cargo install mdbook
+
+      - name: Build book
+        run: mdbook build book
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          external_repository: felipebalbi/felipebalbi.github.io
+          publish_branch: main
+          publish_dir: ./book
+          destination_dir: pico-de-gallo
