@@ -1,4 +1,4 @@
-name: Publish book to Github Pages
+name: github pages
 
 on:
   push:
@@ -17,7 +17,10 @@ jobs:
       - uses: cargo-bins/cargo-binstall@main
 
       - name: Install mdbook
-        run: cargo install mdbook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: '0.5.2'
+          # mdbook-version: 'latest'
 
       - name: Build book
         run: mdbook build book
@@ -25,8 +28,8 @@ jobs:
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          personal_token: ${{ secrets.GH_PAGES_TOKEN }}
           external_repository: felipebalbi/felipebalbi.github.io
           publish_branch: main
-          publish_dir: ./book
+          publish_dir: ./book/book
           destination_dir: pico-de-gallo
