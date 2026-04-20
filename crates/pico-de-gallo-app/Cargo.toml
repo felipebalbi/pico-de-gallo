@@ -2,6 +2,7 @@
 name = "gallo"
 version = "0.3.0"
 edition = "2024"
+rust-version = "1.90"
 description = "Batch mode application to control a Pico de Gallo device"
 readme = "README.md"
 categories = ["command-line-utilities", "development-tools", ]

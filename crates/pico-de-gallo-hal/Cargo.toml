@@ -2,6 +2,7 @@
 name = "pico-de-gallo-hal"
 version = "0.2.0"
 edition = "2024"
+rust-version = "1.90"
 description = "embedded-hal and embedded-hal-async implementation for Pico de Gallo"
 readme = "README.md"
 categories = ["embedded", "hardware-support",]

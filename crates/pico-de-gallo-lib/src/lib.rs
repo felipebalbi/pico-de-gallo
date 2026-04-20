@@ -59,20 +59,6 @@ impl<E> From<HostErr<WireError>> for PicoDeGalloError<E> {
     }
 }
 
-trait FlattenErr {
-    type Good;
-    type Bad;
-    fn flatten(self) -> Result<Self::Good, PicoDeGalloError<Self::Bad>>;
-}
-
-impl<T, E> FlattenErr for Result<T, E> {
-    type Good = T;
-    type Bad = E;
-    fn flatten(self) -> Result<Self::Good, PicoDeGalloError<Self::Bad>> {
-        self.map_err(PicoDeGalloError::Endpoint)
-    }
-}
-
 #[derive(Clone)]
 pub struct PicoDeGallo {
     pub client: HostClient<WireError>,
@@ -134,7 +120,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<I2cRead>(&I2cReadRequest { address, count })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Write `contents` to the I2C device at `address`.
@@ -142,7 +128,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<I2cWrite>(&I2cWriteRequest { address, contents })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Write `contents` to the I2C device at `address` and read back `count` bytes.
@@ -162,7 +148,7 @@ impl PicoDeGallo {
                 count,
             })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Read `count` bytes from the SPI bus.
@@ -173,7 +159,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<SpiRead>(&SpiReadRequest { count })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Write `contents` to the SPI bus.
@@ -181,12 +167,15 @@ impl PicoDeGallo {
         self.client
             .send_resp::<SpiWrite>(&SpiWriteRequest { contents })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Flush the SPI interface.
     pub async fn spi_flush(&self) -> Result<(), PicoDeGalloError<SpiFlushFail>> {
-        self.client.send_resp::<SpiFlush>(&()).await?.flatten()
+        self.client
+            .send_resp::<SpiFlush>(&())
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Get the current state of GPIO numbered by `pin`.
@@ -196,7 +185,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<GpioGet>(&GpioGetRequest { pin })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Set the GPIO numbered by `pin` to state `state`.
@@ -206,7 +195,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<GpioPut>(&GpioPutRequest { pin, state })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Wait for GPIO numbered by `pin` to reach `High` state.
@@ -216,7 +205,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<GpioWaitForHigh>(&GpioWaitRequest { pin })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Wait for GPIO numbered by `pin` to reach `Low` state.
@@ -226,7 +215,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<GpioWaitForLow>(&GpioWaitRequest { pin })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Wait for a rising edge on the GPIO numbered by `pin`.
@@ -236,7 +225,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<GpioWaitForRising>(&GpioWaitRequest { pin })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Wait for a falling edge on the GPIO numbered by `pin`.
@@ -246,7 +235,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<GpioWaitForFalling>(&GpioWaitRequest { pin })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Wait for either a rising edge or a falling edge on the GPIO
@@ -257,7 +246,7 @@ impl PicoDeGallo {
         self.client
             .send_resp::<GpioWaitForAny>(&GpioWaitRequest { pin })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Set configuration parameters for I2C and SPI interfaces.
@@ -276,7 +265,7 @@ impl PicoDeGallo {
                 spi_polarity,
             })
             .await?
-            .flatten()
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     /// Get the firmware version from the Pico de Gallo device.
@@ -289,41 +278,29 @@ impl PicoDeGallo {
 mod tests {
     use super::*;
 
-    // --- FlattenErr tests ---
+    // --- PicoDeGalloError tests ---
 
     #[test]
-    fn flatten_ok_returns_ok() {
+    fn endpoint_error_wraps_inner() {
+        let err: PicoDeGalloError<&str> = PicoDeGalloError::Endpoint("endpoint failed");
+        match err {
+            PicoDeGalloError::Endpoint(e) => assert_eq!(e, "endpoint failed"),
+            PicoDeGalloError::Comms(_) => panic!("expected Endpoint, got Comms"),
+        }
+    }
+
+    #[test]
+    fn map_err_converts_ok() {
         let result: Result<u32, &str> = Ok(42);
-        let flattened = result.flatten();
-        match flattened {
-            Ok(val) => assert_eq!(val, 42),
-            Err(_) => panic!("expected Ok"),
-        }
+        let mapped: Result<u32, PicoDeGalloError<&str>> = result.map_err(PicoDeGalloError::Endpoint);
+        assert_eq!(mapped.unwrap(), 42);
     }
 
     #[test]
-    fn flatten_err_returns_endpoint_error() {
-        let result: Result<u32, &str> = Err("endpoint failed");
-        let flattened = result.flatten();
-        match flattened {
-            Ok(_) => panic!("expected Err"),
-            Err(PicoDeGalloError::Endpoint(e)) => assert_eq!(e, "endpoint failed"),
-            Err(PicoDeGalloError::Comms(_)) => panic!("expected Endpoint, got Comms"),
-        }
-    }
-
-    #[test]
-    fn flatten_ok_unit_returns_ok() {
-        let result: Result<(), I2cReadFail> = Ok(());
-        let flattened = result.flatten();
-        assert!(flattened.is_ok());
-    }
-
-    #[test]
-    fn flatten_err_with_fail_type() {
+    fn map_err_converts_err() {
         let result: Result<(), I2cWriteFail> = Err(I2cWriteFail);
-        let flattened = result.flatten();
-        match flattened {
+        let mapped = result.map_err(PicoDeGalloError::Endpoint);
+        match mapped {
             Err(PicoDeGalloError::Endpoint(I2cWriteFail)) => {}
             _ => panic!("expected Endpoint(I2cWriteFail)"),
         }

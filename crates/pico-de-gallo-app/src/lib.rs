@@ -6,6 +6,18 @@ use tabled::builder::Builder;
 use tabled::settings::object::Rows;
 use tabled::settings::{Alignment, Style};
 
+/// Output format for data display.
+#[derive(clap::ValueEnum, Clone, Debug, Default)]
+pub enum OutputFormat {
+    /// Hexadecimal byte dump (default)
+    #[default]
+    Hex,
+    /// Raw binary output (bytes written directly to stdout)
+    Binary,
+    /// ASCII representation (printable chars shown, others as '.')
+    Ascii,
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "Pico De Gallo",
@@ -17,6 +29,10 @@ use tabled::settings::{Alignment, Style};
 pub struct Cli {
     #[arg(short, long)]
     serial_number: Option<String>,
+
+    /// Output format for read data
+    #[arg(short, long, value_enum, default_value_t)]
+    format: OutputFormat,
 
     #[command(subcommand)]
     command: Commands,
@@ -75,8 +91,8 @@ enum I2cCommands {
 
     /// Read bytes through the I2C bus from device at given address
     Read {
-        /// I2C slave address
-        #[arg(short, long, value_parser(parse_byte))]
+        /// I2C slave address (7-bit, 0x00–0x7F)
+        #[arg(short, long, value_parser(parse_i2c_address))]
         address: u8,
 
         /// Number of bytes to read
@@ -86,8 +102,8 @@ enum I2cCommands {
 
     /// Write bytes through I2C bus to device at given address
     Write {
-        /// I2C slave address
-        #[arg(short, long, value_parser(parse_byte))]
+        /// I2C slave address (7-bit, 0x00–0x7F)
+        #[arg(short, long, value_parser(parse_i2c_address))]
         address: u8,
 
         /// Bytes to transfer
@@ -97,8 +113,8 @@ enum I2cCommands {
 
     /// Write bytes follwed by read bytes
     WriteRead {
-        /// I2C slave address
-        #[arg(short, long, value_parser(parse_byte))]
+        /// I2C slave address (7-bit, 0x00–0x7F)
+        #[arg(short, long, value_parser(parse_i2c_address))]
         address: u8,
 
         /// Bytes to transfer
@@ -139,14 +155,36 @@ enum SpiCommands {
     },
 }
 
-fn print_hex_dump(data: &[u8]) {
-    for (i, b) in data.iter().enumerate() {
-        if i > 0 && i % 16 == 0 {
+fn print_data(data: &[u8], format: &OutputFormat) {
+    match format {
+        OutputFormat::Hex => {
+            for (i, b) in data.iter().enumerate() {
+                if i > 0 && i % 16 == 0 {
+                    println!();
+                }
+                print!("{:02x} ", b);
+            }
             println!();
         }
-        print!("{:02x} ", b);
+        OutputFormat::Binary => {
+            use std::io::Write;
+            std::io::stdout().write_all(data).unwrap();
+        }
+        OutputFormat::Ascii => {
+            for (i, b) in data.iter().enumerate() {
+                if i > 0 && i % 16 == 0 {
+                    println!();
+                }
+                let ch = if b.is_ascii_graphic() || *b == b' ' {
+                    *b as char
+                } else {
+                    '.'
+                };
+                print!("{ch}");
+            }
+            println!();
+        }
     }
-    println!();
 }
 
 impl Cli {
@@ -272,7 +310,7 @@ impl Cli {
             Err(e) => return Err(eyre!("{:?}", e).wrap_err("i2c_read failed")),
         };
 
-        print_hex_dump(&buf);
+        print_data(&buf, &self.format);
 
         Ok(())
     }
@@ -295,7 +333,7 @@ impl Cli {
             Err(e) => return Err(eyre!("{:?}", e).wrap_err("i2c_write_read failed")),
         };
 
-        print_hex_dump(&buf);
+        print_data(&buf, &self.format);
 
         Ok(())
     }
@@ -308,7 +346,7 @@ impl Cli {
             Err(e) => return Err(eyre!("{:?}", e).wrap_err("spi_read failed")),
         };
 
-        print_hex_dump(&buf);
+        print_data(&buf, &self.format);
 
         Ok(())
     }
@@ -369,6 +407,15 @@ fn parse_byte(s: &str) -> Result<u8, ParseIntError> {
     } else {
         s.parse::<u8>()
     }
+}
+
+/// Parse an I2C 7-bit address (0x00–0x7F).
+fn parse_i2c_address(s: &str) -> Result<u8, String> {
+    let byte = parse_byte(s).map_err(|e| e.to_string())?;
+    if byte > 0x7F {
+        return Err(format!("I2C address {s} exceeds 7-bit range (max 0x7F)"));
+    }
+    Ok(byte)
 }
 
 #[cfg(test)]

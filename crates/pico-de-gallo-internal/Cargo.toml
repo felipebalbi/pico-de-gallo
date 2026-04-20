@@ -2,6 +2,7 @@
 name = "pico-de-gallo-internal"
 version = "0.2.1"
 edition = "2024"
+rust-version = "1.90"
 description = "Internal library for Pico de Gallo. Do not use!"
 categories = ["embedded", "hardware-support",]
 readme = "README.md"

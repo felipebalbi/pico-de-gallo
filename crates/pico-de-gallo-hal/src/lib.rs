@@ -142,9 +142,29 @@ impl Hal {
 /// Pico de gallo errors
 #[derive(Debug)]
 pub enum Error {
-    /// Other errors
+    /// An error with a descriptive message.
+    Message(String),
+    /// An opaque error with no additional context.
     Other,
 }
+
+impl Error {
+    /// Create an error with a descriptive message.
+    pub fn msg(s: impl Into<String>) -> Self {
+        Self::Message(s.into())
+    }
+}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Message(msg) => write!(f, "{msg}"),
+            Self::Other => write!(f, "unknown error"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 // ----------------------------- Gpio -----------------------------
 
@@ -234,6 +254,16 @@ impl embedded_hal::digital::InputPin for Gpio {
         } else {
             self.is_high_inner()
         }
+    }
+}
+
+impl embedded_hal::digital::StatefulOutputPin for Gpio {
+    fn is_set_low(&mut self) -> std::result::Result<bool, Self::Error> {
+        self.is_low_inner()
+    }
+
+    fn is_set_high(&mut self) -> std::result::Result<bool, Self::Error> {
+        self.is_high_inner()
     }
 }
 

@@ -2,6 +2,7 @@
 name = "pico-de-gallo-ffi"
 version = "0.3.0"
 edition = "2024"
+rust-version = "1.90"
 description = "C-FFI for Pico de Gallo device"
 readme = "README.md"
 categories = ["api-bindings", "embedded", "hardware-support"]
