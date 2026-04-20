@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use color_eyre::{Result, eyre::eyre};
-use pico_de_gallo_lib::{PicoDeGallo, SpiPhase, SpiPolarity};
+use pico_de_gallo_lib::{PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
 use std::num::ParseIntError;
 use tabled::builder::Builder;
 use tabled::settings::object::Rows;
@@ -24,6 +24,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// List all connected Pico de Gallo devices
+    List,
+
     /// Get firmware version
     Version,
 
@@ -157,6 +160,7 @@ impl Cli {
 
     pub async fn run(&self) -> Result<()> {
         match &self.command {
+            Commands::List => Self::list_devices(),
             Commands::Version => self.version().await,
             Commands::I2c { command } => match command {
                 I2cCommands::Scan { reserved } => self.i2c_scan(*reserved).await,
@@ -181,6 +185,21 @@ impl Cli {
                     .await
             }
         }
+    }
+
+    fn list_devices() -> Result<()> {
+        let devices = list_devices();
+        if devices.is_empty() {
+            println!("No Pico de Gallo devices found.");
+            return Ok(());
+        }
+
+        for dev in &devices {
+            let product = dev.product.as_deref().unwrap_or("(unknown product)");
+            let serial = dev.serial_number.as_deref().unwrap_or("(unknown)");
+            println!(" - {product} - {serial}");
+        }
+        Ok(())
     }
 
     async fn version(&self) -> Result<()> {
@@ -410,6 +429,12 @@ mod tests {
         let cli = Cli::try_parse_from(["gallo", "version"]).unwrap();
         assert!(matches!(cli.command, Commands::Version));
         assert!(cli.serial_number.is_none());
+    }
+
+    #[test]
+    fn cli_list_subcommand() {
+        let cli = Cli::try_parse_from(["gallo", "list"]).unwrap();
+        assert!(matches!(cli.command, Commands::List));
     }
 
     #[test]

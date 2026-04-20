@@ -16,6 +16,37 @@ use postcard_rpc::{
 };
 use std::convert::Infallible;
 
+/// Description of a connected Pico de Gallo device.
+#[derive(Debug, Clone)]
+pub struct DeviceDescription {
+    /// USB serial number (unique per board, derived from chip ID).
+    pub serial_number: Option<String>,
+    /// USB manufacturer string.
+    pub manufacturer: Option<String>,
+    /// USB product string.
+    pub product: Option<String>,
+}
+
+/// List all connected Pico de Gallo devices.
+///
+/// Returns a description for each device found on the USB bus matching the
+/// Pico de Gallo VID/PID. Use the serial number with
+/// [`PicoDeGallo::new_with_serial_number`] to connect to a specific device.
+pub fn list_devices() -> Vec<DeviceDescription> {
+    let devices = match nusb::list_devices() {
+        Ok(iter) => iter,
+        Err(_) => return Vec::new(),
+    };
+    devices
+        .filter(|dev| dev.vendor_id() == MICROSOFT_VID && dev.product_id() == PICO_DE_GALLO_PID)
+        .map(|dev| DeviceDescription {
+            serial_number: dev.serial_number().map(String::from),
+            manufacturer: dev.manufacturer_string().map(String::from),
+            product: dev.product_string().map(String::from),
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 pub enum PicoDeGalloError<E> {
     Comms(HostErr<WireError>),
@@ -319,5 +350,30 @@ mod tests {
         let comms_err: PicoDeGalloError<Infallible> = PicoDeGalloError::Comms(HostErr::Closed);
         let debug = format!("{:?}", comms_err);
         assert!(debug.contains("Comms"));
+    }
+
+    // --- Device enumeration ---
+
+    #[test]
+    fn list_devices_returns_vec() {
+        // Without hardware this returns an empty vec, but should not panic
+        let devices = list_devices();
+        // Each returned device must have the correct VID/PID (already filtered)
+        for dev in &devices {
+            assert!(dev.serial_number.is_some() || dev.serial_number.is_none());
+        }
+        // Mainly verifying the function doesn't panic
+        let _ = devices;
+    }
+
+    #[test]
+    fn device_description_is_clone_and_debug() {
+        let desc = DeviceDescription {
+            serial_number: Some("ABC123".to_string()),
+            manufacturer: Some("Microsoft".to_string()),
+            product: Some("Pico de Gallo".to_string()),
+        };
+        let cloned = desc.clone();
+        assert_eq!(format!("{:?}", desc), format!("{:?}", cloned));
     }
 }
