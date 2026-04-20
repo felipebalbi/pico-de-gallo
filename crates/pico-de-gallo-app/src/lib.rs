@@ -392,3 +392,238 @@ fn parse_byte(s: &str) -> Result<u8, ParseIntError> {
         s.parse::<u8>()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    // ----------------------------- parse_byte tests -----------------------------
+
+    #[test]
+    fn parse_byte_decimal() {
+        assert_eq!(parse_byte("0").unwrap(), 0);
+        assert_eq!(parse_byte("255").unwrap(), 255);
+        assert_eq!(parse_byte("42").unwrap(), 42);
+    }
+
+    #[test]
+    fn parse_byte_hex() {
+        assert_eq!(parse_byte("0x00").unwrap(), 0x00);
+        assert_eq!(parse_byte("0xFF").unwrap(), 0xFF);
+        assert_eq!(parse_byte("0x48").unwrap(), 0x48);
+        assert_eq!(parse_byte("0xab").unwrap(), 0xAB);
+    }
+
+    #[test]
+    fn parse_byte_binary() {
+        assert_eq!(parse_byte("0b00000000").unwrap(), 0);
+        assert_eq!(parse_byte("0b11111111").unwrap(), 255);
+        assert_eq!(parse_byte("0b10101010").unwrap(), 0xAA);
+    }
+
+    #[test]
+    fn parse_byte_overflow_fails() {
+        assert!(parse_byte("256").is_err());
+        assert!(parse_byte("0x100").is_err());
+        assert!(parse_byte("0b100000000").is_err());
+    }
+
+    #[test]
+    fn parse_byte_invalid_fails() {
+        assert!(parse_byte("xyz").is_err());
+        assert!(parse_byte("0xGG").is_err());
+        assert!(parse_byte("0b2").is_err());
+        assert!(parse_byte("").is_err());
+    }
+
+    // ----------------------------- CLI parsing tests -----------------------------
+
+    #[test]
+    fn cli_no_args_requires_help() {
+        // arg_required_else_help = true means no-args should fail
+        let result = Cli::try_parse_from(["gallo"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_version_subcommand() {
+        let cli = Cli::try_parse_from(["gallo", "version"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Version)));
+        assert!(cli.serial_number.is_none());
+    }
+
+    #[test]
+    fn cli_version_with_serial() {
+        let cli = Cli::try_parse_from(["gallo", "-s", "ABCD1234", "version"]).unwrap();
+        assert_eq!(cli.serial_number.as_deref(), Some("ABCD1234"));
+        assert!(matches!(cli.command, Some(Commands::Version)));
+    }
+
+    #[test]
+    fn cli_i2c_read() {
+        let cli = Cli::try_parse_from(["gallo", "i2c", "read", "-a", "0x48", "-c", "4"]).unwrap();
+        match cli.command {
+            Some(Commands::I2c {
+                command: Some(I2cCommands::Read { address, count }),
+            }) => {
+                assert_eq!(address, 0x48);
+                assert_eq!(count, 4);
+            }
+            _ => panic!("expected I2c Read command"),
+        }
+    }
+
+    #[test]
+    fn cli_i2c_write() {
+        let cli = Cli::try_parse_from(["gallo", "i2c", "write", "-a", "0x50", "-b", "0xDE", "0xAD"]).unwrap();
+        match cli.command {
+            Some(Commands::I2c {
+                command: Some(I2cCommands::Write { address, bytes }),
+            }) => {
+                assert_eq!(address, 0x50);
+                assert_eq!(bytes, vec![0xDE, 0xAD]);
+            }
+            _ => panic!("expected I2c Write command"),
+        }
+    }
+
+    #[test]
+    fn cli_i2c_write_read() {
+        let cli = Cli::try_parse_from(["gallo", "i2c", "write-read", "-a", "0x68", "-b", "0x01", "-c", "6"]).unwrap();
+        match cli.command {
+            Some(Commands::I2c {
+                command: Some(I2cCommands::WriteRead { address, bytes, count }),
+            }) => {
+                assert_eq!(address, 0x68);
+                assert_eq!(bytes, vec![0x01]);
+                assert_eq!(count, 6);
+            }
+            _ => panic!("expected I2c WriteRead command"),
+        }
+    }
+
+    #[test]
+    fn cli_i2c_scan() {
+        let cli = Cli::try_parse_from(["gallo", "i2c", "scan"]).unwrap();
+        match cli.command {
+            Some(Commands::I2c {
+                command: Some(I2cCommands::Scan { reserved }),
+            }) => {
+                assert!(!reserved);
+            }
+            _ => panic!("expected I2c Scan command"),
+        }
+    }
+
+    #[test]
+    fn cli_i2c_scan_reserved() {
+        let cli = Cli::try_parse_from(["gallo", "i2c", "scan", "-r"]).unwrap();
+        match cli.command {
+            Some(Commands::I2c {
+                command: Some(I2cCommands::Scan { reserved }),
+            }) => {
+                assert!(reserved);
+            }
+            _ => panic!("expected I2c Scan command"),
+        }
+    }
+
+    #[test]
+    fn cli_spi_read() {
+        let cli = Cli::try_parse_from(["gallo", "spi", "read", "-c", "16"]).unwrap();
+        match cli.command {
+            Some(Commands::Spi {
+                command: Some(SpiCommands::Read { count }),
+            }) => {
+                assert_eq!(count, 16);
+            }
+            _ => panic!("expected Spi Read command"),
+        }
+    }
+
+    #[test]
+    fn cli_spi_write() {
+        let cli = Cli::try_parse_from(["gallo", "spi", "write", "-b", "0xCA", "0xFE"]).unwrap();
+        match cli.command {
+            Some(Commands::Spi {
+                command: Some(SpiCommands::Write { bytes }),
+            }) => {
+                assert_eq!(bytes, vec![0xCA, 0xFE]);
+            }
+            _ => panic!("expected Spi Write command"),
+        }
+    }
+
+    #[test]
+    fn cli_set_config() {
+        let cli = Cli::try_parse_from([
+            "gallo",
+            "set-config",
+            "--i2c-frequency",
+            "400000",
+            "--spi-frequency",
+            "1000000",
+            "--spi-first-transition",
+            "--spi-idle-low",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Commands::SetConfig {
+                i2c_frequency,
+                spi_frequency,
+                spi_first_transition,
+                spi_idle_low,
+            }) => {
+                assert_eq!(i2c_frequency, 400_000);
+                assert_eq!(spi_frequency, 1_000_000);
+                assert!(spi_first_transition);
+                assert!(spi_idle_low);
+            }
+            _ => panic!("expected SetConfig command"),
+        }
+    }
+
+    #[test]
+    fn cli_set_config_defaults() {
+        let cli = Cli::try_parse_from([
+            "gallo",
+            "set-config",
+            "--i2c-frequency",
+            "100000",
+            "--spi-frequency",
+            "500000",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Commands::SetConfig {
+                spi_first_transition,
+                spi_idle_low,
+                ..
+            }) => {
+                assert!(!spi_first_transition);
+                assert!(!spi_idle_low);
+            }
+            _ => panic!("expected SetConfig command"),
+        }
+    }
+
+    #[test]
+    fn cli_set_config_missing_required_fails() {
+        // Missing --spi-frequency
+        let result = Cli::try_parse_from(["gallo", "set-config", "--i2c-frequency", "400000"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_i2c_read_missing_address_fails() {
+        let result = Cli::try_parse_from(["gallo", "i2c", "read", "-c", "4"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_unknown_subcommand_fails() {
+        let result = Cli::try_parse_from(["gallo", "uart"]);
+        assert!(result.is_err());
+    }
+}

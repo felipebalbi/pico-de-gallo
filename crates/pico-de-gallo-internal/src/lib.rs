@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "use-std"), no_std)]
 
-use postcard_rpc::{endpoints, topics, TopicDirection};
+use postcard_rpc::{TopicDirection, endpoints, topics};
 use postcard_schema::Schema;
 use serde::{Deserialize, Serialize};
 
