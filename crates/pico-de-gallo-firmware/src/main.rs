@@ -8,7 +8,7 @@ use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio::{Flex, Level};
 use embassy_rp::i2c::{self, I2c};
-use embassy_rp::peripherals::{I2C1, SPI0, USB};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, SPI0, USB};
 use embassy_rp::spi::{self, Phase, Polarity, Spi};
 use embassy_rp::usb::Driver;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
@@ -54,6 +54,7 @@ include!(concat!(env!("OUT_DIR"), "/version.rs"));
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => embassy_rp::usb::InterruptHandler<USB>;
     I2C1_IRQ => embassy_rp::i2c::InterruptHandler<I2C1>;
+    DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>, embassy_rp::dma::InterruptHandler<DMA_CH1>;
 });
 
 const NUM_GPIOS: usize = 8;
@@ -197,6 +198,7 @@ async fn main(spawner: Spawner) {
         p.PIN_4,
         p.DMA_CH0,
         p.DMA_CH1,
+        Irqs,
         embassy_rp::spi::Config::default(),
     );
 
@@ -211,7 +213,12 @@ async fn main(spawner: Spawner) {
 
     let context = Context::new(i2c, spi, gpio8, gpio9, gpio10, gpio11, gpio12, gpio13, gpio14, gpio15);
 
-    let (device, tx_impl, rx_impl) = STORAGE.init(driver, config, pbufs.tx_buf.as_mut_slice());
+    let (device, tx_impl, rx_impl) = STORAGE.init(
+        driver,
+        config,
+        pbufs.tx_buf.as_mut_slice(),
+        postcard_rpc::server::impls::embassy_usb_v0_5::USB_FS_MAX_PACKET_SIZE,
+    );
     let dispatcher = PicoDeGallo::new(context, spawner.into());
     let vkk = dispatcher.min_key_len();
     let mut server: AppServer = Server::new(tx_impl, rx_impl, pbufs.rx_buf.as_mut_slice(), dispatcher, vkk);
