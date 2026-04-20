@@ -48,7 +48,7 @@ use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Mutex;
 use tokio::task::block_in_place;
 
-pub use pico_de_gallo_lib::{SpiPhase, SpiPolarity};
+pub use pico_de_gallo_lib::{I2cFrequency, SpiPhase, SpiPolarity};
 
 /// Top-level HAL context for a Pico de Gallo device.
 ///
@@ -112,35 +112,47 @@ impl Hal {
         }
     }
 
-    /// Set interface configuration parameters
-    pub fn set_config(
+    /// Set I2C bus configuration parameters.
+    pub fn i2c_set_config(&mut self, frequency: I2cFrequency) -> Result<(), Error> {
+        if Self::in_async_context() {
+            block_in_place(|| self.i2c_set_config_inner(frequency))
+        } else {
+            self.i2c_set_config_inner(frequency)
+        }
+    }
+
+    fn i2c_set_config_inner(&mut self, frequency: I2cFrequency) -> Result<(), Error> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.i2c_set_config(frequency))
+            .map_err(|_| Error::Other)
+    }
+
+    /// Set SPI bus configuration parameters.
+    pub fn spi_set_config(
         &mut self,
-        i2c_frequency: u32,
         spi_frequency: u32,
         spi_phase: SpiPhase,
         spi_polarity: SpiPolarity,
     ) -> Result<(), Error> {
         if Self::in_async_context() {
-            block_in_place(|| {
-                self.set_config_inner(i2c_frequency, spi_frequency, spi_phase, spi_polarity)
-            })
+            block_in_place(|| self.spi_set_config_inner(spi_frequency, spi_phase, spi_polarity))
         } else {
-            self.set_config_inner(i2c_frequency, spi_frequency, spi_phase, spi_polarity)
+            self.spi_set_config_inner(spi_frequency, spi_phase, spi_polarity)
         }
     }
 
-    fn set_config_inner(
+    fn spi_set_config_inner(
         &mut self,
-        i2c_frequency: u32,
         spi_frequency: u32,
         spi_phase: SpiPhase,
         spi_polarity: SpiPolarity,
     ) -> Result<(), Error> {
         let handle = self.handle.clone();
-
         let gallo = handle.block_on(self.gallo.lock());
         handle
-            .block_on(gallo.set_config(i2c_frequency, spi_frequency, spi_phase, spi_polarity))
+            .block_on(gallo.spi_set_config(spi_frequency, spi_phase, spi_polarity))
             .map_err(|_| Error::Other)
     }
 
@@ -359,7 +371,7 @@ impl embedded_hal_async::digital::Wait for Gpio {
 /// I2C bus handle implementing [`embedded-hal`] I2C traits.
 ///
 /// Obtained from [`Hal::i2c`]. Supports 7-bit addressing. The I2C bus clock
-/// frequency can be changed at runtime with [`Hal::set_config`].
+/// frequency can be changed at runtime with [`Hal::i2c_set_config`].
 pub struct I2c {
     gallo: Arc<Mutex<PicoDeGallo>>,
     handle: Handle,
@@ -450,7 +462,7 @@ impl embedded_hal_async::i2c::I2c<embedded_hal_async::i2c::SevenBitAddress> for 
 ///
 /// Obtained from [`Hal::spi`]. Supports full-duplex transfers. The SPI clock
 /// frequency, phase, and polarity can be changed at runtime with
-/// [`Hal::set_config`].
+/// [`Hal::spi_set_config`].
 pub struct Spi {
     gallo: Arc<Mutex<PicoDeGallo>>,
     handle: Handle,

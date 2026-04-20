@@ -47,13 +47,14 @@ use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
     ENDPOINT_LIST, GpioGet, GpioGetFail, GpioGetRequest, GpioGetResponse, GpioPut, GpioPutFail, GpioPutRequest,
     GpioPutResponse, GpioState, GpioWaitFail, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
-    GpioWaitForRising, GpioWaitRequest, GpioWaitResponse, I2cRead, I2cReadFail, I2cReadRequest, I2cReadResponse,
-    I2cWrite, I2cWriteFail, I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest,
-    I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID, PICO_DE_GALLO_PID, PingEndpoint, SetConfiguration,
-    SetConfigurationFail, SetConfigurationRequest, SetConfigurationResponse, SpiFlush, SpiFlushFail, SpiFlushResponse,
-    SpiPhase, SpiPolarity, SpiRead, SpiReadFail, SpiReadRequest, SpiReadResponse, SpiTransfer, SpiTransferFail,
-    SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteFail, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST,
-    TOPICS_OUT_LIST, Version, VersionInfo,
+    GpioWaitForRising, GpioWaitRequest, GpioWaitResponse, I2cFrequency, I2cRead, I2cReadFail, I2cReadRequest,
+    I2cReadResponse, I2cSetConfiguration, I2cSetConfigurationFail, I2cSetConfigurationRequest,
+    I2cSetConfigurationResponse, I2cWrite, I2cWriteFail, I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest,
+    I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID, PICO_DE_GALLO_PID,
+    PingEndpoint, SpiFlush, SpiFlushFail, SpiFlushResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadFail,
+    SpiReadRequest, SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest, SpiSetConfigurationResponse,
+    SpiTransfer, SpiTransferFail, SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteFail, SpiWriteRequest,
+    SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
@@ -206,25 +207,26 @@ define_dispatch! {
     endpoints: {
         list: ENDPOINT_LIST;
 
-        | EndpointTy         | kind     | handler                       |
-        | ----------         | ----     | -------                       |
-        | PingEndpoint       | blocking | ping_handler                  |
-        | I2cRead            | async    | i2c_read_handler              |
-        | I2cWrite           | async    | i2c_write_handler             |
-        | I2cWriteRead       | async    | i2c_write_read_handler        |
-        | SpiRead            | async    | spi_read_handler              |
-        | SpiWrite           | async    | spi_write_handler             |
-        | SpiFlush           | async    | spi_flush_handler             |
-        | SpiTransfer        | async    | spi_transfer_handler          |
-        | GpioGet            | async    | gpio_get_handler              |
-        | GpioPut            | async    | gpio_put_handler              |
-        | GpioWaitForHigh    | async    | gpio_wait_for_high_handler    |
-        | GpioWaitForLow     | async    | gpio_wait_for_low_handler     |
-        | GpioWaitForRising  | async    | gpio_wait_for_rising_handler  |
-        | GpioWaitForFalling | async    | gpio_wait_for_falling_handler |
-        | GpioWaitForAny     | async    | gpio_wait_for_any_handler     |
-        | SetConfiguration   | async    | set_config_handler            |
-        | Version            | async    | version_handler               |
+        | EndpointTy          | kind     | handler                       |
+        | ----------          | ----     | -------                       |
+        | PingEndpoint        | blocking | ping_handler                  |
+        | I2cRead             | async    | i2c_read_handler              |
+        | I2cWrite            | async    | i2c_write_handler             |
+        | I2cWriteRead        | async    | i2c_write_read_handler        |
+        | SpiRead             | async    | spi_read_handler              |
+        | SpiWrite            | async    | spi_write_handler             |
+        | SpiFlush            | async    | spi_flush_handler             |
+        | SpiTransfer         | async    | spi_transfer_handler          |
+        | GpioGet             | async    | gpio_get_handler              |
+        | GpioPut             | async    | gpio_put_handler              |
+        | GpioWaitForHigh     | async    | gpio_wait_for_high_handler    |
+        | GpioWaitForLow      | async    | gpio_wait_for_low_handler     |
+        | GpioWaitForRising   | async    | gpio_wait_for_rising_handler  |
+        | GpioWaitForFalling  | async    | gpio_wait_for_falling_handler |
+        | GpioWaitForAny      | async    | gpio_wait_for_any_handler     |
+        | I2cSetConfiguration | async    | i2c_set_config_handler        |
+        | SpiSetConfiguration | async    | spi_set_config_handler        |
+        | Version             | async    | version_handler               |
     };
     topics_in: {
         list: TOPICS_IN_LIST;
@@ -510,16 +512,32 @@ async fn gpio_wait_for_any_handler(
     Ok(())
 }
 
-/// Handler for `set-config` — reconfigures I2C and SPI bus parameters.
-async fn set_config_handler(
+/// Handler for `i2c/set-config` — reconfigures I2C bus parameters.
+async fn i2c_set_config_handler(
     context: &mut Context,
     _header: VarHeader,
-    req: SetConfigurationRequest,
-) -> SetConfigurationResponse {
-    let mut i2c_config = i2c::Config::default();
-    let mut spi_config = spi::Config::default();
+    req: I2cSetConfigurationRequest,
+) -> I2cSetConfigurationResponse {
+    let frequency = match req.frequency {
+        I2cFrequency::Standard => 100_000,
+        I2cFrequency::Fast => 400_000,
+        I2cFrequency::FastPlus => 1_000_000,
+    };
 
-    i2c_config.frequency = req.i2c_frequency;
+    let mut i2c_config = i2c::Config::default();
+    i2c_config.frequency = frequency;
+
+    debug!("i2c_set_config: freq={=u32}", frequency);
+    context.i2c.set_config(&i2c_config).map_err(|_| I2cSetConfigurationFail)
+}
+
+/// Handler for `spi/set-config` — reconfigures SPI bus parameters.
+async fn spi_set_config_handler(
+    context: &mut Context,
+    _header: VarHeader,
+    req: SpiSetConfigurationRequest,
+) -> SpiSetConfigurationResponse {
+    let mut spi_config = spi::Config::default();
     spi_config.frequency = req.spi_frequency;
     spi_config.phase = match req.spi_phase {
         SpiPhase::CaptureOnFirstTransition => Phase::CaptureOnFirstTransition,
@@ -530,12 +548,9 @@ async fn set_config_handler(
         SpiPolarity::IdleHigh => Polarity::IdleHigh,
     };
 
-    debug!(
-        "set_config: i2c_freq={=u32} spi_freq={=u32}",
-        req.i2c_frequency, req.spi_frequency
-    );
+    debug!("spi_set_config: freq={=u32}", req.spi_frequency);
     context.spi.set_config(&spi_config);
-    context.i2c.set_config(&i2c_config).map_err(|_| SetConfigurationFail)
+    Ok(())
 }
 
 /// Handler for `version` — returns the firmware version.

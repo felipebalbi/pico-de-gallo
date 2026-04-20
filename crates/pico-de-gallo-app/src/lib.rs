@@ -28,13 +28,34 @@
 //! - `binary`: raw bytes written to stdout
 //! - `ascii`: printable characters shown, non-printable replaced with `.`
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::{Result, eyre::eyre};
-use pico_de_gallo_lib::{PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
+use pico_de_gallo_lib::{I2cFrequency, PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
 use std::num::ParseIntError;
 use tabled::builder::Builder;
 use tabled::settings::object::Rows;
 use tabled::settings::{Alignment, Style};
+
+/// I2C bus clock frequency for CLI argument parsing.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum I2cFrequencyArg {
+    /// Standard mode — 100 kHz
+    Standard,
+    /// Fast mode — 400 kHz
+    Fast,
+    /// Fast+ mode — 1 MHz
+    FastPlus,
+}
+
+impl From<I2cFrequencyArg> for I2cFrequency {
+    fn from(arg: I2cFrequencyArg) -> Self {
+        match arg {
+            I2cFrequencyArg::Standard => I2cFrequency::Standard,
+            I2cFrequencyArg::Fast => I2cFrequency::Fast,
+            I2cFrequencyArg::FastPlus => I2cFrequency::FastPlus,
+        }
+    }
+}
 
 /// Output format for data display.
 #[derive(clap::ValueEnum, Clone, Debug, Default)]
@@ -92,25 +113,6 @@ enum Commands {
         #[command(subcommand)]
         command: SpiCommands,
     },
-
-    /// Set bus parameters for I2C and SPI
-    SetConfig {
-        /// I2C frequency
-        #[arg(long)]
-        i2c_frequency: u32,
-
-        /// SPI frequency
-        #[arg(long)]
-        spi_frequency: u32,
-
-        /// SPI phase first transition
-        #[arg(long, default_value_t)]
-        spi_first_transition: bool,
-
-        /// SPI polarity idle low
-        #[arg(long, default_value_t)]
-        spi_idle_low: bool,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -158,6 +160,13 @@ enum I2cCommands {
         #[arg(short, long)]
         count: usize,
     },
+
+    /// Set I2C bus parameters
+    SetConfig {
+        /// I2C frequency: standard (100 kHz), fast (400 kHz), fast-plus (1 MHz)
+        #[arg(long)]
+        frequency: I2cFrequencyArg,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -192,6 +201,21 @@ enum SpiCommands {
         /// Bytes to transfer
         #[arg(short, long, num_args(1..), value_parser(parse_byte))]
         bytes: Vec<u8>,
+    },
+
+    /// Set SPI bus parameters
+    SetConfig {
+        /// SPI frequency in Hz
+        #[arg(long)]
+        frequency: u32,
+
+        /// SPI phase first transition (CPHA=0)
+        #[arg(long, default_value_t)]
+        first_transition: bool,
+
+        /// SPI polarity idle low (CPOL=0)
+        #[arg(long, default_value_t)]
+        idle_low: bool,
     },
 }
 
@@ -251,22 +275,19 @@ impl Cli {
                 I2cCommands::WriteRead { address, bytes, count } => {
                     self.i2c_write_then_read(address, bytes, count).await
                 }
+                I2cCommands::SetConfig { frequency } => self.i2c_set_config((*frequency).into()).await,
             },
             Commands::Spi { command } => match command {
                 SpiCommands::Read { count } => self.spi_read(count).await,
                 SpiCommands::Write { bytes } => self.spi_write(bytes).await,
                 SpiCommands::Transfer { bytes } => self.spi_transfer(bytes).await,
                 SpiCommands::WriteRead { count, bytes } => self.spi_write_then_read(bytes, count).await,
+                SpiCommands::SetConfig {
+                    frequency,
+                    first_transition,
+                    idle_low,
+                } => self.spi_set_config(*frequency, *first_transition, *idle_low).await,
             },
-            Commands::SetConfig {
-                i2c_frequency,
-                spi_frequency,
-                spi_first_transition,
-                spi_idle_low,
-            } => {
-                self.set_config(*i2c_frequency, *spi_frequency, *spi_first_transition, *spi_idle_low)
-                    .await
-            }
         }
     }
 
@@ -424,36 +445,32 @@ impl Cli {
         self.spi_read(count).await
     }
 
-    async fn set_config(
-        &self,
-        i2c_frequency: u32,
-        spi_frequency: u32,
-        spi_first_transition: bool,
-        spi_idle_low: bool,
-    ) -> Result<()> {
+    async fn i2c_set_config(&self, frequency: I2cFrequency) -> Result<()> {
         let pg = self.connect();
 
-        let spi_polarity = if spi_idle_low {
+        pg.i2c_set_config(frequency)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("i2c set-config failed"))
+    }
+
+    async fn spi_set_config(&self, frequency: u32, first_transition: bool, idle_low: bool) -> Result<()> {
+        let pg = self.connect();
+
+        let spi_polarity = if idle_low {
             SpiPolarity::IdleLow
         } else {
             SpiPolarity::IdleHigh
         };
 
-        let spi_phase = if spi_first_transition {
+        let spi_phase = if first_transition {
             SpiPhase::CaptureOnFirstTransition
         } else {
             SpiPhase::CaptureOnSecondTransition
         };
 
-        if pg
-            .set_config(i2c_frequency, spi_frequency, spi_phase, spi_polarity)
+        pg.spi_set_config(frequency, spi_phase, spi_polarity)
             .await
-            .is_err()
-        {
-            Err(eyre!("set config failed"))
-        } else {
-            Ok(())
-        }
+            .map_err(|e| eyre!("{:?}", e).wrap_err("spi set-config failed"))
     }
 }
 
@@ -658,62 +675,94 @@ mod tests {
     }
 
     #[test]
-    fn cli_set_config() {
+    fn cli_i2c_set_config() {
+        let cli = Cli::try_parse_from(["gallo", "i2c", "set-config", "--frequency", "fast"]).unwrap();
+        match cli.command {
+            Commands::I2c {
+                command: I2cCommands::SetConfig { frequency },
+            } => {
+                assert_eq!(frequency, I2cFrequencyArg::Fast);
+            }
+            _ => panic!("expected I2c SetConfig command"),
+        }
+    }
+
+    #[test]
+    fn cli_i2c_set_config_fast_plus() {
+        let cli = Cli::try_parse_from(["gallo", "i2c", "set-config", "--frequency", "fast-plus"]).unwrap();
+        match cli.command {
+            Commands::I2c {
+                command: I2cCommands::SetConfig { frequency },
+            } => {
+                assert_eq!(frequency, I2cFrequencyArg::FastPlus);
+            }
+            _ => panic!("expected I2c SetConfig command"),
+        }
+    }
+
+    #[test]
+    fn cli_i2c_set_config_invalid_frequency_fails() {
+        let result = Cli::try_parse_from(["gallo", "i2c", "set-config", "--frequency", "ultra-fast"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_spi_set_config() {
         let cli = Cli::try_parse_from([
             "gallo",
+            "spi",
             "set-config",
-            "--i2c-frequency",
-            "400000",
-            "--spi-frequency",
+            "--frequency",
             "1000000",
-            "--spi-first-transition",
-            "--spi-idle-low",
+            "--first-transition",
+            "--idle-low",
         ])
         .unwrap();
         match cli.command {
-            Commands::SetConfig {
-                i2c_frequency,
-                spi_frequency,
-                spi_first_transition,
-                spi_idle_low,
+            Commands::Spi {
+                command:
+                    SpiCommands::SetConfig {
+                        frequency,
+                        first_transition,
+                        idle_low,
+                    },
             } => {
-                assert_eq!(i2c_frequency, 400_000);
-                assert_eq!(spi_frequency, 1_000_000);
-                assert!(spi_first_transition);
-                assert!(spi_idle_low);
+                assert_eq!(frequency, 1_000_000);
+                assert!(first_transition);
+                assert!(idle_low);
             }
-            _ => panic!("expected SetConfig command"),
+            _ => panic!("expected Spi SetConfig command"),
         }
     }
 
     #[test]
-    fn cli_set_config_defaults() {
-        let cli = Cli::try_parse_from([
-            "gallo",
-            "set-config",
-            "--i2c-frequency",
-            "100000",
-            "--spi-frequency",
-            "500000",
-        ])
-        .unwrap();
+    fn cli_spi_set_config_defaults() {
+        let cli = Cli::try_parse_from(["gallo", "spi", "set-config", "--frequency", "500000"]).unwrap();
         match cli.command {
-            Commands::SetConfig {
-                spi_first_transition,
-                spi_idle_low,
-                ..
+            Commands::Spi {
+                command:
+                    SpiCommands::SetConfig {
+                        first_transition,
+                        idle_low,
+                        ..
+                    },
             } => {
-                assert!(!spi_first_transition);
-                assert!(!spi_idle_low);
+                assert!(!first_transition);
+                assert!(!idle_low);
             }
-            _ => panic!("expected SetConfig command"),
+            _ => panic!("expected Spi SetConfig command"),
         }
     }
 
     #[test]
-    fn cli_set_config_missing_required_fails() {
-        // Missing --spi-frequency
-        let result = Cli::try_parse_from(["gallo", "set-config", "--i2c-frequency", "400000"]);
+    fn cli_i2c_set_config_missing_frequency_fails() {
+        let result = Cli::try_parse_from(["gallo", "i2c", "set-config"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_spi_set_config_missing_frequency_fails() {
+        let result = Cli::try_parse_from(["gallo", "spi", "set-config"]);
         assert!(result.is_err());
     }
 

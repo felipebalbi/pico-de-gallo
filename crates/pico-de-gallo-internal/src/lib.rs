@@ -28,7 +28,8 @@
 //!   and their corresponding error types.
 //! - **GPIO types**: [`GpioGetRequest`], [`GpioPutRequest`], [`GpioWaitRequest`],
 //!   [`GpioState`].
-//! - **Configuration**: [`SetConfigurationRequest`], [`SpiPhase`], [`SpiPolarity`].
+//! - **Configuration**: [`I2cSetConfigurationRequest`], [`SpiSetConfigurationRequest`],
+//!   [`I2cFrequency`], [`SpiPhase`], [`SpiPolarity`].
 //! - **Version**: [`VersionInfo`].
 
 #![cfg_attr(not(feature = "use-std"), no_std)]
@@ -101,30 +102,33 @@ pub type GpioGetResponse = Result<GpioState, GpioGetFail>;
 pub type GpioPutResponse = Result<(), GpioPutFail>;
 /// Response type for GPIO wait operations.
 pub type GpioWaitResponse = Result<(), GpioWaitFail>;
-/// Response type for bus configuration operations.
-pub type SetConfigurationResponse = Result<(), SetConfigurationFail>;
+/// Response type for I2C bus configuration operations.
+pub type I2cSetConfigurationResponse = Result<(), I2cSetConfigurationFail>;
+/// Response type for SPI bus configuration operations.
+pub type SpiSetConfigurationResponse = Result<(), SpiSetConfigurationFail>;
 
 endpoints! {
     list = ENDPOINT_LIST;
-    | EndpointTy         | RequestTy               | ResponseTy               | Path                |
-    | ----------         | ---------               | ----------               | ----                |
-    | PingEndpoint       | u32                     | u32                      | "ping"              |
-    | I2cRead            | I2cReadRequest          | I2cReadResponse<'a>      | "i2c/read"          |
-    | I2cWrite           | I2cWriteRequest<'a>     | I2cWriteResponse         | "i2c/write"         |
-    | I2cWriteRead       | I2cWriteReadRequest<'a> | I2cWriteReadResponse<'b> | "i2c/write-read"    |
-    | SpiRead            | SpiReadRequest          | SpiReadResponse<'a>      | "spi/read"          |
-    | SpiWrite           | SpiWriteRequest<'a>     | SpiWriteResponse         | "spi/write"         |
-    | SpiFlush           | ()                      | SpiFlushResponse         | "spi/flush"         |
-    | SpiTransfer        | SpiTransferRequest<'a>  | SpiTransferResponse<'b>  | "spi/transfer"      |
-    | GpioGet            | GpioGetRequest          | GpioGetResponse          | "gpio/get"          |
-    | GpioPut            | GpioPutRequest          | GpioPutResponse          | "gpio/put"          |
-    | GpioWaitForHigh    | GpioWaitRequest         | GpioWaitResponse         | "gpio/wait-high"    |
-    | GpioWaitForLow     | GpioWaitRequest         | GpioWaitResponse         | "gpio/wait-low"     |
-    | GpioWaitForRising  | GpioWaitRequest         | GpioWaitResponse         | "gpio/wait-rising"  |
-    | GpioWaitForFalling | GpioWaitRequest         | GpioWaitResponse         | "gpio/wait-falling" |
-    | GpioWaitForAny     | GpioWaitRequest         | GpioWaitResponse         | "gpio/wait-any"     |
-    | SetConfiguration   | SetConfigurationRequest | SetConfigurationResponse | "set-config"        |
-    | Version            | ()                      | VersionInfo              | "version"           |
+    | EndpointTy          | RequestTy                  | ResponseTy                  | Path                |
+    | ----------          | ---------                  | ----------                  | ----                |
+    | PingEndpoint        | u32                        | u32                         | "ping"              |
+    | I2cRead             | I2cReadRequest             | I2cReadResponse<'a>         | "i2c/read"          |
+    | I2cWrite            | I2cWriteRequest<'a>        | I2cWriteResponse            | "i2c/write"         |
+    | I2cWriteRead        | I2cWriteReadRequest<'a>    | I2cWriteReadResponse<'b>    | "i2c/write-read"    |
+    | SpiRead             | SpiReadRequest             | SpiReadResponse<'a>         | "spi/read"          |
+    | SpiWrite            | SpiWriteRequest<'a>        | SpiWriteResponse            | "spi/write"         |
+    | SpiFlush            | ()                         | SpiFlushResponse            | "spi/flush"         |
+    | SpiTransfer         | SpiTransferRequest<'a>     | SpiTransferResponse<'b>     | "spi/transfer"      |
+    | GpioGet             | GpioGetRequest             | GpioGetResponse             | "gpio/get"          |
+    | GpioPut             | GpioPutRequest             | GpioPutResponse             | "gpio/put"          |
+    | GpioWaitForHigh     | GpioWaitRequest            | GpioWaitResponse            | "gpio/wait-high"    |
+    | GpioWaitForLow      | GpioWaitRequest            | GpioWaitResponse            | "gpio/wait-low"     |
+    | GpioWaitForRising   | GpioWaitRequest            | GpioWaitResponse            | "gpio/wait-rising"  |
+    | GpioWaitForFalling  | GpioWaitRequest            | GpioWaitResponse            | "gpio/wait-falling" |
+    | GpioWaitForAny      | GpioWaitRequest            | GpioWaitResponse            | "gpio/wait-any"     |
+    | I2cSetConfiguration | I2cSetConfigurationRequest | I2cSetConfigurationResponse | "i2c/set-config"    |
+    | SpiSetConfiguration | SpiSetConfigurationRequest | SpiSetConfigurationResponse | "spi/set-config"    |
+    | Version             | ()                         | VersionInfo                 | "version"           |
 }
 
 topics! {
@@ -297,14 +301,43 @@ pub struct GpioWaitFail;
 
 // --- Set config
 
-/// Request to reconfigure I2C and SPI bus parameters.
+/// Request to reconfigure I2C bus parameters.
+///
+/// Takes effect immediately. The firmware applies the new frequency before
+/// processing the next I2C operation.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct I2cSetConfigurationRequest {
+    /// I2C bus clock frequency.
+    pub frequency: I2cFrequency,
+}
+
+// WARNING: do not reorder variants — postcard encodes by index, not discriminant.
+/// I2C bus clock frequency.
+///
+/// The RP2350 supports Standard (100 kHz), Fast (400 kHz), and Fast+ (1 MHz)
+/// modes. Ultra-Fast mode is defined by the specification but not supported by
+/// the RP2350 hardware.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum I2cFrequency {
+    /// Standard mode — 100 kHz.
+    Standard = 0,
+    /// Fast mode — 400 kHz.
+    Fast = 1,
+    /// Fast+ mode — 1 MHz.
+    FastPlus = 2,
+}
+
+/// Error returned when I2C configuration fails.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct I2cSetConfigurationFail;
+
+/// Request to reconfigure SPI bus parameters.
 ///
 /// Takes effect immediately. The firmware applies the new settings before
-/// processing the next bus operation.
+/// processing the next SPI operation.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
-pub struct SetConfigurationRequest {
-    /// I2C bus clock frequency in Hz (e.g., 100_000 for standard mode, 400_000 for fast mode).
-    pub i2c_frequency: u32,
+pub struct SpiSetConfigurationRequest {
     /// SPI bus clock frequency in Hz.
     pub spi_frequency: u32,
     /// SPI clock phase.
@@ -337,9 +370,9 @@ pub enum SpiPolarity {
     IdleHigh = 1,
 }
 
-/// Error returned when configuration fails.
+/// Error returned when SPI configuration fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SetConfigurationFail;
+pub struct SpiSetConfigurationFail;
 
 // --- Version
 /// Firmware version information.
@@ -498,15 +531,24 @@ mod tests {
     // --- Config round-trip tests ---
 
     #[test]
-    fn set_configuration_request_round_trip() {
-        let req = SetConfigurationRequest {
-            i2c_frequency: 400_000,
+    fn i2c_set_configuration_request_round_trip() {
+        let req = I2cSetConfigurationRequest {
+            frequency: I2cFrequency::Fast,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: I2cSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn spi_set_configuration_request_round_trip() {
+        let req = SpiSetConfigurationRequest {
             spi_frequency: 1_000_000,
             spi_phase: SpiPhase::CaptureOnSecondTransition,
             spi_polarity: SpiPolarity::IdleHigh,
         };
         let bytes = to_allocvec(&req).unwrap();
-        let decoded: SetConfigurationRequest = from_bytes(&bytes).unwrap();
+        let decoded: SpiSetConfigurationRequest = from_bytes(&bytes).unwrap();
         assert_eq!(req, decoded);
     }
 
@@ -576,8 +618,11 @@ mod tests {
         let bytes = to_allocvec(&GpioWaitFail).unwrap();
         let _: GpioWaitFail = from_bytes(&bytes).unwrap();
 
-        let bytes = to_allocvec(&SetConfigurationFail).unwrap();
-        let _: SetConfigurationFail = from_bytes(&bytes).unwrap();
+        let bytes = to_allocvec(&I2cSetConfigurationFail).unwrap();
+        let _: I2cSetConfigurationFail = from_bytes(&bytes).unwrap();
+
+        let bytes = to_allocvec(&SpiSetConfigurationFail).unwrap();
+        let _: SpiSetConfigurationFail = from_bytes(&bytes).unwrap();
     }
 
     // --- P1: Schema stability tests ---
@@ -608,17 +653,27 @@ mod tests {
     }
 
     #[test]
-    fn set_configuration_request_wire_stability() {
-        let req = SetConfigurationRequest {
-            i2c_frequency: 400_000,
+    fn i2c_set_configuration_request_wire_stability() {
+        let req = I2cSetConfigurationRequest {
+            frequency: I2cFrequency::Fast,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: I2cSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn spi_set_configuration_request_wire_stability() {
+        let req = SpiSetConfigurationRequest {
             spi_frequency: 1_000_000,
             spi_phase: SpiPhase::CaptureOnFirstTransition,
             spi_polarity: SpiPolarity::IdleLow,
         };
         let bytes = to_allocvec(&req).unwrap();
-        // Snapshot the canonical encoding
         let canonical = bytes.clone();
-        let decoded: SetConfigurationRequest = from_bytes(&bytes).unwrap();
+        let decoded: SpiSetConfigurationRequest = from_bytes(&bytes).unwrap();
         assert_eq!(decoded, req);
         assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
     }
@@ -762,36 +817,54 @@ mod tests {
     }
 
     #[test]
-    fn set_configuration_request_all_enum_combinations() {
-        // Test all 4 combinations by constructing each explicitly
+    fn spi_set_configuration_request_all_enum_combinations() {
         for (phase, polarity) in [
             (SpiPhase::CaptureOnFirstTransition, SpiPolarity::IdleLow),
             (SpiPhase::CaptureOnFirstTransition, SpiPolarity::IdleHigh),
             (SpiPhase::CaptureOnSecondTransition, SpiPolarity::IdleLow),
             (SpiPhase::CaptureOnSecondTransition, SpiPolarity::IdleHigh),
         ] {
-            let req = SetConfigurationRequest {
-                i2c_frequency: 100_000,
+            let req = SpiSetConfigurationRequest {
                 spi_frequency: 500_000,
                 spi_phase: phase,
                 spi_polarity: polarity,
             };
             let bytes = to_allocvec(&req).unwrap();
-            let decoded: SetConfigurationRequest = from_bytes(&bytes).unwrap();
+            let decoded: SpiSetConfigurationRequest = from_bytes(&bytes).unwrap();
             assert_eq!(req, decoded);
         }
     }
 
     #[test]
-    fn set_configuration_request_max_frequencies() {
-        let req = SetConfigurationRequest {
-            i2c_frequency: u32::MAX,
+    fn i2c_set_configuration_request_all_frequencies() {
+        for freq in [
+            I2cFrequency::Standard,
+            I2cFrequency::Fast,
+            I2cFrequency::FastPlus,
+        ] {
+            let req = I2cSetConfigurationRequest { frequency: freq };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: I2cSetConfigurationRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn i2c_frequency_discriminants_are_stable() {
+        assert_eq!(I2cFrequency::Standard as u8, 0);
+        assert_eq!(I2cFrequency::Fast as u8, 1);
+        assert_eq!(I2cFrequency::FastPlus as u8, 2);
+    }
+
+    #[test]
+    fn spi_set_configuration_request_max_frequency() {
+        let req = SpiSetConfigurationRequest {
             spi_frequency: u32::MAX,
             spi_phase: SpiPhase::CaptureOnFirstTransition,
             spi_polarity: SpiPolarity::IdleLow,
         };
         let bytes = to_allocvec(&req).unwrap();
-        let decoded: SetConfigurationRequest = from_bytes(&bytes).unwrap();
+        let decoded: SpiSetConfigurationRequest = from_bytes(&bytes).unwrap();
         assert_eq!(req, decoded);
     }
 

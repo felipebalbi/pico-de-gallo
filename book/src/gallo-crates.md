@@ -17,12 +17,11 @@ Access I2C/SPI devices through Pico De Gallo
 Usage: gallo.exe [OPTIONS] [COMMAND]
 
 Commands:
-  list        List connected Pico de Gallo devices
-  version     Get firmware version
-  i2c         I2C access methods
-  spi         SPI access methods
-  set-config  Set bus parameters for I2C and SPI
-  help        Print this message or the help of the given subcommand(s)
+  list     List connected Pico de Gallo devices
+  version  Get firmware version
+  i2c      I2C access methods
+  spi      SPI access methods
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -s, --serial-number <SERIAL_NUMBER>
@@ -265,7 +264,8 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `gpio_wait_for_rising_edge`  | `pin`                                                         | Waits until a rising edge is seen on GPIO #`pin`                           |
 | `gpio_wait_for_falling_edge` | `pin`                                                         | Waits until a falling edge is seen on GPIO #`pin`                          |
 | `gpio_wait_for_any_edge`     | `pin`                                                         | Waits until any edge is seen on GPIO #`pin`                                |
-| `set_config`                 | `i2c_frequency`, `spi_frequency`, `spi_phase`, `spi_polarity` | Sets configuration parameters for I<sup>2</sup>C and SPI buses             |
+| `i2c_set_config`             | `frequency` (Standard/Fast/FastPlus)                          | Sets I<sup>2</sup>C bus clock frequency                                     |
+| `spi_set_config`             | `spi_frequency`, `spi_phase`, `spi_polarity`                  | Sets SPI bus clock frequency, phase, and polarity                            |
 | `version`                    |                                                               | Reads the current Firmware version from *Pico de Gallo*                    |
 
 ## Gallo Hal

@@ -47,13 +47,14 @@ use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
     GpioGet, GpioGetFail, GpioGetRequest, GpioPut, GpioPutFail, GpioPutRequest, GpioWaitFail, GpioWaitForAny,
     GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cRead, I2cReadFail,
-    I2cReadRequest, I2cWrite, I2cWriteFail, I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest, I2cWriteRequest,
-    MICROSOFT_VID, PICO_DE_GALLO_PID, SetConfiguration, SetConfigurationFail, SetConfigurationRequest, SpiFlush,
-    SpiFlushFail, SpiRead, SpiReadFail, SpiReadRequest, SpiTransfer, SpiTransferFail, SpiTransferRequest, SpiWrite,
-    SpiWriteFail, SpiWriteRequest, Version,
+    I2cReadRequest, I2cSetConfiguration, I2cSetConfigurationFail, I2cSetConfigurationRequest, I2cWrite, I2cWriteFail,
+    I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, SpiFlush,
+    SpiFlushFail, SpiRead, SpiReadFail, SpiReadRequest, SpiSetConfiguration, SpiSetConfigurationFail,
+    SpiSetConfigurationRequest, SpiTransfer, SpiTransferFail, SpiTransferRequest, SpiWrite, SpiWriteFail,
+    SpiWriteRequest, Version,
 };
 
-pub use pico_de_gallo_internal::{GpioState, SpiPhase, SpiPolarity, VersionInfo};
+pub use pico_de_gallo_internal::{GpioState, I2cFrequency, SpiPhase, SpiPolarity, VersionInfo};
 
 use postcard_rpc::{
     header::VarSeqKind,
@@ -335,17 +336,32 @@ impl PicoDeGallo {
             .map_err(PicoDeGalloError::Endpoint)
     }
 
-    /// Set configuration parameters for I2C and SPI interfaces.
-    pub async fn set_config(
+    /// Set I2C bus configuration parameters.
+    ///
+    /// Changes the I2C bus clock frequency. Takes effect immediately before
+    /// the next I2C operation.
+    pub async fn i2c_set_config(
         &self,
-        i2c_frequency: u32,
+        frequency: I2cFrequency,
+    ) -> Result<(), PicoDeGalloError<I2cSetConfigurationFail>> {
+        self.client
+            .send_resp::<I2cSetConfiguration>(&I2cSetConfigurationRequest { frequency })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Set SPI bus configuration parameters.
+    ///
+    /// Changes the SPI bus clock frequency, phase, and polarity. Takes effect
+    /// immediately before the next SPI operation.
+    pub async fn spi_set_config(
+        &self,
         spi_frequency: u32,
         spi_phase: SpiPhase,
         spi_polarity: SpiPolarity,
-    ) -> Result<(), PicoDeGalloError<SetConfigurationFail>> {
+    ) -> Result<(), PicoDeGalloError<SpiSetConfigurationFail>> {
         self.client
-            .send_resp::<SetConfiguration>(&SetConfigurationRequest {
-                i2c_frequency,
+            .send_resp::<SpiSetConfiguration>(&SpiSetConfigurationRequest {
                 spi_frequency,
                 spi_phase,
                 spi_polarity,
@@ -422,7 +438,6 @@ mod tests {
 
     #[test]
     fn error_display_endpoint() {
-        use std::fmt::Display;
         // Use a simple Display-implementing type
         let err: PicoDeGalloError<&str> = PicoDeGalloError::Endpoint("sensor timeout");
         let msg = format!("{err}");
