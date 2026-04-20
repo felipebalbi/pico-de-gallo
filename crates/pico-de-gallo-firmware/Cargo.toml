@@ -5,6 +5,9 @@ edition = "2024"
 license = "MIT"
 rust-version = "1.90"
 description = "Pico de Gallo firmware"
+readme = "README.md"
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["embassy", "rp2350", "pico-de-gallo", "firmware"]
 repository = "https://github.com/OpenDevicePartnership/pico-de-gallo"
 
 [dependencies]

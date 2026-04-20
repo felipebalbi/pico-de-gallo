@@ -1,8 +1,51 @@
+//! C-compatible FFI bindings for the Pico de Gallo USB bridge.
+//!
+//! This crate wraps [`pico-de-gallo-lib`](https://docs.rs/pico-de-gallo-lib) in
+//! a C-compatible API using opaque pointers and integer status codes. It is
+//! compiled as a `cdylib` (shared library) and generates a C header via
+//! [`cbindgen`](https://docs.rs/cbindgen).
+//!
+//! # Usage from C
+//!
+//! ```c
+//! #include "pico_de_gallo.h"
+//!
+//! const PicoDeGallo *gallo = gallo_init();
+//! uint32_t id = 42;
+//! Status status = gallo_ping(gallo, &id);
+//! // id now contains the round-tripped value
+//! gallo_free(gallo);
+//! ```
+//!
+//! # Lifecycle
+//!
+//! 1. Call [`gallo_init`] (or [`gallo_init_with_serial_number`]) to create a context.
+//! 2. Use `gallo_*` functions, passing the context pointer.
+//! 3. Call [`gallo_free`] to release resources.
+//!
+//! # Thread Safety
+//!
+//! The context pointer is safe to share across threads — the inner type is
+//! `Send + Sync` (enforced by a compile-time assertion). Each function call
+//! creates its own async executor via [`futures::executor::block_on`], so
+//! concurrent calls from multiple threads are safe.
+//!
+//! # Status Codes
+//!
+//! All functions return a [`Status`] code. [`Status::Ok`] (0) indicates success;
+//! negative values indicate errors. See [`Status`] for the full list.
+
 use futures::executor::block_on;
 use pico_de_gallo_lib as lib;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+/// Opaque handle to a Pico de Gallo device context.
+///
+/// Created by [`gallo_init`] or [`gallo_init_with_serial_number`] and released
+/// by [`gallo_free`]. This type is a thin wrapper around
+/// [`pico_de_gallo_lib::PicoDeGallo`] and must not be constructed directly
+/// from C code.
 pub struct PicoDeGallo(lib::PicoDeGallo);
 
 // Compile-time assertion: the FFI handle must be safe to share across
@@ -15,6 +58,10 @@ const _: () = {
 
 // ----------------------------- Status Codes -----------------------------
 
+/// Status codes returned by all FFI functions.
+///
+/// [`Status::Ok`] (0) indicates success. All error codes are negative integers
+/// with stable values suitable for use in C `switch` statements.
 #[repr(i32)]
 #[derive(Debug, PartialEq)]
 pub enum Status {

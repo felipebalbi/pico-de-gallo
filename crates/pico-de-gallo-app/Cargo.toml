@@ -9,6 +9,7 @@ categories = ["command-line-utilities", "development-tools", ]
 keywords = ["cli", "utility", "pico-de-gallo"]
 license = "MIT"
 repository = "https://github.com/OpenDevicePartnership/pico-de-gallo"
+documentation = "https://docs.rs/gallo"
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }

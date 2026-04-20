@@ -1,10 +1,46 @@
+//! Shared wire-protocol types for the Pico de Gallo USB bridge.
+//!
+//! This crate defines the [postcard-rpc](https://docs.rs/postcard-rpc) endpoints,
+//! request/response types, and shared constants used by both the firmware
+//! ([`pico-de-gallo-firmware`]) and the host-side library ([`pico-de-gallo-lib`]).
+//!
+//! # Wire Compatibility
+//!
+//! All types are serialized with [postcard](https://docs.rs/postcard). Postcard
+//! encodes enum variants by **index** (0, 1, 2, …), not by discriminant value.
+//! Reordering variants in any `enum` in this crate is a **breaking wire change**
+//! that will silently corrupt communication between mismatched firmware and host
+//! versions.
+//!
+//! # Feature Flags
+//!
+//! - **`use-std`** — Enables `Vec<u8>` response types for the host side. Without
+//!   this feature (the default for firmware), responses use borrowed `&[u8]` slices.
+//!
+//! # Crate Organization
+//!
+//! - **Constants**: [`MICROSOFT_VID`], [`PICO_DE_GALLO_PID`], [`MAX_TRANSFER_SIZE`]
+//! - **Endpoints**: Defined via the [`postcard_rpc::endpoints!`] macro — see
+//!   [`ENDPOINT_LIST`] for the full table.
+//! - **I2C types**: [`I2cReadRequest`], [`I2cWriteRequest`], [`I2cWriteReadRequest`]
+//!   and their corresponding error types.
+//! - **SPI types**: [`SpiReadRequest`], [`SpiWriteRequest`], [`SpiTransferRequest`]
+//!   and their corresponding error types.
+//! - **GPIO types**: [`GpioGetRequest`], [`GpioPutRequest`], [`GpioWaitRequest`],
+//!   [`GpioState`].
+//! - **Configuration**: [`SetConfigurationRequest`], [`SpiPhase`], [`SpiPolarity`].
+//! - **Version**: [`VersionInfo`].
+
 #![cfg_attr(not(feature = "use-std"), no_std)]
 
 use postcard_rpc::{TopicDirection, endpoints, topics};
 use postcard_schema::Schema;
 use serde::{Deserialize, Serialize};
 
+/// USB Vendor ID (Microsoft Corporation).
 pub const MICROSOFT_VID: u16 = 0x045e;
+
+/// USB Product ID assigned to Pico de Gallo.
 pub const PICO_DE_GALLO_PID: u16 = 0x067d;
 
 /// Maximum number of bytes the firmware can handle in a single I2C or SPI
@@ -14,34 +50,58 @@ pub const MAX_TRANSFER_SIZE: usize = 4096;
 
 // ---
 
+/// Response type for I2C write operations.
 pub type I2cWriteResponse = Result<(), I2cWriteFail>;
 
+/// Response type for I2C read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(feature = "use-std")]
 pub type I2cReadResponse<'a> = Result<Vec<u8>, I2cReadFail>;
+/// Response type for I2C read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(not(feature = "use-std"))]
 pub type I2cReadResponse<'a> = Result<&'a [u8], I2cReadFail>;
 
+/// Response type for I2C write-read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(feature = "use-std")]
 pub type I2cWriteReadResponse<'a> = Result<Vec<u8>, I2cWriteReadFail>;
+/// Response type for I2C write-read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(not(feature = "use-std"))]
 pub type I2cWriteReadResponse<'a> = Result<&'a [u8], I2cWriteReadFail>;
 
+/// Response type for SPI write operations.
 pub type SpiWriteResponse = Result<(), SpiWriteFail>;
 
+/// Response type for SPI read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(feature = "use-std")]
 pub type SpiReadResponse<'a> = Result<Vec<u8>, SpiReadFail>;
+/// Response type for SPI read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(not(feature = "use-std"))]
 pub type SpiReadResponse<'a> = Result<&'a [u8], SpiReadFail>;
 
+/// Response type for SPI flush operations.
 pub type SpiFlushResponse = Result<(), SpiFlushFail>;
 
+/// Response type for SPI transfer operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(feature = "use-std")]
 pub type SpiTransferResponse<'a> = Result<Vec<u8>, SpiTransferFail>;
+/// Response type for SPI transfer operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(not(feature = "use-std"))]
 pub type SpiTransferResponse<'a> = Result<&'a [u8], SpiTransferFail>;
+
+/// Response type for GPIO get operations.
 pub type GpioGetResponse = Result<GpioState, GpioGetFail>;
+/// Response type for GPIO put operations.
 pub type GpioPutResponse = Result<(), GpioPutFail>;
+/// Response type for GPIO wait operations.
 pub type GpioWaitResponse = Result<(), GpioWaitFail>;
+/// Response type for bus configuration operations.
 pub type SetConfigurationResponse = Result<(), SetConfigurationFail>;
 
 endpoints! {
@@ -83,87 +143,128 @@ topics! {
 
 // --- I2C
 
+/// Request to write bytes to an I2C device, then read back.
+///
+/// The firmware performs a write followed by a repeated-start read in a
+/// single I2C transaction, which is the standard pattern for reading
+/// registers from most I2C devices.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct I2cWriteReadRequest<'a> {
+    /// 7-bit I2C slave address.
     pub address: u8,
+    /// Bytes to write (typically a register address).
     pub contents: &'a [u8],
+    /// Number of bytes to read back (max [`MAX_TRANSFER_SIZE`]).
     pub count: u16,
 }
 
+/// Error returned when an I2C write-read operation fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct I2cWriteReadFail;
 
+/// Request to read bytes from an I2C device.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct I2cReadRequest {
+    /// 7-bit I2C slave address.
     pub address: u8,
+    /// Number of bytes to read (max [`MAX_TRANSFER_SIZE`]).
     pub count: u16,
 }
 
+/// Error returned when an I2C read operation fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct I2cReadFail;
 
+/// Request to write bytes to an I2C device.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct I2cWriteRequest<'a> {
+    /// 7-bit I2C slave address.
     pub address: u8,
+    /// Bytes to write.
     pub contents: &'a [u8],
 }
 
+/// Error returned when an I2C write operation fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct I2cWriteFail;
 
 // --- SPI
 
+/// Request to read bytes from the SPI bus.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct SpiReadRequest {
+    /// Number of bytes to read (max [`MAX_TRANSFER_SIZE`]).
     pub count: u16,
 }
 
+/// Error returned when an SPI read operation fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpiReadFail;
 
+/// Request to write bytes to the SPI bus.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct SpiWriteRequest<'a> {
+    /// Bytes to write.
     pub contents: &'a [u8],
 }
 
+/// Error returned when an SPI write operation fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpiWriteFail;
 
+/// Error returned when an SPI flush operation fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpiFlushFail;
 
+/// Request for a full-duplex SPI transfer.
+///
+/// The firmware simultaneously transmits `contents` and receives the same
+/// number of bytes. This is a true full-duplex operation using DMA.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct SpiTransferRequest<'a> {
+    /// Bytes to transmit. The response will contain the same number of received bytes.
     pub contents: &'a [u8],
 }
 
+/// Error returned when an SPI transfer operation fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpiTransferFail;
 
 // --- GPIO
 
+/// Request to read the current level of a GPIO pin.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioGetRequest {
+    /// GPIO pin index (0–7).
     pub pin: u8,
 }
 
+/// Error returned when a GPIO read fails (e.g., invalid pin index).
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GpioGetFail;
 
+/// Request to set a GPIO pin to a specific level.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioPutRequest {
+    /// GPIO pin index (0–7).
     pub pin: u8,
+    /// Desired output level.
     pub state: GpioState,
 }
 
+/// Error returned when a GPIO write fails (e.g., invalid pin index).
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GpioPutFail;
 
+/// Logic level of a GPIO pin.
+//
 // WARNING: Do not reorder enum variants — postcard serializes by
 // variant index, not by discriminant. Reordering breaks wire compat.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GpioState {
+    /// Logic low (0V).
     Low,
+    /// Logic high (3.3V on RP2350).
     High,
 }
 
@@ -183,48 +284,72 @@ impl From<GpioState> for bool {
     }
 }
 
+/// Request to wait for a GPIO pin to reach a specific state or edge.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioWaitRequest {
+    /// GPIO pin index (0–7).
     pub pin: u8,
 }
 
+/// Error returned when a GPIO wait fails (e.g., invalid pin index).
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GpioWaitFail;
 
 // --- Set config
 
+/// Request to reconfigure I2C and SPI bus parameters.
+///
+/// Takes effect immediately. The firmware applies the new settings before
+/// processing the next bus operation.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct SetConfigurationRequest {
+    /// I2C bus clock frequency in Hz (e.g., 100_000 for standard mode, 400_000 for fast mode).
     pub i2c_frequency: u32,
+    /// SPI bus clock frequency in Hz.
     pub spi_frequency: u32,
+    /// SPI clock phase.
     pub spi_phase: SpiPhase,
+    /// SPI clock polarity.
     pub spi_polarity: SpiPolarity,
 }
 
+/// SPI clock phase setting.
+//
 // WARNING: Do not reorder enum variants — postcard serializes by
 // variant index, not by discriminant. Reordering breaks wire compat.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpiPhase {
+    /// Data captured on the leading (first) clock edge.
     CaptureOnFirstTransition = 0,
+    /// Data captured on the trailing (second) clock edge.
     CaptureOnSecondTransition = 1,
 }
 
+/// SPI clock polarity setting.
+//
 // WARNING: Do not reorder enum variants — postcard serializes by
 // variant index, not by discriminant. Reordering breaks wire compat.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpiPolarity {
+    /// Clock idles at logic low (CPOL=0).
     IdleLow = 0,
+    /// Clock idles at logic high (CPOL=1).
     IdleHigh = 1,
 }
 
+/// Error returned when configuration fails.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetConfigurationFail;
 
 // --- Version
+/// Firmware version information.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct VersionInfo {
+    /// Major version number.
     pub major: u16,
+    /// Minor version number.
     pub minor: u16,
+    /// Patch version number.
     pub patch: u32,
 }
 

@@ -1,3 +1,47 @@
+//! [`embedded-hal`](https://docs.rs/embedded-hal) and
+//! [`embedded-hal-async`](https://docs.rs/embedded-hal-async) implementations
+//! backed by a Pico de Gallo USB bridge.
+//!
+//! This crate lets you run embedded Rust drivers on a host machine by
+//! forwarding I2C, SPI, GPIO, and delay operations to a Pico de Gallo device
+//! over USB.
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use pico_de_gallo_hal::Hal;
+//! use embedded_hal::i2c::I2c;
+//!
+//! let hal = Hal::new();
+//! let mut i2c = hal.i2c();
+//!
+//! // Read 2 bytes from a TMP102 temperature sensor
+//! let mut buf = [0u8; 2];
+//! i2c.write_read(0x48, &[0x00], &mut buf).unwrap();
+//! ```
+//!
+//! # Blocking vs. Async
+//!
+//! Both `embedded-hal` (blocking) and `embedded-hal-async` traits are
+//! implemented. The HAL automatically detects whether it is running inside a
+//! tokio runtime and adjusts its execution strategy:
+//!
+//! - **Inside tokio**: Uses [`tokio::task::block_in_place`] to avoid blocking
+//!   the async executor while waiting for USB responses.
+//! - **Outside tokio**: Blocks directly on the tokio handle.
+//!
+//! This means the same `Hal` instance works in both synchronous test code
+//! and async application code.
+//!
+//! # Implemented Traits
+//!
+//! | Peripheral | Blocking Trait | Async Trait |
+//! |------------|---------------|-------------|
+//! | GPIO | [`OutputPin`](embedded_hal::digital::OutputPin), [`InputPin`](embedded_hal::digital::InputPin), [`StatefulOutputPin`](embedded_hal::digital::StatefulOutputPin) | [`Wait`](embedded_hal_async::digital::Wait) |
+//! | I2C | [`I2c`](embedded_hal::i2c::I2c) | [`I2c`](embedded_hal_async::i2c::I2c) |
+//! | SPI | [`SpiBus`](embedded_hal::spi::SpiBus) | [`SpiBus`](embedded_hal_async::spi::SpiBus) |
+//! | Delay | [`DelayNs`](embedded_hal::delay::DelayNs) | [`DelayNs`](embedded_hal_async::delay::DelayNs) |
+
 use pico_de_gallo_lib::{GpioState, PicoDeGallo};
 use std::sync::Arc;
 use tokio::runtime::{Handle, Runtime};
@@ -6,6 +50,11 @@ use tokio::task::block_in_place;
 
 pub use pico_de_gallo_lib::{SpiPhase, SpiPolarity};
 
+/// Top-level HAL context for a Pico de Gallo device.
+///
+/// Holds the USB connection and tokio runtime handle. Create peripheral
+/// handles using the accessor methods: [`gpio`](Self::gpio),
+/// [`i2c`](Self::i2c), [`spi`](Self::spi), [`delay`](Self::delay).
 pub struct Hal {
     gallo: Arc<Mutex<PicoDeGallo>>,
     _runtime: Option<Runtime>,
@@ -129,7 +178,10 @@ impl Hal {
 
 // ----------------------------- Error -----------------------------
 
-/// Pico de gallo errors
+/// Error type for HAL operations.
+///
+/// This type implements error traits for all three embedded-hal peripheral
+/// categories (digital, I2C, SPI), always mapping to `ErrorKind::Other`.
 #[derive(Debug)]
 pub enum Error {
     /// An error with a descriptive message.
@@ -158,6 +210,10 @@ impl std::error::Error for Error {}
 
 // ----------------------------- Gpio -----------------------------
 
+/// GPIO pin handle implementing [`embedded-hal`] digital traits.
+///
+/// Obtained from [`Hal::gpio`]. Each `Gpio` instance is bound to a specific
+/// pin number (0–7) and can be used as both an input and output.
 pub struct Gpio {
     pin: u8,
     gallo: Arc<Mutex<PicoDeGallo>>,
@@ -300,6 +356,10 @@ impl embedded_hal_async::digital::Wait for Gpio {
 
 // ----------------------------- I2c -----------------------------
 
+/// I2C bus handle implementing [`embedded-hal`] I2C traits.
+///
+/// Obtained from [`Hal::i2c`]. Supports 7-bit addressing. The I2C bus clock
+/// frequency can be changed at runtime with [`Hal::set_config`].
 pub struct I2c {
     gallo: Arc<Mutex<PicoDeGallo>>,
     handle: Handle,
@@ -386,6 +446,11 @@ impl embedded_hal_async::i2c::I2c<embedded_hal_async::i2c::SevenBitAddress> for 
 
 // ----------------------------- Spi -----------------------------
 
+/// SPI bus handle implementing [`embedded-hal`] SPI traits.
+///
+/// Obtained from [`Hal::spi`]. Supports full-duplex transfers. The SPI clock
+/// frequency, phase, and polarity can be changed at runtime with
+/// [`Hal::set_config`].
 pub struct Spi {
     gallo: Arc<Mutex<PicoDeGallo>>,
     handle: Handle,
@@ -538,6 +603,10 @@ impl embedded_hal_async::spi::SpiBus for Spi {
 
 // ----------------------------- Delay -----------------------------
 
+/// Delay provider using host-side timers.
+///
+/// Obtained from [`Hal::delay`]. Uses [`std::thread::sleep`] for blocking
+/// delays and [`tokio::time::sleep`] for async delays.
 pub struct Delay;
 
 impl embedded_hal::delay::DelayNs for Delay {

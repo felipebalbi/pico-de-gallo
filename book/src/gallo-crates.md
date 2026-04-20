@@ -17,6 +17,7 @@ Access I2C/SPI devices through Pico De Gallo
 Usage: gallo.exe [OPTIONS] [COMMAND]
 
 Commands:
+  list        List connected Pico de Gallo devices
   version     Get firmware version
   i2c         I2C access methods
   spi         SPI access methods
@@ -27,6 +28,18 @@ Options:
   -s, --serial-number <SERIAL_NUMBER>
   -h, --help                           Print help
   -V, --version                        Print version
+```
+
+#### Listing Connected Devices
+
+When multiple *Pico de Gallo* boards are connected, use the `list`
+command to discover them:
+
+```console
+$ gallo list
+Serial Number         Bus    Address
+E6633861A34B8C24      2      14
+E6633861A34B9F17      1      8
 ```
 
 If you have more than one *Pico de Gallo* attached to your host
@@ -164,6 +177,7 @@ Usage: gallo.exe spi [COMMAND]
 Commands:
   read        Read bytes through SPI bus
   write       Write bytes through SPI bus
+  transfer    Full-duplex SPI transfer
   write-read  Write bytes followed by read bytes
   help        Print this message or the help of the given subcommand(s)
 
@@ -184,6 +198,16 @@ $ gallo spi read --count 10
 $ gallo spi write --bytes 0x00 0x01 0x02 0x03 0x04 0x05
 ```
 
+#### Full-Duplex Transfer
+
+A true full-duplex SPI transfer that simultaneously transmits and
+receives:
+
+```console
+$ gallo spi transfer --bytes 0x01 0x02 0x03 0x04
+00 00 00 00
+```
+
 #### Write-Then-Read
 
 ```console
@@ -191,6 +215,19 @@ $ gallo spi write-read --bytes 0x00 0x01 0x02 0x03 0x04 0x05 --count 10
 00 00 00 00 00 00 00 00 00 00
 ```
 
+### Output Formats
+
+Read operations (both I<sup>2</sup>C and SPI) support three output
+formats via the `-f` / `--format` flag:
+
+- `hex` (default): hexadecimal byte dump
+- `binary`: raw bytes written to stdout
+- `ascii`: printable characters shown, non-printable replaced with `.`
+
+```console
+$ gallo i2c read --address 0x68 -c 10 -f ascii
+..Q.,...
+```
 
 ## Gallo Lib
 
@@ -219,6 +256,7 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `i2c_write`                  | `address`, `contents`                                         | Attempts to write `contents` to the  I<sup>2</sup>C device at `address`    |
 | `spi_read`                   | `count`                                                       | Attempts to read `count` bytes via SPI                                     |
 | `spi_write`                  | `contents`                                                    | Attempts to write `contents` via SPI                                       |
+| `spi_transfer`               | `contents`                                                    | Full-duplex SPI transfer (simultaneous TX and RX)                          |
 | `spi_flush`                  |                                                               | Flushes the SPI bus                                                        |
 | `gpio_get`                   | `pin`                                                         | Reads the current state of the GPIO #`pin`                                 |
 | `gpio_put`                   | `pin`, `state`                                                | Sets the state of GPIO #`pin` to `state`                                   |

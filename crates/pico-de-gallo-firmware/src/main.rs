@@ -1,5 +1,33 @@
 #![no_std]
 #![no_main]
+//! Pico de Gallo firmware for the Raspberry Pi Pico 2 (RP2350).
+//!
+//! This firmware implements a USB bridge that exposes I2C, SPI, and GPIO
+//! peripherals to a host computer via [postcard-rpc](https://docs.rs/postcard-rpc)
+//! endpoints. It runs on the [Embassy](https://embassy.dev) async runtime.
+//!
+//! # Peripheral Mapping
+//!
+//! | Function | RP2350 Pins | Notes |
+//! |----------|-------------|-------|
+//! | I2C1 SDA | GPIO 2 | 7-bit addressing, async mode |
+//! | I2C1 SCL | GPIO 3 | |
+//! | SPI0 SCK | GPIO 6 | DMA-backed full-duplex |
+//! | SPI0 TX  | GPIO 7 | |
+//! | SPI0 RX  | GPIO 4 | |
+//! | GPIO 0–7 | GPIO 8–15 | Input/output/edge-wait |
+//! | USB      | Native USB | postcard-rpc transport |
+//!
+//! # Endpoints
+//!
+//! See [`pico_de_gallo_internal::ENDPOINT_LIST`] for the full list of
+//! supported endpoints and their request/response types.
+//!
+//! # Buffer Size
+//!
+//! The firmware uses a shared buffer of [`MAX_TRANSFER_SIZE`](pico_de_gallo_internal::MAX_TRANSFER_SIZE)
+//! (4096) bytes for I2C and SPI data. Requests exceeding this limit are
+//! rejected with an error.
 
 use defmt::{debug, info, warn};
 use embassy_embedded_hal::SetConfig;
@@ -42,7 +70,11 @@ use static_cell::ConstStaticCell;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
-// Program metadata for `picotool info`.
+/// Binary info entries for `picotool info` identification.
+///
+/// These entries are placed in the `.bi_entries` linker section and allow
+/// `picotool` to display the firmware name, description, version, and
+/// build info without running the firmware.
 #[unsafe(link_section = ".bi_entries")]
 #[used]
 pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
@@ -100,16 +132,26 @@ macro_rules! gpio_input {
     }};
 }
 
+/// USB driver type for the RP2350.
 type AppDriver = Driver<'static, USB>;
+/// postcard-rpc wire storage with ThreadMode mutex.
 type AppStorage = WireStorage<ThreadModeRawMutex, AppDriver, 256, 256, 64, 256>;
+/// Packet buffer storage sized for [`MAX_TRANSFER_SIZE`] plus protocol overhead.
 type BufStorage = PacketBuffers<{ MAX_TRANSFER_SIZE + 1024 }, { MAX_TRANSFER_SIZE + 1024 }>;
+/// postcard-rpc transmit implementation.
 type AppTx = WireTxImpl<ThreadModeRawMutex, AppDriver>;
+/// postcard-rpc receive implementation.
 type AppRx = WireRxImpl<AppDriver>;
+/// The complete postcard-rpc server type.
 type AppServer = Server<AppTx, AppRx, WireRxBuf, PicoDeGallo>;
 
 static PBUFS: ConstStaticCell<BufStorage> = ConstStaticCell::new(BufStorage::new());
 static STORAGE: AppStorage = AppStorage::new();
 
+/// Build the USB device configuration.
+///
+/// Reads the chip unique ID from OTP to generate a deterministic serial
+/// number string. Falls back to all-zeros if OTP read fails.
 fn usb_config() -> Config<'static> {
     // Obtain the chip unique ID for USB serial number.
     // Falls back to "UNKNOWN" if OTP read fails (e.g. on some dev boards).
@@ -256,11 +298,13 @@ pub async fn usb_task(mut usb: UsbDevice<'static, AppDriver>) {
 
 // --- Handlers ---
 
+/// Handler for the `ping` endpoint — echoes back the received `u32`.
 fn ping_handler(_context: &mut Context, _header: VarHeader, rqst: u32) -> u32 {
     info!("ping: {=u32:#x}", rqst);
     rqst
 }
 
+/// Handler for `i2c/read` — reads bytes from an I2C slave.
 async fn i2c_read_handler<'a>(
     context: &'a mut Context,
     _header: VarHeader,
@@ -282,6 +326,7 @@ async fn i2c_read_handler<'a>(
     Ok(&context.buf[..count])
 }
 
+/// Handler for `i2c/write` — writes bytes to an I2C slave.
 async fn i2c_write_handler<'a>(
     context: &mut Context,
     _header: VarHeader,
@@ -295,6 +340,7 @@ async fn i2c_write_handler<'a>(
         .map_err(|_| I2cWriteFail)
 }
 
+/// Handler for `i2c/write-read` — writes then reads in a single I2C transaction.
 async fn i2c_write_read_handler<'a>(
     context: &'a mut Context,
     _header: VarHeader,
@@ -321,6 +367,7 @@ async fn i2c_write_read_handler<'a>(
     Ok(&context.buf[..count])
 }
 
+/// Handler for `spi/read` — reads bytes from the SPI bus.
 async fn spi_read_handler<'a>(
     context: &'a mut Context,
     _header: VarHeader,
@@ -338,6 +385,7 @@ async fn spi_read_handler<'a>(
     Ok(&context.buf[..count])
 }
 
+/// Handler for `spi/write` — writes bytes to the SPI bus.
 async fn spi_write_handler<'a>(
     context: &mut Context,
     _header: VarHeader,
@@ -347,11 +395,13 @@ async fn spi_write_handler<'a>(
     context.spi.write(req.contents).await.map_err(|_| SpiWriteFail)
 }
 
+/// Handler for `spi/flush` — flushes the SPI interface.
 async fn spi_flush_handler(context: &mut Context, _header: VarHeader, _req: ()) -> SpiFlushResponse {
     debug!("spi flush");
     context.spi.flush().map_err(|_| SpiFlushFail)
 }
 
+/// Handler for `spi/transfer` — performs a full-duplex SPI transfer via DMA.
 async fn spi_transfer_handler<'a>(
     context: &'a mut Context,
     _header: VarHeader,
@@ -373,6 +423,7 @@ async fn spi_transfer_handler<'a>(
     Ok(&context.buf[..len])
 }
 
+/// Handler for `gpio/get` — reads the current logic level of a pin.
 async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGetRequest) -> GpioGetResponse {
     let gpio = gpio_input!(context, req.pin, GpioGetFail);
     debug!("gpio get: pin={=u8}", req.pin);
@@ -382,6 +433,7 @@ async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGe
     }
 }
 
+/// Handler for `gpio/put` — sets a GPIO pin to the requested level.
 async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPutRequest) -> GpioPutResponse {
     let pin = usize::from(req.pin);
     let gpio = context.gpios.get_mut(pin).ok_or(GpioPutFail)?;
@@ -398,6 +450,7 @@ async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPu
     Ok(())
 }
 
+/// Handler for `gpio/wait-high` — blocks until the pin goes high.
 async fn gpio_wait_for_high_handler(
     context: &mut Context,
     _header: VarHeader,
@@ -409,6 +462,7 @@ async fn gpio_wait_for_high_handler(
     Ok(())
 }
 
+/// Handler for `gpio/wait-low` — blocks until the pin goes low.
 async fn gpio_wait_for_low_handler(
     context: &mut Context,
     _header: VarHeader,
@@ -420,6 +474,7 @@ async fn gpio_wait_for_low_handler(
     Ok(())
 }
 
+/// Handler for `gpio/wait-rising` — blocks until a rising edge.
 async fn gpio_wait_for_rising_handler(
     context: &mut Context,
     _header: VarHeader,
@@ -431,6 +486,7 @@ async fn gpio_wait_for_rising_handler(
     Ok(())
 }
 
+/// Handler for `gpio/wait-falling` — blocks until a falling edge.
 async fn gpio_wait_for_falling_handler(
     context: &mut Context,
     _header: VarHeader,
@@ -442,6 +498,7 @@ async fn gpio_wait_for_falling_handler(
     Ok(())
 }
 
+/// Handler for `gpio/wait-any` — blocks until any edge.
 async fn gpio_wait_for_any_handler(
     context: &mut Context,
     _header: VarHeader,
@@ -453,6 +510,7 @@ async fn gpio_wait_for_any_handler(
     Ok(())
 }
 
+/// Handler for `set-config` — reconfigures I2C and SPI bus parameters.
 async fn set_config_handler(
     context: &mut Context,
     _header: VarHeader,
@@ -480,6 +538,7 @@ async fn set_config_handler(
     context.i2c.set_config(&i2c_config).map_err(|_| SetConfigurationFail)
 }
 
+/// Handler for `version` — returns the firmware version.
 async fn version_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> VersionInfo {
     VersionInfo {
         major: VERSION_MAJOR,

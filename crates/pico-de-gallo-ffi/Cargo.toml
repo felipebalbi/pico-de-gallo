@@ -9,6 +9,7 @@ categories = ["api-bindings", "embedded", "hardware-support"]
 keywords = ["binding", "ffi", "c", "pico-de-gallo"]
 license = "MIT"
 repository = "https://github.com/OpenDevicePartnership/pico-de-gallo"
+documentation = "https://docs.rs/pico-de-gallo-ffi"
 
 [dependencies]
 futures = "0.3.32"

@@ -1,3 +1,48 @@
+//! Host-side library for communicating with a Pico de Gallo USB bridge.
+//!
+//! This crate provides [`PicoDeGallo`], an async client for interacting with
+//! the Pico de Gallo firmware over USB. It supports I2C reads/writes, SPI
+//! operations (including full-duplex transfers), GPIO control, and device
+//! configuration — all via [postcard-rpc](https://docs.rs/postcard-rpc) endpoints.
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use pico_de_gallo_lib::PicoDeGallo;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let gallo = PicoDeGallo::new();
+//!     let version = gallo.version().await.unwrap();
+//!     println!("Firmware v{}.{}.{}", version.major, version.minor, version.patch);
+//! }
+//! ```
+//!
+//! # Multiple Devices
+//!
+//! When multiple Pico de Gallo boards are connected, use [`list_devices`] to
+//! enumerate them and [`PicoDeGallo::new_with_serial_number`] to connect to a
+//! specific board:
+//!
+//! ```no_run
+//! use pico_de_gallo_lib::{PicoDeGallo, list_devices};
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     for dev in list_devices() {
+//!         println!("Found: {:?}", dev.serial_number);
+//!     }
+//!     let gallo = PicoDeGallo::new_with_serial_number("ABCD1234");
+//! }
+//! ```
+//!
+//! # Error Handling
+//!
+//! All methods return [`Result<T, PicoDeGalloError<E>>`](PicoDeGalloError)
+//! where `E` is the endpoint-specific error type. Errors are either
+//! communication failures ([`PicoDeGalloError::Comms`]) or endpoint-level
+//! errors ([`PicoDeGalloError::Endpoint`]).
+
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
     GpioGet, GpioGetFail, GpioGetRequest, GpioPut, GpioPutFail, GpioPutRequest, GpioWaitFail, GpioWaitForAny,
@@ -48,9 +93,16 @@ pub fn list_devices() -> Vec<DeviceDescription> {
         .collect()
 }
 
+/// Error type for Pico de Gallo operations.
+///
+/// Every method on [`PicoDeGallo`] returns this error type, parameterized by the
+/// endpoint-specific error `E`. In practice, `E` is a unit struct like
+/// [`pico_de_gallo_internal::I2cReadFail`].
 #[derive(Debug)]
 pub enum PicoDeGalloError<E> {
+    /// A transport-level communication error (USB disconnect, timeout, wire format error).
     Comms(HostErr<WireError>),
+    /// The firmware processed the request but returned an error.
     Endpoint(E),
 }
 
@@ -71,6 +123,16 @@ impl<E> From<HostErr<WireError>> for PicoDeGalloError<E> {
     }
 }
 
+/// Async client for a Pico de Gallo USB bridge device.
+///
+/// This is the primary type for interacting with the hardware. It wraps a
+/// [`postcard_rpc::host_client::HostClient`] and provides typed async methods
+/// for every firmware endpoint. The client is cheaply cloneable (the inner
+/// transport is reference-counted) and safe to share across tasks.
+///
+/// Connection happens lazily in the background — constructing a `PicoDeGallo`
+/// does not block or fail. If the device is not connected, methods will return
+/// errors when called.
 #[derive(Clone)]
 pub struct PicoDeGallo {
     client: HostClient<WireError>,

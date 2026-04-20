@@ -9,6 +9,7 @@ readme = "README.md"
 keywords = ["embedded-hal", "embedded-hal-async", "pico-de-gallo"]
 license = "MIT"
 repository = "https://github.com/OpenDevicePartnership/pico-de-gallo"
+documentation = "https://docs.rs/pico-de-gallo-internal"
 
 [dependencies]
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }

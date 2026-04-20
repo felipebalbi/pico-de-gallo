@@ -1,3 +1,33 @@
+//! Command-line interface for the Pico de Gallo USB bridge.
+//!
+//! The `gallo` CLI provides direct access to I2C, SPI, and GPIO peripherals
+//! connected through a Pico de Gallo device. It is built with
+//! [clap](https://docs.rs/clap) and supports:
+//!
+//! - **I2C**: bus scanning, read, write, and write-then-read operations
+//! - **SPI**: read, write, full-duplex transfer, and write-then-read
+//! - **Configuration**: set I2C/SPI bus frequencies and SPI mode
+//! - **Device management**: list connected devices, query firmware version
+//!
+//! # Examples
+//!
+//! ```console
+//! $ gallo list
+//! $ gallo version
+//! $ gallo i2c scan
+//! $ gallo i2c read -a 0x48 -c 2
+//! $ gallo i2c write -a 0x50 -b 0xDE 0xAD
+//! $ gallo spi transfer -b 0x01 0x02 0x03
+//! $ gallo set-config --i2c-frequency 400000 --spi-frequency 1000000
+//! ```
+//!
+//! # Output Formats
+//!
+//! Read data can be displayed in three formats via the `-f` / `--format` flag:
+//! - `hex` (default): hexadecimal byte dump
+//! - `binary`: raw bytes written to stdout
+//! - `ascii`: printable characters shown, non-printable replaced with `.`
+
 use clap::{Parser, Subcommand};
 use color_eyre::{Result, eyre::eyre};
 use pico_de_gallo_lib::{PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
@@ -18,6 +48,9 @@ pub enum OutputFormat {
     Ascii,
 }
 
+/// Top-level CLI argument parser.
+///
+/// Parse with [`clap::Parser::parse`] and execute with [`Cli::run`].
 #[derive(Parser, Debug)]
 #[command(
     name = "Pico De Gallo",
@@ -203,6 +236,10 @@ impl Cli {
         }
     }
 
+    /// Execute the CLI command.
+    ///
+    /// Dispatches to the appropriate handler based on the parsed subcommand.
+    /// Returns `Ok(())` on success or an error via `color_eyre`.
     pub async fn run(&self) -> Result<()> {
         match &self.command {
             Commands::List => Self::list_devices(),
