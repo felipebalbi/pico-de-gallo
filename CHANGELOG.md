@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2025-04-20
+
 ### Breaking Changes
 
 - **internal 0.3.0**: Split `SetConfigurationRequest` into `I2cSetConfigurationRequest`
@@ -72,7 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/OpenDevicePartnership/pico-de-gallo/compare/firmware-v0.6.0...HEAD
+[Unreleased]: https://github.com/OpenDevicePartnership/pico-de-gallo/compare/firmware-v0.7.0...HEAD
+[0.7.0]: https://github.com/OpenDevicePartnership/pico-de-gallo/compare/firmware-v0.6.0...firmware-v0.7.0
 [firmware-v0.6.0]: https://github.com/OpenDevicePartnership/pico-de-gallo/releases/tag/firmware-v0.6.0
 [application-v0.2.1]: https://github.com/OpenDevicePartnership/pico-de-gallo/releases/tag/application-v0.2.1
 [ffi-v0.3.0]: https://github.com/OpenDevicePartnership/pico-de-gallo/releases/tag/ffi-v0.3.0

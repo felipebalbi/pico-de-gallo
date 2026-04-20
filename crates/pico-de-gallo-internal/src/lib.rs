@@ -469,6 +469,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "use-std")]
     fn spi_transfer_request_max_size() {
         let data = vec![0xAA; MAX_TRANSFER_SIZE];
         let req = SpiTransferRequest { contents: &data };
@@ -524,8 +525,8 @@ mod tests {
 
     #[test]
     fn bool_from_gpio_state() {
-        assert_eq!(bool::from(GpioState::High), true);
-        assert_eq!(bool::from(GpioState::Low), false);
+        assert!(bool::from(GpioState::High));
+        assert!(!bool::from(GpioState::Low));
     }
 
     // --- Config round-trip tests ---
