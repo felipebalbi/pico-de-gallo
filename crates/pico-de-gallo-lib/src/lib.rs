@@ -250,3 +250,74 @@ impl PicoDeGallo {
         Ok(self.client.send_resp::<Version>(&()).await?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- FlattenErr tests ---
+
+    #[test]
+    fn flatten_ok_returns_ok() {
+        let result: Result<u32, &str> = Ok(42);
+        let flattened = result.flatten();
+        match flattened {
+            Ok(val) => assert_eq!(val, 42),
+            Err(_) => panic!("expected Ok"),
+        }
+    }
+
+    #[test]
+    fn flatten_err_returns_endpoint_error() {
+        let result: Result<u32, &str> = Err("endpoint failed");
+        let flattened = result.flatten();
+        match flattened {
+            Ok(_) => panic!("expected Err"),
+            Err(PicoDeGalloError::Endpoint(e)) => assert_eq!(e, "endpoint failed"),
+            Err(PicoDeGalloError::Comms(_)) => panic!("expected Endpoint, got Comms"),
+        }
+    }
+
+    #[test]
+    fn flatten_ok_unit_returns_ok() {
+        let result: Result<(), I2cReadFail> = Ok(());
+        let flattened = result.flatten();
+        assert!(flattened.is_ok());
+    }
+
+    #[test]
+    fn flatten_err_with_fail_type() {
+        let result: Result<(), I2cWriteFail> = Err(I2cWriteFail);
+        let flattened = result.flatten();
+        match flattened {
+            Err(PicoDeGalloError::Endpoint(I2cWriteFail)) => {}
+            _ => panic!("expected Endpoint(I2cWriteFail)"),
+        }
+    }
+
+    // --- PicoDeGalloError From impl ---
+
+    #[test]
+    fn host_err_converts_to_comms_error() {
+        let host_err: HostErr<WireError> = HostErr::Closed;
+        let err: PicoDeGalloError<Infallible> = PicoDeGalloError::from(host_err);
+        match err {
+            PicoDeGalloError::Comms(HostErr::Closed) => {}
+            _ => panic!("expected Comms(Closed)"),
+        }
+    }
+
+    // --- PicoDeGalloError Debug ---
+
+    #[test]
+    fn error_debug_format_is_readable() {
+        let err: PicoDeGalloError<I2cReadFail> = PicoDeGalloError::Endpoint(I2cReadFail);
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("Endpoint"));
+        assert!(debug.contains("I2cReadFail"));
+
+        let comms_err: PicoDeGalloError<Infallible> = PicoDeGalloError::Comms(HostErr::Closed);
+        let debug = format!("{:?}", comms_err);
+        assert!(debug.contains("Comms"));
+    }
+}

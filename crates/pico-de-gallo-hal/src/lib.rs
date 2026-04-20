@@ -514,3 +514,68 @@ impl embedded_hal_async::delay::DelayNs for Delay {
         tokio::time::sleep(tokio::time::Duration::from_nanos(ns.into())).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Error kind tests ---
+
+    #[test]
+    fn digital_error_kind_is_other() {
+        use embedded_hal::digital::Error as _;
+        let err = Error::Other;
+        assert_eq!(err.kind(), embedded_hal::digital::ErrorKind::Other);
+    }
+
+    #[test]
+    fn i2c_error_kind_is_other() {
+        use embedded_hal::i2c::Error as _;
+        let err = Error::Other;
+        assert_eq!(err.kind(), embedded_hal::i2c::ErrorKind::Other);
+    }
+
+    #[test]
+    fn spi_error_kind_is_other() {
+        use embedded_hal::spi::Error as _;
+        let err = Error::Other;
+        assert_eq!(err.kind(), embedded_hal::spi::ErrorKind::Other);
+    }
+
+    // --- Runtime detection tests ---
+
+    #[test]
+    fn handle_try_current_fails_outside_tokio() {
+        // Outside any tokio runtime, try_current should fail.
+        // This is the code path that causes Hal::new_inner to create
+        // its own Runtime.
+        let result = Handle::try_current();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_try_current_succeeds_inside_tokio() {
+        // Inside a tokio runtime, try_current should succeed.
+        // This is the code path where Hal::new_inner reuses the
+        // existing runtime handle.
+        let result = Handle::try_current();
+        assert!(result.is_ok());
+    }
+
+    // --- Delay unit tests ---
+
+    #[test]
+    fn delay_ns_does_not_panic() {
+        use embedded_hal::delay::DelayNs;
+        let mut delay = Delay;
+        // Just verify it doesn't panic for a tiny delay
+        delay.delay_ns(1);
+    }
+
+    #[tokio::test]
+    async fn async_delay_ns_does_not_panic() {
+        use embedded_hal_async::delay::DelayNs;
+        let mut delay = Delay;
+        delay.delay_ns(1).await;
+    }
+}

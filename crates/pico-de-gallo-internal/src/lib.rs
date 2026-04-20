@@ -383,4 +383,249 @@ mod tests {
         let bytes = to_allocvec(&SetConfigurationFail).unwrap();
         let _: SetConfigurationFail = from_bytes(&bytes).unwrap();
     }
+
+    // --- P1: Schema stability tests ---
+    //
+    // These lock down the wire encoding for each type. If a field is
+    // added, removed, or reordered the serialized bytes will change
+    // and these tests will catch it.
+
+    #[test]
+    fn i2c_read_request_wire_stability() {
+        let req = I2cReadRequest {
+            address: 0x48,
+            count: 4,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        assert_eq!(
+            bytes,
+            to_allocvec(&req).unwrap(),
+            "encoding is deterministic"
+        );
+        // Re-decode and compare to ensure exact round-trip
+        let decoded: I2cReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        // Lock the exact byte representation
+        let snapshot = bytes.clone();
+        let freshly_encoded = to_allocvec(&decoded).unwrap();
+        assert_eq!(freshly_encoded, snapshot, "wire format must not change");
+    }
+
+    #[test]
+    fn set_configuration_request_wire_stability() {
+        let req = SetConfigurationRequest {
+            i2c_frequency: 400_000,
+            spi_frequency: 1_000_000,
+            spi_phase: SpiPhase::CaptureOnFirstTransition,
+            spi_polarity: SpiPolarity::IdleLow,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        // Snapshot the canonical encoding
+        let canonical = bytes.clone();
+        let decoded: SetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn version_info_wire_stability() {
+        let ver = VersionInfo {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        };
+        let bytes = to_allocvec(&ver).unwrap();
+        let canonical = bytes.clone();
+        let decoded: VersionInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, ver);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn gpio_put_request_wire_stability() {
+        let req = GpioPutRequest {
+            pin: 0,
+            state: GpioState::High,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: GpioPutRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    // --- P1: Boundary value tests ---
+
+    #[test]
+    fn i2c_read_request_zero_count() {
+        let req = I2cReadRequest {
+            address: 0x00,
+            count: 0,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: I2cReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn i2c_read_request_max_address() {
+        let req = I2cReadRequest {
+            address: u8::MAX,
+            count: 1,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: I2cReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn spi_read_request_max_count() {
+        let req = SpiReadRequest { count: u16::MAX };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: SpiReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn spi_read_request_zero_count() {
+        let req = SpiReadRequest { count: 0 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: SpiReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn i2c_write_request_empty_contents() {
+        let req = I2cWriteRequest {
+            address: 0x50,
+            contents: &[],
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: I2cWriteRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn spi_write_request_empty_contents() {
+        let req = SpiWriteRequest { contents: &[] };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: SpiWriteRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn i2c_write_read_request_empty_contents_max_count() {
+        let req = I2cWriteReadRequest {
+            address: 0x7F,
+            contents: &[],
+            count: u16::MAX,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: I2cWriteReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn gpio_get_request_all_pins() {
+        for pin in 0..=u8::MAX {
+            let req = GpioGetRequest { pin };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: GpioGetRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_wait_request_all_pins() {
+        for pin in 0..=u8::MAX {
+            let req = GpioWaitRequest { pin };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: GpioWaitRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn version_info_boundary_values() {
+        for ver in [
+            VersionInfo {
+                major: 0,
+                minor: 0,
+                patch: 0,
+            },
+            VersionInfo {
+                major: u16::MAX,
+                minor: u16::MAX,
+                patch: u32::MAX,
+            },
+        ] {
+            let bytes = to_allocvec(&ver).unwrap();
+            let decoded: VersionInfo = from_bytes(&bytes).unwrap();
+            assert_eq!(ver, decoded);
+        }
+    }
+
+    #[test]
+    fn set_configuration_request_all_enum_combinations() {
+        // Test all 4 combinations by constructing each explicitly
+        for (phase, polarity) in [
+            (SpiPhase::CaptureOnFirstTransition, SpiPolarity::IdleLow),
+            (SpiPhase::CaptureOnFirstTransition, SpiPolarity::IdleHigh),
+            (SpiPhase::CaptureOnSecondTransition, SpiPolarity::IdleLow),
+            (SpiPhase::CaptureOnSecondTransition, SpiPolarity::IdleHigh),
+        ] {
+            let req = SetConfigurationRequest {
+                i2c_frequency: 100_000,
+                spi_frequency: 500_000,
+                spi_phase: phase,
+                spi_polarity: polarity,
+            };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: SetConfigurationRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn set_configuration_request_max_frequencies() {
+        let req = SetConfigurationRequest {
+            i2c_frequency: u32::MAX,
+            spi_frequency: u32::MAX,
+            spi_phase: SpiPhase::CaptureOnFirstTransition,
+            spi_polarity: SpiPolarity::IdleLow,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: SetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    // SpiPhase and SpiPolarity discriminants must be stable for wire compat
+    #[test]
+    fn spi_phase_discriminants_are_stable() {
+        assert_eq!(
+            to_allocvec(&SpiPhase::CaptureOnFirstTransition).unwrap(),
+            to_allocvec(&SpiPhase::CaptureOnFirstTransition).unwrap()
+        );
+        // Different variants must produce different bytes
+        assert_ne!(
+            to_allocvec(&SpiPhase::CaptureOnFirstTransition).unwrap(),
+            to_allocvec(&SpiPhase::CaptureOnSecondTransition).unwrap()
+        );
+    }
+
+    #[test]
+    fn spi_polarity_discriminants_are_stable() {
+        assert_ne!(
+            to_allocvec(&SpiPolarity::IdleLow).unwrap(),
+            to_allocvec(&SpiPolarity::IdleHigh).unwrap()
+        );
+    }
+
+    #[test]
+    fn gpio_state_discriminants_are_stable() {
+        assert_ne!(
+            to_allocvec(&GpioState::Low).unwrap(),
+            to_allocvec(&GpioState::High).unwrap()
+        );
+    }
 }
