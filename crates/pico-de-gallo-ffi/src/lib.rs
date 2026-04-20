@@ -5,6 +5,14 @@ use std::os::raw::c_char;
 
 pub struct PicoDeGallo(lib::PicoDeGallo);
 
+// Compile-time assertion: the FFI handle must be safe to share across
+// C threads. lib::PicoDeGallo is Send + Sync because HostClient is
+// internally Arc-wrapped.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<PicoDeGallo>();
+};
+
 // ----------------------------- Status Codes -----------------------------
 
 #[repr(i32)]
