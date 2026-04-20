@@ -94,12 +94,21 @@ jobs:
       - name: Build FFI
         run: cargo build --release --target ${{ matrix.target }} --manifest-path crates/pico-de-gallo-ffi/Cargo.toml
 
-      - name: Upload library asset
+      - name: Upload DLL asset
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: crates/target/${{ matrix.target }}/release/pico_de_gallo_ffi.dll
-          asset_name: ${{ matrix.target }}-pico_de_gallo.lib
+          asset_name: ${{ matrix.target }}-pico_de_gallo.dll
+          tag: ${{ github.ref }}
+          overwrite: true
+
+      - name: Upload import library asset
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: crates/target/${{ matrix.target }}/release/pico_de_gallo_ffi.dll.lib
+          asset_name: ${{ matrix.target }}-pico_de_gallo.dll.lib
           tag: ${{ github.ref }}
           overwrite: true
 
