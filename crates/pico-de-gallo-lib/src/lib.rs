@@ -128,8 +128,8 @@ impl PicoDeGallo {
 
     /// Read `count` bytes from the I2C device at `address`.
     ///
-    /// An arbitrary limit of `u16::MAX` is imposed currently, that
-    /// may change in the future.
+    /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
+    /// (512) bytes. Reads exceeding this limit will be truncated.
     pub async fn i2c_read(&self, address: u8, count: u16) -> Result<Vec<u8>, PicoDeGalloError<I2cReadFail>> {
         self.client
             .send_resp::<I2cRead>(&I2cReadRequest { address, count })
@@ -146,6 +146,9 @@ impl PicoDeGallo {
     }
 
     /// Write `contents` to the I2C device at `address` and read back `count` bytes.
+    ///
+    /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
+    /// (512) bytes. Reads exceeding this limit will be truncated.
     pub async fn i2c_write_read(
         &self,
         address: u8,
@@ -164,8 +167,8 @@ impl PicoDeGallo {
 
     /// Read `count` bytes from the SPI bus.
     ///
-    /// An arbitrary limit of `u16::MAX` is imposed currently, that
-    /// may change in the future.
+    /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
+    /// (512) bytes. Reads exceeding this limit will be truncated.
     pub async fn spi_read(&self, count: u16) -> Result<Vec<u8>, PicoDeGalloError<SpiReadFail>> {
         self.client
             .send_resp::<SpiRead>(&SpiReadRequest { count })

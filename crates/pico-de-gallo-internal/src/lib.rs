@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 pub const MICROSOFT_VID: u16 = 0x045e;
 pub const PICO_DE_GALLO_PID: u16 = 0x067d;
 
+/// Maximum number of bytes the firmware can handle in a single I2C or SPI
+/// read/write transaction. Requests exceeding this limit will be truncated
+/// by the firmware to this size.
+pub const MAX_TRANSFER_SIZE: usize = 512;
+
 // ---
 
 pub type I2cWriteResponse = Result<(), I2cWriteFail>;

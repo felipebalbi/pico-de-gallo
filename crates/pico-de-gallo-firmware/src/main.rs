@@ -21,10 +21,10 @@ use pico_de_gallo_internal::{
     GpioPutResponse, GpioState, GpioWaitFail, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
     GpioWaitForRising, GpioWaitRequest, GpioWaitResponse, I2cRead, I2cReadFail, I2cReadRequest, I2cReadResponse,
     I2cWrite, I2cWriteFail, I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest,
-    I2cWriteResponse, MICROSOFT_VID, PICO_DE_GALLO_PID, PingEndpoint, SetConfiguration, SetConfigurationFail,
-    SetConfigurationRequest, SetConfigurationResponse, SpiFlush, SpiFlushFail, SpiFlushResponse, SpiPhase, SpiPolarity,
-    SpiRead, SpiReadFail, SpiReadRequest, SpiReadResponse, SpiWrite, SpiWriteFail, SpiWriteRequest, SpiWriteResponse,
-    TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
+    I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID, PICO_DE_GALLO_PID, PingEndpoint, SetConfiguration,
+    SetConfigurationFail, SetConfigurationRequest, SetConfigurationResponse, SpiFlush, SpiFlushFail, SpiFlushResponse,
+    SpiPhase, SpiPolarity, SpiRead, SpiReadFail, SpiReadRequest, SpiReadResponse, SpiWrite, SpiWriteFail,
+    SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
@@ -61,7 +61,6 @@ bind_interrupts!(struct Irqs {
 });
 
 const NUM_GPIOS: usize = 8;
-const BUFFER_SIZE: usize = 512;
 
 /// Firmware application context holding all peripheral handles.
 ///
@@ -72,7 +71,7 @@ pub struct Context {
     i2c: I2c<'static, I2C1, i2c::Async>,
     spi: Spi<'static, SPI0, spi::Async>,
     gpios: [Flex<'static>; NUM_GPIOS],
-    buf: [u8; BUFFER_SIZE],
+    buf: [u8; MAX_TRANSFER_SIZE],
 }
 
 impl Context {
@@ -85,7 +84,7 @@ impl Context {
             i2c,
             spi,
             gpios,
-            buf: [0; BUFFER_SIZE],
+            buf: [0; MAX_TRANSFER_SIZE],
         }
     }
 }
@@ -266,7 +265,7 @@ async fn i2c_read_handler<'a>(
     req: I2cReadRequest,
 ) -> I2cReadResponse<'a> {
     let count = usize::from(req.count);
-    if count > BUFFER_SIZE {
+    if count > MAX_TRANSFER_SIZE {
         warn!("i2c read: requested count {} exceeds buffer", count);
         return Err(I2cReadFail);
     }
@@ -300,7 +299,7 @@ async fn i2c_write_read_handler<'a>(
     req: I2cWriteReadRequest<'a>,
 ) -> I2cWriteReadResponse<'a> {
     let count = usize::from(req.count);
-    if count > BUFFER_SIZE {
+    if count > MAX_TRANSFER_SIZE {
         warn!("i2c write_read: requested count {} exceeds buffer", count);
         return Err(I2cWriteReadFail);
     }
@@ -326,7 +325,7 @@ async fn spi_read_handler<'a>(
     req: SpiReadRequest,
 ) -> SpiReadResponse<'a> {
     let count = usize::from(req.count);
-    if count > BUFFER_SIZE {
+    if count > MAX_TRANSFER_SIZE {
         warn!("spi read: requested count {} exceeds buffer", count);
         return Err(SpiReadFail);
     }
