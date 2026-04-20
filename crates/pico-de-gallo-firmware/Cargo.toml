@@ -3,7 +3,7 @@ name = "pico-de-gallo-fw"
 version = "0.5.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.89"
+rust-version = "1.90"
 description = "Pico de Gallo firmware"
 repository = "https://github.com/OpenDevicePartnership/pico-de-gallo"
 
@@ -12,7 +12,7 @@ cortex-m = { version = "0.7.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7.5"
 critical-section = "1.2.0"
 defmt = "1.0.1"
-defmt-rtt = "1.0.0"
+defmt-rtt = "1.1.0"
 embassy-embedded-hal = "0.3"
 embassy-executor = { version = "0.7", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
 embassy-futures = "0.1"
@@ -20,7 +20,7 @@ embassy-rp = { version = "0.6.0", features = ["defmt", "unstable-pac", "time-dri
 embassy-sync = { version = "0.7", features = ["defmt"] }
 embassy-time = { version = "0.4", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-usb = { version = "0.5.1", features = ["defmt"] }
-heapless = "0.9.1"
+heapless = "0.9.2"
 panic-probe = "1.0.0"
 pico-de-gallo-internal = { version = "0.2.0", path = "../pico-de-gallo-internal" }
 postcard-rpc = { version = "0.11",   features = ["embassy-usb-0_5-server"] }
