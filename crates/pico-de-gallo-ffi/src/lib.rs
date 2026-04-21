@@ -36,7 +36,7 @@
 //! negative values indicate errors. See [`Status`] for the full list.
 
 use futures::executor::block_on;
-use pico_de_gallo_lib as lib;
+use pico_de_gallo_lib::{self as lib, GpioError, I2cError, PicoDeGalloError, SpiError};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -101,6 +101,53 @@ pub enum Status {
     I2cSetConfigFailed = -16,
     /// Spi Set config failed
     SpiSetConfigFailed = -17,
+    /// I2C target did not acknowledge
+    I2cNack = -18,
+    /// I2C bus error
+    I2cBusError = -19,
+    /// I2C arbitration loss
+    I2cArbitrationLoss = -20,
+    /// I2C data overrun
+    I2cOverrun = -21,
+    /// Buffer exceeds firmware transfer limit
+    BufferTooLong = -22,
+    /// I2C address out of range
+    I2cAddressOutOfRange = -23,
+    /// GPIO pin number is invalid
+    GpioInvalidPin = -24,
+    /// USB communication failure
+    CommsFailed = -25,
+}
+
+// ----------------------------- Error Mapping Helpers -----------------------------
+
+fn i2c_error_to_status(e: PicoDeGalloError<I2cError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(I2cError::NoAcknowledge) => Status::I2cNack,
+        PicoDeGalloError::Endpoint(I2cError::Bus) => Status::I2cBusError,
+        PicoDeGalloError::Endpoint(I2cError::ArbitrationLoss) => Status::I2cArbitrationLoss,
+        PicoDeGalloError::Endpoint(I2cError::Overrun) => Status::I2cOverrun,
+        PicoDeGalloError::Endpoint(I2cError::BufferTooLong) => Status::BufferTooLong,
+        PicoDeGalloError::Endpoint(I2cError::AddressOutOfRange) => Status::I2cAddressOutOfRange,
+        PicoDeGalloError::Endpoint(I2cError::Other) => Status::I2cReadFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn spi_error_to_status(e: PicoDeGalloError<SpiError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(SpiError::BufferTooLong) => Status::BufferTooLong,
+        PicoDeGalloError::Endpoint(SpiError::Other) => Status::SpiReadFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn gpio_error_to_status(e: PicoDeGalloError<GpioError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(GpioError::InvalidPin) => Status::GpioInvalidPin,
+        PicoDeGalloError::Endpoint(GpioError::Other) => Status::GpioGetFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
 }
 
 // ----------------------------- Library Lifetime -----------------------------
@@ -260,7 +307,7 @@ pub unsafe extern "C" fn gallo_i2c_read(
             buf.copy_from_slice(&data);
             Status::Ok
         }
-        Err(_) => Status::I2cReadFailed,
+        Err(e) => i2c_error_to_status(e),
     }
 }
 
@@ -306,7 +353,7 @@ pub unsafe extern "C" fn gallo_i2c_write(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::I2cWriteFailed,
+        Err(e) => i2c_error_to_status(e),
     }
 }
 
@@ -367,7 +414,7 @@ pub unsafe extern "C" fn gallo_i2c_write_read(
             rxbuf.copy_from_slice(&data);
             Status::Ok
         }
-        Err(_) => Status::I2cWriteReadFailed,
+        Err(e) => i2c_error_to_status(e),
     }
 }
 
@@ -425,7 +472,7 @@ pub unsafe extern "C" fn gallo_spi_read(
             buf.copy_from_slice(&data);
             Status::Ok
         }
-        Err(_) => Status::SpiReadFailed,
+        Err(e) => spi_error_to_status(e),
     }
 }
 
@@ -470,7 +517,7 @@ pub unsafe extern "C" fn gallo_spi_write(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::SpiWriteFailed,
+        Err(e) => spi_error_to_status(e),
     }
 }
 
@@ -497,7 +544,7 @@ pub unsafe extern "C" fn gallo_spi_flush(gallo: *mut PicoDeGallo) -> Status {
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::SpiFlushFailed,
+        Err(e) => spi_error_to_status(e),
     }
 }
 
@@ -538,7 +585,7 @@ pub unsafe extern "C" fn gallo_gpio_get(
             unsafe { *state = s == lib::GpioState::High };
             Status::Ok
         }
-        Err(_) => Status::GpioGetFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -570,7 +617,7 @@ pub unsafe extern "C" fn gallo_gpio_put(gallo: *mut PicoDeGallo, pin: u8, state:
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioPutFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -597,7 +644,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_high(gallo: *mut PicoDeGallo, pin: 
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -624,7 +671,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_low(gallo: *mut PicoDeGallo, pin: u
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -654,7 +701,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_rising_edge(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -684,7 +731,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_falling_edge(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -711,7 +758,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_any_edge(gallo: *mut PicoDeGallo, p
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -750,7 +797,7 @@ pub unsafe extern "C" fn gallo_i2c_set_config(gallo: *mut PicoDeGallo, frequency
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::I2cSetConfigFailed,
+        Err(e) => i2c_error_to_status(e),
     }
 }
 
@@ -802,7 +849,7 @@ pub unsafe extern "C" fn gallo_spi_set_config(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::SpiSetConfigFailed,
+        Err(e) => spi_error_to_status(e),
     }
 }
 
@@ -887,6 +934,16 @@ mod tests {
             Status::SetConfigFailed as i32,
             Status::VersionFailed as i32,
             Status::I2cWriteReadFailed as i32,
+            Status::I2cSetConfigFailed as i32,
+            Status::SpiSetConfigFailed as i32,
+            Status::I2cNack as i32,
+            Status::I2cBusError as i32,
+            Status::I2cArbitrationLoss as i32,
+            Status::I2cOverrun as i32,
+            Status::BufferTooLong as i32,
+            Status::I2cAddressOutOfRange as i32,
+            Status::GpioInvalidPin as i32,
+            Status::CommsFailed as i32,
         ];
         for code in error_codes {
             assert!(code < 0, "error code {code} should be negative");
@@ -912,6 +969,16 @@ mod tests {
             Status::SetConfigFailed as i32,
             Status::VersionFailed as i32,
             Status::I2cWriteReadFailed as i32,
+            Status::I2cSetConfigFailed as i32,
+            Status::SpiSetConfigFailed as i32,
+            Status::I2cNack as i32,
+            Status::I2cBusError as i32,
+            Status::I2cArbitrationLoss as i32,
+            Status::I2cOverrun as i32,
+            Status::BufferTooLong as i32,
+            Status::I2cAddressOutOfRange as i32,
+            Status::GpioInvalidPin as i32,
+            Status::CommsFailed as i32,
         ];
         let unique: HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len(), "duplicate status codes found");

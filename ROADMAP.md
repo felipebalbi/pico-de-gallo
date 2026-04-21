@@ -29,7 +29,7 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 
 | Phase | Description        | Items | Done | Status         |
 |-------|--------------------|-------|------|----------------|
-| **1** | Polish What Exists | 6     | 1    | 🟡 In progress |
+| **1** | Polish What Exists | 6     | 2    | 🟡 In progress |
 | **2** | New Protocols      | 6     | 0    | 🔴 Not started |
 | **3** | Advanced Features  | 6     | 0    | 🔴 Not started |
 | **4** | Hardware Rev 2     | 6     | 0    | 🔴 Not started |
@@ -106,7 +106,7 @@ reliable and complete before adding new capabilities.
 
 |   | Item                                                            | Tracking                                                              |
 |---|-----------------------------------------------------------------|-----------------------------------------------------------------------|
-| ☐ | [1.1 Rich Error Types](#11-rich-error-types)                    | [#1](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/1) |
+| ☑ | [1.1 Rich Error Types](#11-rich-error-types)                    | [#1](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/1) |
 | ☐ | [1.2 SpiDevice Trait](#12-spidevice-trait-implementation)       | [#2](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/2) |
 | ☐ | [1.3 I2C Bus Scan](#13-i2c-bus-scan-endpoint)                   | [#3](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/3) |
 | ☐ | [1.4 GPIO Direction Control](#14-gpio-direction-control)        | [#4](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/4) |

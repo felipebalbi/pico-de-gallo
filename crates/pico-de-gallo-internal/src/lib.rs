@@ -23,11 +23,11 @@
 //! - **Endpoints**: Defined via the [`postcard_rpc::endpoints!`] macro — see
 //!   [`ENDPOINT_LIST`] for the full table.
 //! - **I2C types**: [`I2cReadRequest`], [`I2cWriteRequest`], [`I2cWriteReadRequest`]
-//!   and their corresponding error types.
+//!   and their shared error type [`I2cError`].
 //! - **SPI types**: [`SpiReadRequest`], [`SpiWriteRequest`], [`SpiTransferRequest`]
-//!   and their corresponding error types.
+//!   and their shared error type [`SpiError`].
 //! - **GPIO types**: [`GpioGetRequest`], [`GpioPutRequest`], [`GpioWaitRequest`],
-//!   [`GpioState`].
+//!   [`GpioState`], and their shared error type [`GpioError`].
 //! - **Configuration**: [`I2cSetConfigurationRequest`], [`SpiSetConfigurationRequest`],
 //!   [`I2cFrequency`], [`SpiPhase`], [`SpiPolarity`].
 //! - **Version**: [`VersionInfo`].
@@ -52,60 +52,60 @@ pub const MAX_TRANSFER_SIZE: usize = 4096;
 // ---
 
 /// Response type for I2C write operations.
-pub type I2cWriteResponse = Result<(), I2cWriteFail>;
+pub type I2cWriteResponse = Result<(), I2cError>;
 
 /// Response type for I2C read operations.
 /// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(feature = "use-std")]
-pub type I2cReadResponse<'a> = Result<Vec<u8>, I2cReadFail>;
+pub type I2cReadResponse<'a> = Result<Vec<u8>, I2cError>;
 /// Response type for I2C read operations.
 /// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(not(feature = "use-std"))]
-pub type I2cReadResponse<'a> = Result<&'a [u8], I2cReadFail>;
+pub type I2cReadResponse<'a> = Result<&'a [u8], I2cError>;
 
 /// Response type for I2C write-read operations.
 /// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(feature = "use-std")]
-pub type I2cWriteReadResponse<'a> = Result<Vec<u8>, I2cWriteReadFail>;
+pub type I2cWriteReadResponse<'a> = Result<Vec<u8>, I2cError>;
 /// Response type for I2C write-read operations.
 /// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(not(feature = "use-std"))]
-pub type I2cWriteReadResponse<'a> = Result<&'a [u8], I2cWriteReadFail>;
+pub type I2cWriteReadResponse<'a> = Result<&'a [u8], I2cError>;
 
 /// Response type for SPI write operations.
-pub type SpiWriteResponse = Result<(), SpiWriteFail>;
+pub type SpiWriteResponse = Result<(), SpiError>;
 
 /// Response type for SPI read operations.
 /// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(feature = "use-std")]
-pub type SpiReadResponse<'a> = Result<Vec<u8>, SpiReadFail>;
+pub type SpiReadResponse<'a> = Result<Vec<u8>, SpiError>;
 /// Response type for SPI read operations.
 /// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(not(feature = "use-std"))]
-pub type SpiReadResponse<'a> = Result<&'a [u8], SpiReadFail>;
+pub type SpiReadResponse<'a> = Result<&'a [u8], SpiError>;
 
 /// Response type for SPI flush operations.
-pub type SpiFlushResponse = Result<(), SpiFlushFail>;
+pub type SpiFlushResponse = Result<(), SpiError>;
 
 /// Response type for SPI transfer operations.
 /// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(feature = "use-std")]
-pub type SpiTransferResponse<'a> = Result<Vec<u8>, SpiTransferFail>;
+pub type SpiTransferResponse<'a> = Result<Vec<u8>, SpiError>;
 /// Response type for SPI transfer operations.
 /// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
 #[cfg(not(feature = "use-std"))]
-pub type SpiTransferResponse<'a> = Result<&'a [u8], SpiTransferFail>;
+pub type SpiTransferResponse<'a> = Result<&'a [u8], SpiError>;
 
 /// Response type for GPIO get operations.
-pub type GpioGetResponse = Result<GpioState, GpioGetFail>;
+pub type GpioGetResponse = Result<GpioState, GpioError>;
 /// Response type for GPIO put operations.
-pub type GpioPutResponse = Result<(), GpioPutFail>;
+pub type GpioPutResponse = Result<(), GpioError>;
 /// Response type for GPIO wait operations.
-pub type GpioWaitResponse = Result<(), GpioWaitFail>;
+pub type GpioWaitResponse = Result<(), GpioError>;
 /// Response type for I2C bus configuration operations.
-pub type I2cSetConfigurationResponse = Result<(), I2cSetConfigurationFail>;
+pub type I2cSetConfigurationResponse = Result<(), I2cConfigError>;
 /// Response type for SPI bus configuration operations.
-pub type SpiSetConfigurationResponse = Result<(), SpiSetConfigurationFail>;
+pub type SpiSetConfigurationResponse = Result<(), SpiConfigError>;
 
 endpoints! {
     list = ENDPOINT_LIST;
@@ -162,9 +162,46 @@ pub struct I2cWriteReadRequest<'a> {
     pub count: u16,
 }
 
-/// Error returned when an I2C write-read operation fails.
+/// Error from I2C operations, propagated from firmware.
+///
+/// Maps directly to [`embedded_hal::i2c::ErrorKind`] variants on the host side.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index** (0, 1, 2, …). Do **not** reorder,
+/// rename, or insert variants in the middle — only append new variants at
+/// the end. Removing or reordering is a breaking wire change.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct I2cWriteReadFail;
+pub enum I2cError {
+    /// Bus error (unexpected condition on the I2C bus).
+    Bus,
+    /// No acknowledge received from the target device.
+    NoAcknowledge,
+    /// Arbitration lost to another controller on the bus.
+    ArbitrationLoss,
+    /// Data overrun — firmware could not keep up with the bus clock.
+    Overrun,
+    /// Request exceeds the firmware buffer limit ([`MAX_TRANSFER_SIZE`]).
+    BufferTooLong,
+    /// I2C address is outside the valid 7-bit range (0x00–0x7F).
+    AddressOutOfRange,
+    /// An unspecified error occurred in the firmware.
+    Other,
+}
+
+impl core::fmt::Display for I2cError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Bus => write!(f, "I2C bus error"),
+            Self::NoAcknowledge => write!(f, "no acknowledge from target"),
+            Self::ArbitrationLoss => write!(f, "I2C arbitration loss"),
+            Self::Overrun => write!(f, "I2C data overrun"),
+            Self::BufferTooLong => write!(f, "buffer exceeds firmware limit"),
+            Self::AddressOutOfRange => write!(f, "I2C address out of range"),
+            Self::Other => write!(f, "I2C error"),
+        }
+    }
+}
 
 /// Request to read bytes from an I2C device.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
@@ -175,10 +212,6 @@ pub struct I2cReadRequest {
     pub count: u16,
 }
 
-/// Error returned when an I2C read operation fails.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct I2cReadFail;
-
 /// Request to write bytes to an I2C device.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct I2cWriteRequest<'a> {
@@ -188,11 +221,30 @@ pub struct I2cWriteRequest<'a> {
     pub contents: &'a [u8],
 }
 
-/// Error returned when an I2C write operation fails.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct I2cWriteFail;
-
 // --- SPI
+
+/// Error from SPI operations, propagated from firmware.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index**. Do **not** reorder or insert
+/// variants in the middle — only append at the end.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpiError {
+    /// Request exceeds the firmware buffer limit ([`MAX_TRANSFER_SIZE`]).
+    BufferTooLong,
+    /// An unspecified error occurred in the firmware.
+    Other,
+}
+
+impl core::fmt::Display for SpiError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::BufferTooLong => write!(f, "buffer exceeds firmware limit"),
+            Self::Other => write!(f, "SPI error"),
+        }
+    }
+}
 
 /// Request to read bytes from the SPI bus.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
@@ -201,24 +253,12 @@ pub struct SpiReadRequest {
     pub count: u16,
 }
 
-/// Error returned when an SPI read operation fails.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpiReadFail;
-
 /// Request to write bytes to the SPI bus.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct SpiWriteRequest<'a> {
     /// Bytes to write.
     pub contents: &'a [u8],
 }
-
-/// Error returned when an SPI write operation fails.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpiWriteFail;
-
-/// Error returned when an SPI flush operation fails.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpiFlushFail;
 
 /// Request for a full-duplex SPI transfer.
 ///
@@ -231,8 +271,10 @@ pub struct SpiTransferRequest<'a> {
 }
 
 /// Error returned when an SPI transfer operation fails.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpiTransferFail;
+///
+/// This is a convenience alias — SPI transfers share the same error type
+/// as other SPI operations.
+pub type SpiTransferError = SpiError;
 
 // --- GPIO
 
@@ -243,9 +285,28 @@ pub struct GpioGetRequest {
     pub pin: u8,
 }
 
-/// Error returned when a GPIO read fails (e.g., invalid pin index).
+/// Error from GPIO operations, propagated from firmware.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index**. Do **not** reorder or insert
+/// variants in the middle — only append at the end.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GpioGetFail;
+pub enum GpioError {
+    /// The requested pin number is invalid (outside 0–7 range).
+    InvalidPin,
+    /// An unspecified error occurred in the firmware.
+    Other,
+}
+
+impl core::fmt::Display for GpioError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidPin => write!(f, "invalid GPIO pin number"),
+            Self::Other => write!(f, "GPIO error"),
+        }
+    }
+}
 
 /// Request to set a GPIO pin to a specific level.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
@@ -255,10 +316,6 @@ pub struct GpioPutRequest {
     /// Desired output level.
     pub state: GpioState,
 }
-
-/// Error returned when a GPIO write fails (e.g., invalid pin index).
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GpioPutFail;
 
 /// Logic level of a GPIO pin.
 //
@@ -295,10 +352,6 @@ pub struct GpioWaitRequest {
     pub pin: u8,
 }
 
-/// Error returned when a GPIO wait fails (e.g., invalid pin index).
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GpioWaitFail;
-
 // --- Set config
 
 /// Request to reconfigure I2C bus parameters.
@@ -329,8 +382,10 @@ pub enum I2cFrequency {
 }
 
 /// Error returned when I2C configuration fails.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct I2cSetConfigurationFail;
+///
+/// This is a convenience alias — I2C configuration shares the same error
+/// type as other I2C operations.
+pub type I2cConfigError = I2cError;
 
 /// Request to reconfigure SPI bus parameters.
 ///
@@ -371,8 +426,10 @@ pub enum SpiPolarity {
 }
 
 /// Error returned when SPI configuration fails.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpiSetConfigurationFail;
+///
+/// This is a convenience alias — SPI configuration shares the same error
+/// type as other SPI operations.
+pub type SpiConfigError = SpiError;
 
 // --- Version
 /// Firmware version information.
@@ -588,42 +645,85 @@ mod tests {
         assert_eq!(ver, decoded);
     }
 
-    // --- Fail type round-trip tests ---
+    // --- Error enum round-trip tests ---
 
     #[test]
-    fn fail_types_round_trip() {
-        let bytes = to_allocvec(&I2cReadFail).unwrap();
-        let _: I2cReadFail = from_bytes(&bytes).unwrap();
+    fn i2c_error_variants_round_trip() {
+        for err in [
+            I2cError::Bus,
+            I2cError::NoAcknowledge,
+            I2cError::ArbitrationLoss,
+            I2cError::Overrun,
+            I2cError::BufferTooLong,
+            I2cError::AddressOutOfRange,
+            I2cError::Other,
+        ] {
+            let bytes = to_allocvec(&err).unwrap();
+            let decoded: I2cError = from_bytes(&bytes).unwrap();
+            assert_eq!(err, decoded);
+        }
+    }
 
-        let bytes = to_allocvec(&I2cWriteFail).unwrap();
-        let _: I2cWriteFail = from_bytes(&bytes).unwrap();
+    #[test]
+    fn spi_error_variants_round_trip() {
+        for err in [SpiError::BufferTooLong, SpiError::Other] {
+            let bytes = to_allocvec(&err).unwrap();
+            let decoded: SpiError = from_bytes(&bytes).unwrap();
+            assert_eq!(err, decoded);
+        }
+    }
 
-        let bytes = to_allocvec(&I2cWriteReadFail).unwrap();
-        let _: I2cWriteReadFail = from_bytes(&bytes).unwrap();
+    #[test]
+    fn gpio_error_variants_round_trip() {
+        for err in [GpioError::InvalidPin, GpioError::Other] {
+            let bytes = to_allocvec(&err).unwrap();
+            let decoded: GpioError = from_bytes(&bytes).unwrap();
+            assert_eq!(err, decoded);
+        }
+    }
 
-        let bytes = to_allocvec(&SpiReadFail).unwrap();
-        let _: SpiReadFail = from_bytes(&bytes).unwrap();
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn i2c_error_display() {
+        assert_eq!(
+            format!("{}", I2cError::NoAcknowledge),
+            "no acknowledge from target"
+        );
+        assert_eq!(format!("{}", I2cError::Bus), "I2C bus error");
+        assert_eq!(
+            format!("{}", I2cError::ArbitrationLoss),
+            "I2C arbitration loss"
+        );
+        assert_eq!(format!("{}", I2cError::Overrun), "I2C data overrun");
+        assert_eq!(
+            format!("{}", I2cError::BufferTooLong),
+            "buffer exceeds firmware limit"
+        );
+        assert_eq!(
+            format!("{}", I2cError::AddressOutOfRange),
+            "I2C address out of range"
+        );
+        assert_eq!(format!("{}", I2cError::Other), "I2C error");
+    }
 
-        let bytes = to_allocvec(&SpiWriteFail).unwrap();
-        let _: SpiWriteFail = from_bytes(&bytes).unwrap();
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn spi_error_display() {
+        assert_eq!(
+            format!("{}", SpiError::BufferTooLong),
+            "buffer exceeds firmware limit"
+        );
+        assert_eq!(format!("{}", SpiError::Other), "SPI error");
+    }
 
-        let bytes = to_allocvec(&SpiFlushFail).unwrap();
-        let _: SpiFlushFail = from_bytes(&bytes).unwrap();
-
-        let bytes = to_allocvec(&GpioGetFail).unwrap();
-        let _: GpioGetFail = from_bytes(&bytes).unwrap();
-
-        let bytes = to_allocvec(&GpioPutFail).unwrap();
-        let _: GpioPutFail = from_bytes(&bytes).unwrap();
-
-        let bytes = to_allocvec(&GpioWaitFail).unwrap();
-        let _: GpioWaitFail = from_bytes(&bytes).unwrap();
-
-        let bytes = to_allocvec(&I2cSetConfigurationFail).unwrap();
-        let _: I2cSetConfigurationFail = from_bytes(&bytes).unwrap();
-
-        let bytes = to_allocvec(&SpiSetConfigurationFail).unwrap();
-        let _: SpiSetConfigurationFail = from_bytes(&bytes).unwrap();
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn gpio_error_display() {
+        assert_eq!(
+            format!("{}", GpioError::InvalidPin),
+            "invalid GPIO pin number"
+        );
+        assert_eq!(format!("{}", GpioError::Other), "GPIO error");
     }
 
     // --- P1: Schema stability tests ---

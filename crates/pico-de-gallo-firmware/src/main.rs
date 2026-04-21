@@ -45,16 +45,15 @@ use embassy_rp::usb::Driver;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
-    ENDPOINT_LIST, GpioGet, GpioGetFail, GpioGetRequest, GpioGetResponse, GpioPut, GpioPutFail, GpioPutRequest,
-    GpioPutResponse, GpioState, GpioWaitFail, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
-    GpioWaitForRising, GpioWaitRequest, GpioWaitResponse, I2cFrequency, I2cRead, I2cReadFail, I2cReadRequest,
-    I2cReadResponse, I2cSetConfiguration, I2cSetConfigurationFail, I2cSetConfigurationRequest,
-    I2cSetConfigurationResponse, I2cWrite, I2cWriteFail, I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest,
+    ENDPOINT_LIST, GpioError, GpioGet, GpioGetRequest, GpioGetResponse, GpioPut, GpioPutRequest, GpioPutResponse,
+    GpioState, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest,
+    GpioWaitResponse, I2cError, I2cFrequency, I2cRead, I2cReadRequest, I2cReadResponse, I2cSetConfiguration,
+    I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest,
     I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID, PICO_DE_GALLO_PID,
-    PingEndpoint, SpiFlush, SpiFlushFail, SpiFlushResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadFail,
-    SpiReadRequest, SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest, SpiSetConfigurationResponse,
-    SpiTransfer, SpiTransferFail, SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteFail, SpiWriteRequest,
-    SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
+    PingEndpoint, SpiError, SpiFlush, SpiFlushResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest,
+    SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer,
+    SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST,
+    TOPICS_OUT_LIST, Version, VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
@@ -124,13 +123,28 @@ impl Context {
 }
 
 /// Helper macro to get a GPIO pin by index, set it as input, and return a
-/// mutable reference. Returns the appropriate error type on out-of-bounds.
+/// mutable reference. Returns `GpioError::InvalidPin` on out-of-bounds.
 macro_rules! gpio_input {
-    ($context:expr, $pin:expr, $err:expr) => {{
-        let gpio = $context.gpios.get_mut(usize::from($pin)).ok_or($err)?;
+    ($context:expr, $pin:expr) => {{
+        let gpio = $context.gpios.get_mut(usize::from($pin)).ok_or(GpioError::InvalidPin)?;
         gpio.set_as_input();
         gpio
     }};
+}
+
+/// Maps an embassy-rp I2C error to our wire protocol error type.
+fn map_i2c_error(e: i2c::Error) -> I2cError {
+    match e {
+        i2c::Error::Abort(i2c::AbortReason::NoAcknowledge) => I2cError::NoAcknowledge,
+        i2c::Error::Abort(i2c::AbortReason::ArbitrationLoss) => I2cError::ArbitrationLoss,
+        i2c::Error::Abort(i2c::AbortReason::TxNotEmpty(_)) => I2cError::Overrun,
+        i2c::Error::Abort(i2c::AbortReason::Other(_)) => I2cError::Bus,
+        i2c::Error::InvalidReadBufferLength => I2cError::BufferTooLong,
+        i2c::Error::InvalidWriteBufferLength => I2cError::BufferTooLong,
+        i2c::Error::AddressOutOfRange(_) => I2cError::AddressOutOfRange,
+        #[allow(deprecated)]
+        i2c::Error::AddressReserved(_) => I2cError::AddressOutOfRange,
+    }
 }
 
 /// USB driver type for the RP2350.
@@ -315,16 +329,12 @@ async fn i2c_read_handler<'a>(
     let count = usize::from(req.count);
     if count > MAX_TRANSFER_SIZE {
         warn!("i2c read: requested count {} exceeds buffer", count);
-        return Err(I2cReadFail);
+        return Err(I2cError::BufferTooLong);
     }
 
     debug!("i2c read: addr={=u8:#x} count={=usize}", req.address, count);
     let buf = &mut context.buf[..count];
-    context
-        .i2c
-        .read_async(req.address, buf)
-        .await
-        .map_err(|_| I2cReadFail)?;
+    context.i2c.read_async(req.address, buf).await.map_err(map_i2c_error)?;
     Ok(&context.buf[..count])
 }
 
@@ -339,7 +349,7 @@ async fn i2c_write_handler<'a>(
         .i2c
         .write_async(req.address, req.contents.iter().copied())
         .await
-        .map_err(|_| I2cWriteFail)
+        .map_err(map_i2c_error)
 }
 
 /// Handler for `i2c/write-read` — writes then reads in a single I2C transaction.
@@ -351,7 +361,7 @@ async fn i2c_write_read_handler<'a>(
     let count = usize::from(req.count);
     if count > MAX_TRANSFER_SIZE {
         warn!("i2c write_read: requested count {} exceeds buffer", count);
-        return Err(I2cWriteReadFail);
+        return Err(I2cError::BufferTooLong);
     }
 
     debug!(
@@ -365,7 +375,7 @@ async fn i2c_write_read_handler<'a>(
         .i2c
         .write_read_async(req.address, req.contents.iter().copied(), buf)
         .await
-        .map_err(|_| I2cWriteReadFail)?;
+        .map_err(map_i2c_error)?;
     Ok(&context.buf[..count])
 }
 
@@ -378,12 +388,12 @@ async fn spi_read_handler<'a>(
     let count = usize::from(req.count);
     if count > MAX_TRANSFER_SIZE {
         warn!("spi read: requested count {} exceeds buffer", count);
-        return Err(SpiReadFail);
+        return Err(SpiError::BufferTooLong);
     }
 
     debug!("spi read: count={=usize}", count);
     let buf = &mut context.buf[..count];
-    context.spi.read(buf).await.map_err(|_| SpiReadFail)?;
+    context.spi.read(buf).await.map_err(|_| SpiError::Other)?;
     Ok(&context.buf[..count])
 }
 
@@ -394,13 +404,13 @@ async fn spi_write_handler<'a>(
     req: SpiWriteRequest<'a>,
 ) -> SpiWriteResponse {
     debug!("spi write: len={=usize}", req.contents.len());
-    context.spi.write(req.contents).await.map_err(|_| SpiWriteFail)
+    context.spi.write(req.contents).await.map_err(|_| SpiError::Other)
 }
 
 /// Handler for `spi/flush` — flushes the SPI interface.
 async fn spi_flush_handler(context: &mut Context, _header: VarHeader, _req: ()) -> SpiFlushResponse {
     debug!("spi flush");
-    context.spi.flush().map_err(|_| SpiFlushFail)
+    context.spi.flush().map_err(|_| SpiError::Other)
 }
 
 /// Handler for `spi/transfer` — performs a full-duplex SPI transfer via DMA.
@@ -412,7 +422,7 @@ async fn spi_transfer_handler<'a>(
     let len = req.contents.len();
     if len > MAX_TRANSFER_SIZE {
         warn!("spi transfer: requested len {} exceeds buffer", len);
-        return Err(SpiTransferFail);
+        return Err(SpiError::BufferTooLong);
     }
 
     debug!("spi transfer: len={=usize}", len);
@@ -421,13 +431,13 @@ async fn spi_transfer_handler<'a>(
         .spi
         .transfer(buf, req.contents)
         .await
-        .map_err(|_| SpiTransferFail)?;
+        .map_err(|_| SpiError::Other)?;
     Ok(&context.buf[..len])
 }
 
 /// Handler for `gpio/get` — reads the current logic level of a pin.
 async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGetRequest) -> GpioGetResponse {
-    let gpio = gpio_input!(context, req.pin, GpioGetFail);
+    let gpio = gpio_input!(context, req.pin);
     debug!("gpio get: pin={=u8}", req.pin);
     match gpio.get_level() {
         Level::Low => Ok(GpioState::Low),
@@ -438,7 +448,7 @@ async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGe
 /// Handler for `gpio/put` — sets a GPIO pin to the requested level.
 async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPutRequest) -> GpioPutResponse {
     let pin = usize::from(req.pin);
-    let gpio = context.gpios.get_mut(pin).ok_or(GpioPutFail)?;
+    let gpio = context.gpios.get_mut(pin).ok_or(GpioError::InvalidPin)?;
 
     let level = match req.state {
         GpioState::Low => Level::Low,
@@ -458,7 +468,7 @@ async fn gpio_wait_for_high_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_input!(context, req.pin);
     debug!("gpio wait_for_high: pin={=u8}", req.pin);
     gpio.wait_for_high().await;
     Ok(())
@@ -470,7 +480,7 @@ async fn gpio_wait_for_low_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_input!(context, req.pin);
     debug!("gpio wait_for_low: pin={=u8}", req.pin);
     gpio.wait_for_low().await;
     Ok(())
@@ -482,7 +492,7 @@ async fn gpio_wait_for_rising_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_input!(context, req.pin);
     debug!("gpio wait_for_rising: pin={=u8}", req.pin);
     gpio.wait_for_rising_edge().await;
     Ok(())
@@ -494,7 +504,7 @@ async fn gpio_wait_for_falling_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_input!(context, req.pin);
     debug!("gpio wait_for_falling: pin={=u8}", req.pin);
     gpio.wait_for_falling_edge().await;
     Ok(())
@@ -506,7 +516,7 @@ async fn gpio_wait_for_any_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_input!(context, req.pin);
     debug!("gpio wait_for_any: pin={=u8}", req.pin);
     gpio.wait_for_any_edge().await;
     Ok(())
@@ -528,15 +538,25 @@ async fn i2c_set_config_handler(
     i2c_config.frequency = frequency;
 
     debug!("i2c_set_config: freq={=u32}", frequency);
-    context.i2c.set_config(&i2c_config).map_err(|_| I2cSetConfigurationFail)
+    context.i2c.set_config(&i2c_config).map_err(|_| I2cError::Other)
 }
 
 /// Handler for `spi/set-config` — reconfigures SPI bus parameters.
+///
+/// Validates the requested frequency before applying. The RP2350 SPI peripheral
+/// requires a non-zero frequency no greater than half the peripheral clock
+/// (75 MHz at the default 150 MHz system clock).
 async fn spi_set_config_handler(
     context: &mut Context,
     _header: VarHeader,
     req: SpiSetConfigurationRequest,
 ) -> SpiSetConfigurationResponse {
+    // Guard: embassy-rp's calc_prescs panics on freq == 0 or impossibly high values
+    if req.spi_frequency == 0 {
+        warn!("spi_set_config: frequency must be non-zero");
+        return Err(SpiError::Other);
+    }
+
     let mut spi_config = spi::Config::default();
     spi_config.frequency = req.spi_frequency;
     spi_config.phase = match req.spi_phase {

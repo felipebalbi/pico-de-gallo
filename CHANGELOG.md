@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **internal**: Replaced 12 unit-struct error types (`I2cReadFail`, `SpiWriteFail`,
+  etc.) with 3 rich error enums: `I2cError` (7 variants), `SpiError` (2 variants),
+  `GpioError` (2 variants). Wire protocol is **not** backward compatible —
+  firmware and host must be upgraded together.
+- **lib**: All method return types updated from `PicoDeGalloError<*Fail>` to
+  `PicoDeGalloError<I2cError>`, `PicoDeGalloError<SpiError>`, or
+  `PicoDeGalloError<GpioError>`.
+- **hal**: Single `Error` type replaced with `I2cHalError`, `SpiHalError`, and
+  `GpioHalError` — each wraps the endpoint-specific error plus a `Comms` variant.
+  I2C `ErrorKind` mapping now returns accurate variants (NoAcknowledge,
+  ArbitrationLoss, Bus, Overrun) instead of `Other` for all errors.
+- **ffi**: Added 8 new status codes (`I2cNack`, `I2cBusError`,
+  `I2cArbitrationLoss`, `I2cOverrun`, `BufferTooLong`, `I2cAddressOutOfRange`,
+  `GpioInvalidPin`, `CommsFailed`).
+- **firmware**: I2C handlers now map embassy-rp `AbortReason` variants to rich
+  error types. SPI `set-config` validates frequency before applying (prevents
+  panic on zero frequency).
+
 ### Fixed
 
 - **lib**: Corrected `MAX_TRANSFER_SIZE` references in rustdoc for `i2c_read`,

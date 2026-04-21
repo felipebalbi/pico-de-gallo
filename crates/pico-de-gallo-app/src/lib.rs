@@ -384,11 +384,9 @@ impl Cli {
     async fn i2c_write(&self, address: &u8, bytes: &[u8]) -> Result<()> {
         let pg = self.connect();
 
-        if pg.i2c_write(*address, bytes).await.is_ok() {
-            Ok(())
-        } else {
-            Err(eyre!("i2c_write failed for address {:#04x}", address))
-        }
+        pg.i2c_write(*address, bytes)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("i2c_write failed"))
     }
 
     async fn i2c_write_then_read(&self, address: &u8, bytes: &[u8], count: &usize) -> Result<()> {
@@ -420,11 +418,9 @@ impl Cli {
     async fn spi_write(&self, bytes: &[u8]) -> Result<()> {
         let pg = self.connect();
 
-        if pg.spi_write(bytes).await.is_ok() {
-            Ok(())
-        } else {
-            Err(eyre!("spi_write failed"))
-        }
+        pg.spi_write(bytes)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("spi_write failed"))
     }
 
     async fn spi_transfer(&self, bytes: &[u8]) -> Result<()> {
