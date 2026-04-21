@@ -29,7 +29,7 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 
 | Phase | Description        | Items | Done | Status         |
 |-------|--------------------|-------|------|----------------|
-| **1** | Polish What Exists | 6     | 0    | 🔴 Not started |
+| **1** | Polish What Exists | 6     | 6    | ✅ Complete    |
 | **2** | New Protocols      | 6     | 0    | 🔴 Not started |
 | **3** | Advanced Features  | 6     | 0    | 🔴 Not started |
 | **4** | Hardware Rev 2     | 6     | 0    | 🔴 Not started |
@@ -40,14 +40,14 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 
 | Area            | Status                                                                                                                                                         |
 |-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **I2C**         | 1 bus (I2C1), 7-bit addressing, read/write/write-read, configurable frequency (Standard/Fast/Fast+)                                                            |
+| **I2C**         | 1 bus (I2C1), 7-bit addressing, read/write/write-read/scan, configurable frequency (Standard/Fast/Fast+)                                                       |
 | **SPI**         | 1 bus (SPI0), read/write/flush/transfer, configurable polarity/phase, DMA-backed                                                                               |
 | **GPIO**        | 8 pins (GPIO8–15), input/output/wait-for-edge                                                                                                                  |
 | **USB**         | Full Speed (12 Mbps), postcard-rpc over raw USB bulk                                                                                                           |
 | **HAL traits**  | `I2c`, `SpiBus`, `InputPin`, `OutputPin`, `StatefulOutputPin`, `Wait`, `DelayNs` (sync + async)                                                                |
 | **Hardware**    | Bare landing board — Pico 2 module + pin headers + mounting holes. No level shifters, no ESD protection, no voltage regulation beyond what the Pico 2 provides |
 | **Host crates** | internal (protocol), lib (high-level API), hal (embedded-hal bridge), ffi (C bindings), app (CLI)                                                              |
-| **Endpoints**   | 18 total (ping, version, I2C×4, SPI×5, GPIO×7, config×2)                                                                                                       |
+| **Endpoints**   | 22 total (ping, version, I2C×5, SPI×5, GPIO×8, config×4)                                                                                                       |
 | **Tests**       | 115 unit + 3 doctests, CI on every push                                                                                                                        |
 
 ### What's Missing
@@ -104,14 +104,14 @@ each trait appears in crates.io drivers:
 These are quality improvements that make the existing feature set more
 reliable and complete before adding new capabilities.
 
-|   | Item                                                            | Tracking |
-|---|-----------------------------------------------------------------|----------|
-| ☐ | [1.1 Rich Error Types](#11-rich-error-types)                    |          |
-| ☐ | [1.2 SpiDevice Trait](#12-spidevice-trait-implementation)       |          |
-| ☐ | [1.3 I2C Bus Scan](#13-i2c-bus-scan-endpoint)                   |          |
-| ☐ | [1.4 GPIO Direction Control](#14-gpio-direction-control)        |          |
-| ☐ | [1.5 Config Query Endpoints](#15-configuration-query-endpoints) |          |
-| ☐ | [1.6 MAX_TRANSFER_SIZE Audit](#16-max_transfer_size-audit)      |          |
+|   | Item                                                            | Tracking                                                              |
+|---|-----------------------------------------------------------------|-----------------------------------------------------------------------|
+| ☑ | [1.1 Rich Error Types](#11-rich-error-types)                    | [#1](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/1) |
+| ☑ | [1.2 SpiDevice Trait](#12-spidevice-trait-implementation)       | [#2](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/2) |
+| ☑ | [1.3 I2C Bus Scan](#13-i2c-bus-scan-endpoint)                   | [#3](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/3) |
+| ☑ | [1.4 GPIO Direction Control](#14-gpio-direction-control)        | [#4](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/4) |
+| ☑ | [1.5 Config Query Endpoints](#15-configuration-query-endpoints) | [#5](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/5) |
+| ☑ | [1.6 MAX_TRANSFER_SIZE Audit](#16-max_transfer_size-audit)      | [#6](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/6) |
 
 ### 1.1 Rich Error Types
 
@@ -659,7 +659,7 @@ but that's a separate product, not a replacement.
 | `I2c<SevenBitAddress>` | `embedded-hal`       | ✅       | ✅    | Done      |
 | `I2c<TenBitAddress>`   | `embedded-hal`       | ❌       | ❌    | Phase 2.6 |
 | `SpiBus`               | `embedded-hal`       | ✅       | ✅    | Done      |
-| `SpiDevice`            | `embedded-hal`       | ❌       | ❌    | Phase 1.2 |
+| `SpiDevice`            | `embedded-hal`       | ✅       | ✅    | Done      |
 | `InputPin`             | `embedded-hal`       | ✅       | —     | Done      |
 | `OutputPin`            | `embedded-hal`       | ✅       | —     | Done      |
 | `StatefulOutputPin`    | `embedded-hal`       | ✅       | —     | Done      |

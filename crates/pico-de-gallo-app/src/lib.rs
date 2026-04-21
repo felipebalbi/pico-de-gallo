@@ -30,6 +30,7 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::{Result, eyre::eyre};
+use pico_de_gallo_lib::{GpioDirection, GpioPull, GpioState};
 use pico_de_gallo_lib::{I2cFrequency, PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
 use std::num::ParseIntError;
 use tabled::builder::Builder;
@@ -53,6 +54,45 @@ impl From<I2cFrequencyArg> for I2cFrequency {
             I2cFrequencyArg::Standard => I2cFrequency::Standard,
             I2cFrequencyArg::Fast => I2cFrequency::Fast,
             I2cFrequencyArg::FastPlus => I2cFrequency::FastPlus,
+        }
+    }
+}
+
+/// GPIO pin direction for CLI argument parsing.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpioDirectionArg {
+    /// Configure pin as input
+    Input,
+    /// Configure pin as output
+    Output,
+}
+
+impl From<GpioDirectionArg> for GpioDirection {
+    fn from(arg: GpioDirectionArg) -> Self {
+        match arg {
+            GpioDirectionArg::Input => GpioDirection::Input,
+            GpioDirectionArg::Output => GpioDirection::Output,
+        }
+    }
+}
+
+/// GPIO pull resistor configuration for CLI argument parsing.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpioPullArg {
+    /// No internal pull resistor
+    None,
+    /// Internal pull-up resistor
+    Up,
+    /// Internal pull-down resistor
+    Down,
+}
+
+impl From<GpioPullArg> for GpioPull {
+    fn from(arg: GpioPullArg) -> Self {
+        match arg {
+            GpioPullArg::None => GpioPull::None,
+            GpioPullArg::Up => GpioPull::Up,
+            GpioPullArg::Down => GpioPull::Down,
         }
     }
 }
@@ -113,6 +153,13 @@ enum Commands {
         #[command(subcommand)]
         command: SpiCommands,
     },
+
+    /// GPIO access methods
+    Gpio {
+        /// GPIO commands
+        #[command(subcommand)]
+        command: GpioCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -167,6 +214,9 @@ enum I2cCommands {
         #[arg(long)]
         frequency: I2cFrequencyArg,
     },
+
+    /// Query the current I2C bus configuration
+    GetConfig,
 }
 
 #[derive(Subcommand, Debug)]
@@ -216,6 +266,45 @@ enum SpiCommands {
         /// SPI polarity idle low (CPOL=0)
         #[arg(long, default_value_t)]
         idle_low: bool,
+    },
+
+    /// Query the current SPI bus configuration
+    GetConfig,
+}
+
+#[derive(Subcommand, Debug)]
+enum GpioCommands {
+    /// Read the current level of a GPIO pin
+    Get {
+        /// GPIO pin number (0–7)
+        #[arg(short, long)]
+        pin: u8,
+    },
+
+    /// Set a GPIO pin to a specific level
+    Put {
+        /// GPIO pin number (0–7)
+        #[arg(short, long)]
+        pin: u8,
+
+        /// Desired level: true = high, false = low
+        #[arg(short, long)]
+        high: bool,
+    },
+
+    /// Configure a GPIO pin's direction and pull resistor
+    SetConfig {
+        /// GPIO pin number (0–7)
+        #[arg(short, long)]
+        pin: u8,
+
+        /// Pin direction: input or output
+        #[arg(short, long)]
+        direction: GpioDirectionArg,
+
+        /// Internal pull resistor: none, up, or down
+        #[arg(long, default_value = "none")]
+        pull: GpioPullArg,
     },
 }
 
@@ -276,6 +365,7 @@ impl Cli {
                     self.i2c_write_then_read(address, bytes, count).await
                 }
                 I2cCommands::SetConfig { frequency } => self.i2c_set_config((*frequency).into()).await,
+                I2cCommands::GetConfig => self.i2c_get_config().await,
             },
             Commands::Spi { command } => match command {
                 SpiCommands::Read { count } => self.spi_read(count).await,
@@ -287,6 +377,12 @@ impl Cli {
                     first_transition,
                     idle_low,
                 } => self.spi_set_config(*frequency, *first_transition, *idle_low).await,
+                SpiCommands::GetConfig => self.spi_get_config().await,
+            },
+            Commands::Gpio { command } => match command {
+                GpioCommands::Get { pin } => self.gpio_get(*pin).await,
+                GpioCommands::Put { pin, high } => self.gpio_put(*pin, *high).await,
+                GpioCommands::SetConfig { pin, direction, pull } => self.gpio_set_config(*pin, *direction, *pull).await,
             },
         }
     }
@@ -324,6 +420,11 @@ impl Cli {
     async fn i2c_scan(&self, reserved: bool) -> Result<()> {
         let pg = self.connect();
 
+        let addresses = pg
+            .i2c_scan(reserved)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("i2c_scan failed"))?;
+
         let mut builder = Builder::with_capacity(17, 8);
         builder.push_record(
             (0..=16)
@@ -331,26 +432,20 @@ impl Cli {
                 .collect::<Vec<_>>(),
         );
 
-        for hi in 0..=7 {
+        for hi in 0u8..=7 {
             let mut row = vec![format!("{:x} ", hi)];
 
-            for lo in 0..=15 {
+            for lo in 0u8..=15 {
                 let address = hi << 4 | lo;
                 let stat = match address {
-                    0x00..=0x07 | 0x78..=0x7f => {
-                        if reserved {
-                            match pg.i2c_read(address, 1).await {
-                                Ok(_) => format!("{:02x}", address),
-                                Err(_) => "--".to_string(),
-                            }
+                    0x00..=0x07 | 0x78..=0x7f if !reserved => "RR".to_string(),
+                    _ => {
+                        if addresses.contains(&address) {
+                            format!("{:02x}", address)
                         } else {
-                            "RR".to_string()
+                            "--".to_string()
                         }
                     }
-                    _ => match pg.i2c_read(address, 1).await {
-                        Ok(_) => format!("{:02x}", address),
-                        Err(_) => "--".to_string(),
-                    },
                 };
 
                 row.push(stat);
@@ -384,11 +479,9 @@ impl Cli {
     async fn i2c_write(&self, address: &u8, bytes: &[u8]) -> Result<()> {
         let pg = self.connect();
 
-        if pg.i2c_write(*address, bytes).await.is_ok() {
-            Ok(())
-        } else {
-            Err(eyre!("i2c_write failed for address {:#04x}", address))
-        }
+        pg.i2c_write(*address, bytes)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("i2c_write failed"))
     }
 
     async fn i2c_write_then_read(&self, address: &u8, bytes: &[u8], count: &usize) -> Result<()> {
@@ -420,11 +513,9 @@ impl Cli {
     async fn spi_write(&self, bytes: &[u8]) -> Result<()> {
         let pg = self.connect();
 
-        if pg.spi_write(bytes).await.is_ok() {
-            Ok(())
-        } else {
-            Err(eyre!("spi_write failed"))
-        }
+        pg.spi_write(bytes)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("spi_write failed"))
     }
 
     async fn spi_transfer(&self, bytes: &[u8]) -> Result<()> {
@@ -453,6 +544,23 @@ impl Cli {
             .map_err(|e| eyre!("{:?}", e).wrap_err("i2c set-config failed"))
     }
 
+    async fn i2c_get_config(&self) -> Result<()> {
+        let pg = self.connect();
+
+        let freq = pg
+            .i2c_get_config()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("i2c get-config failed"))?;
+
+        let label = match freq {
+            I2cFrequency::Standard => "Standard (100 kHz)",
+            I2cFrequency::Fast => "Fast (400 kHz)",
+            I2cFrequency::FastPlus => "Fast+ (1 MHz)",
+        };
+        println!("I2C frequency: {label}");
+        Ok(())
+    }
+
     async fn spi_set_config(&self, frequency: u32, first_transition: bool, idle_low: bool) -> Result<()> {
         let pg = self.connect();
 
@@ -471,6 +579,67 @@ impl Cli {
         pg.spi_set_config(frequency, spi_phase, spi_polarity)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("spi set-config failed"))
+    }
+
+    async fn spi_get_config(&self) -> Result<()> {
+        let pg = self.connect();
+
+        let info = pg
+            .spi_get_config()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("spi get-config failed"))?;
+
+        let phase = match info.spi_phase {
+            SpiPhase::CaptureOnFirstTransition => "CaptureOnFirstTransition (CPHA=0)",
+            SpiPhase::CaptureOnSecondTransition => "CaptureOnSecondTransition (CPHA=1)",
+        };
+        let polarity = match info.spi_polarity {
+            SpiPolarity::IdleLow => "IdleLow (CPOL=0)",
+            SpiPolarity::IdleHigh => "IdleHigh (CPOL=1)",
+        };
+        println!("SPI frequency: {} Hz", info.spi_frequency);
+        println!("SPI phase:     {phase}");
+        println!("SPI polarity:  {polarity}");
+        Ok(())
+    }
+
+    async fn gpio_get(&self, pin: u8) -> Result<()> {
+        let pg = self.connect();
+
+        let level = pg
+            .gpio_get(pin)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("gpio get failed"))?;
+
+        let label = match level {
+            GpioState::High => "HIGH",
+            GpioState::Low => "LOW",
+        };
+        println!("GPIO pin {pin}: {label}");
+        Ok(())
+    }
+
+    async fn gpio_put(&self, pin: u8, high: bool) -> Result<()> {
+        let pg = self.connect();
+
+        let state = if high { GpioState::High } else { GpioState::Low };
+        pg.gpio_put(pin, state)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("gpio put failed"))?;
+
+        println!("GPIO pin {pin} set to {}", if high { "HIGH" } else { "LOW" });
+        Ok(())
+    }
+
+    async fn gpio_set_config(&self, pin: u8, direction: GpioDirectionArg, pull: GpioPullArg) -> Result<()> {
+        let pg = self.connect();
+
+        pg.gpio_set_config(pin, direction.into(), pull.into())
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("gpio set-config failed"))?;
+
+        println!("GPIO pin {pin} configured as {direction:?} with pull {pull:?}");
+        Ok(())
     }
 }
 

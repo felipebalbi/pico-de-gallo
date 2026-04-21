@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **internal**: Replaced 12 unit-struct error types (`I2cReadFail`, `SpiWriteFail`,
+  etc.) with 3 rich error enums: `I2cError` (7 variants), `SpiError` (2 variants),
+  `GpioError` (2 variants). Wire protocol is **not** backward compatible —
+  firmware and host must be upgraded together.
+- **lib**: All method return types updated from `PicoDeGalloError<*Fail>` to
+  `PicoDeGalloError<I2cError>`, `PicoDeGalloError<SpiError>`, or
+  `PicoDeGalloError<GpioError>`.
+- **hal**: Single `Error` type replaced with `I2cHalError`, `SpiHalError`, and
+  `GpioHalError` — each wraps the endpoint-specific error plus a `Comms` variant.
+  I2C `ErrorKind` mapping now returns accurate variants (NoAcknowledge,
+  ArbitrationLoss, Bus, Overrun) instead of `Other` for all errors.
+- **ffi**: Added 8 new status codes (`I2cNack`, `I2cBusError`,
+  `I2cArbitrationLoss`, `I2cOverrun`, `BufferTooLong`, `I2cAddressOutOfRange`,
+  `GpioInvalidPin`, `CommsFailed`).
+- **firmware**: I2C handlers now map embassy-rp `AbortReason` variants to rich
+  error types. SPI `set-config` validates frequency before applying (prevents
+  panic on zero frequency).
+
+### Added
+
+- **internal**: `I2cScan` endpoint and `I2cScanRequest` type for firmware-side bus
+  scanning. Returns a `Vec<u8>` of responding addresses — a single USB
+  round-trip replaces 112 individual reads.
+- **firmware**: `i2c_scan_handler` — probes addresses by 1-byte read, collects
+  responding addresses. Supports `include_reserved` flag.
+- **lib**: `PicoDeGallo::i2c_scan(include_reserved)` method returning `Vec<u8>`.
+- **hal**: `Hal::i2c_scan(include_reserved)` method returning `Vec<u8>`.
+- **ffi**: `gallo_i2c_scan()` function (writes responding addresses to caller
+  buffer) and `I2cScanFailed` status code.
+- **app**: `gallo i2c scan` now uses the dedicated scan endpoint (single round-trip)
+  instead of 112 individual reads.
+- **hal**: `SpiDev` type implementing both `embedded_hal::spi::SpiDevice` and
+  `embedded_hal_async::spi::SpiDevice`. Manages chip-select (CS) via a GPIO pin,
+  asserting CS low before operations and deasserting high afterward with
+  automatic flush. Created via `Hal::spi_device(cs_pin)`.
+- **internal**: `GpioDirection` and `GpioPull` enums, `GpioSetConfigurationRequest`,
+  `GpioSetConfigurationResponse`, and `GpioSetConfiguration` endpoint for runtime
+  GPIO pin direction and pull-resistor configuration.
+- **internal**: `GpioError::WrongDirection` variant — returned when a get/wait is
+  attempted on a pin configured as output, or a put on a pin configured as input.
+- **firmware**: `gpio_set_config_handler` and per-pin `PinMode` tracking. Once a
+  pin is configured via `gpio/set-config`, it enters explicit mode and
+  get/put/wait respect the configured direction (returns `WrongDirection` on
+  mismatch). Legacy auto-switching preserved for unconfigured pins.
+- **lib**: `PicoDeGallo::gpio_set_config(pin, direction, pull)` method;
+  re-exported `GpioDirection` and `GpioPull`.
+- **hal**: `Gpio::set_config(pin, direction, pull)` method.
+- **ffi**: `gallo_gpio_set_config()` function and `GpioSetConfigFailed` /
+  `GpioWrongDirection` status codes.
+- **app**: `gallo gpio set-config`, `gallo gpio get`, and `gallo gpio put`
+  subcommands for direct GPIO access from the command line.
+- **internal**: `I2cGetConfiguration` and `SpiGetConfiguration` endpoints with
+  `SpiConfigurationInfo` struct for querying the active bus configuration without
+  relying on local state.
+- **firmware**: `i2c_get_config_handler` and `spi_get_config_handler` — return
+  the currently active configuration. Firmware now tracks config values set by
+  `set-config` endpoints.
+- **lib**: `PicoDeGallo::i2c_get_config()` and `spi_get_config()` methods;
+  re-exported `SpiConfigurationInfo`.
+- **hal**: `Hal::i2c_get_config()` and `spi_get_config()` methods.
+- **ffi**: `gallo_i2c_get_config()` and `gallo_spi_get_config()` functions,
+  `I2cGetConfigFailed` and `SpiGetConfigFailed` status codes.
+- **app**: `gallo i2c get-config` and `gallo spi get-config` subcommands.
+
+### Fixed
+
+- **lib**: Corrected `MAX_TRANSFER_SIZE` references in rustdoc for `i2c_read`,
+  `i2c_write_read`, and `spi_read` (was 512, actual value is 4096)
+
 ## [0.7.0] — 2025-04-20
 
 ### Breaking Changes

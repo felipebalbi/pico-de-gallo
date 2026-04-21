@@ -21,6 +21,7 @@ Commands:
   version  Get firmware version
   i2c      I2C access methods
   spi      SPI access methods
+  gpio     GPIO access methods
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -70,7 +71,8 @@ Options:
 
 The `i2c` subcommand groups all I<sup>2</sup>C functionality. We
 support a regular `read`, `write`, and `write-read`
-operation. Additionally, a minimal `scan` facility is implemented.
+operation. Additionally, a dedicated `scan` endpoint probes all
+addresses in a single USB round-trip.
 
 #### Scanning
 
@@ -253,6 +255,7 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `ping`                       | `id`                                                          | Sends the `id` to *Pico de Gallo* and waits for a response.                |
 | `i2c_read`                   | `address`, `count`                                            | Attempts to read `count` bytes from the I<sup>2</sup>C device at `address` |
 | `i2c_write`                  | `address`, `contents`                                         | Attempts to write `contents` to the  I<sup>2</sup>C device at `address`    |
+| `i2c_scan`                   | `include_reserved`                                            | Scans the I<sup>2</sup>C bus and returns responding addresses              |
 | `spi_read`                   | `count`                                                       | Attempts to read `count` bytes via SPI                                     |
 | `spi_write`                  | `contents`                                                    | Attempts to write `contents` via SPI                                       |
 | `spi_transfer`               | `contents`                                                    | Full-duplex SPI transfer (simultaneous TX and RX)                          |
@@ -264,8 +267,11 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `gpio_wait_for_rising_edge`  | `pin`                                                         | Waits until a rising edge is seen on GPIO #`pin`                           |
 | `gpio_wait_for_falling_edge` | `pin`                                                         | Waits until a falling edge is seen on GPIO #`pin`                          |
 | `gpio_wait_for_any_edge`     | `pin`                                                         | Waits until any edge is seen on GPIO #`pin`                                |
+| `gpio_set_config`            | `pin`, `direction` (Input/Output), `pull` (None/Up/Down)      | Configures GPIO #`pin` direction and pull resistor. Enters explicit mode.  |
 | `i2c_set_config`             | `frequency` (Standard/Fast/FastPlus)                          | Sets I<sup>2</sup>C bus clock frequency                                     |
 | `spi_set_config`             | `spi_frequency`, `spi_phase`, `spi_polarity`                  | Sets SPI bus clock frequency, phase, and polarity                            |
+| `i2c_get_config`             |                                                               | Returns the active I<sup>2</sup>C bus configuration (frequency)              |
+| `spi_get_config`             |                                                               | Returns the active SPI bus configuration (frequency, phase, polarity)        |
 | `version`                    |                                                               | Reads the current Firmware version from *Pico de Gallo*                    |
 
 ## Gallo Hal
@@ -280,6 +286,19 @@ lot more by relying on *Pico de Gallo* to do the heavy-lifting.
 To clarify what we mean, a driver *crate* would add
 `pico-de-gallo-hal` as a dev dependency and use it for tests and
 examples.
+
+### Implemented Traits
+
+| Peripheral | Blocking Trait                               | Async Trait           |
+|------------|----------------------------------------------|-----------------------|
+| GPIO       | `OutputPin`, `InputPin`, `StatefulOutputPin` | `Wait`                |
+| I2C        | `I2c`                                        | `I2c`                 |
+| SPI        | `SpiBus`, `SpiDevice`                        | `SpiBus`, `SpiDevice` |
+| Delay      | `DelayNs`                                    | `DelayNs`             |
+
+> **Note:** `SpiDevice` manages chip-select (CS) automatically via a
+> GPIO pin. Use `hal.spi_device(cs_pin)` to create an `SpiDevice`
+> handle. For raw bus access without CS management, use `hal.spi()`.
 
 Here's a minimalistic example of how to use `pico-de-gallo-hal` to
 communicate with an I<sup>2</sup>C device.

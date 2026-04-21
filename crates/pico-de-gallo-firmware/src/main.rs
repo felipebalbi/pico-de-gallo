@@ -34,7 +34,23 @@ use embassy_embedded_hal::SetConfig;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::ClockConfig;
-use embassy_rp::gpio::{Flex, Level};
+use embassy_rp::gpio::{Flex, Level, Pull};
+
+/// Per-pin direction mode tracked by firmware.
+///
+/// Pins start in `LegacyAuto` mode, which preserves backward-compatible
+/// behavior: `gpio_get` auto-switches to input, `gpio_put` auto-switches
+/// to output. Once configured via `gpio/set-config`, the pin enters an
+/// explicit mode and direction changes are no longer automatic.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PinMode {
+    /// Default: auto-switch direction on get/put (backward compatible).
+    LegacyAuto,
+    /// Explicitly configured as input via `gpio/set-config`.
+    ExplicitInput,
+    /// Explicitly configured as output via `gpio/set-config`.
+    ExplicitOutput,
+}
 use embassy_rp::i2c::{self, I2c};
 use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, SPI0, USB};
 use embassy_rp::spi::{self, Phase, Polarity, Spi};
@@ -45,16 +61,17 @@ use embassy_rp::usb::Driver;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
-    ENDPOINT_LIST, GpioGet, GpioGetFail, GpioGetRequest, GpioGetResponse, GpioPut, GpioPutFail, GpioPutRequest,
-    GpioPutResponse, GpioState, GpioWaitFail, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
-    GpioWaitForRising, GpioWaitRequest, GpioWaitResponse, I2cFrequency, I2cRead, I2cReadFail, I2cReadRequest,
-    I2cReadResponse, I2cSetConfiguration, I2cSetConfigurationFail, I2cSetConfigurationRequest,
-    I2cSetConfigurationResponse, I2cWrite, I2cWriteFail, I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest,
+    ENDPOINT_LIST, GpioDirection, GpioError, GpioGet, GpioGetRequest, GpioGetResponse, GpioPull, GpioPut,
+    GpioPutRequest, GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSetConfigurationResponse,
+    GpioState, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest,
+    GpioWaitResponse, I2cError, I2cFrequency, I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead,
+    I2cReadRequest, I2cReadResponse, I2cScan, I2cScanRequest, I2cScanResponse, I2cSetConfiguration,
+    I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest,
     I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID, PICO_DE_GALLO_PID,
-    PingEndpoint, SpiFlush, SpiFlushFail, SpiFlushResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadFail,
-    SpiReadRequest, SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest, SpiSetConfigurationResponse,
-    SpiTransfer, SpiTransferFail, SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteFail, SpiWriteRequest,
-    SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
+    PingEndpoint, SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration,
+    SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse,
+    SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
@@ -105,6 +122,11 @@ pub struct Context {
     i2c: I2c<'static, I2C1, i2c::Async>,
     spi: Spi<'static, SPI0, spi::Async>,
     gpios: [Flex<'static>; NUM_GPIOS],
+    pin_modes: [PinMode; NUM_GPIOS],
+    i2c_frequency: I2cFrequency,
+    spi_frequency: u32,
+    spi_phase: SpiPhase,
+    spi_polarity: SpiPolarity,
     buf: [u8; MAX_TRANSFER_SIZE],
 }
 
@@ -114,23 +136,51 @@ impl Context {
         spi: Spi<'static, SPI0, spi::Async>,
         gpios: [Flex<'static>; NUM_GPIOS],
     ) -> Self {
+        // Defaults match embassy-rp Config::default()
         Self {
             i2c,
             spi,
             gpios,
+            pin_modes: [PinMode::LegacyAuto; NUM_GPIOS],
+            i2c_frequency: I2cFrequency::Standard,
+            spi_frequency: 1_000_000,
+            spi_phase: SpiPhase::CaptureOnFirstTransition,
+            spi_polarity: SpiPolarity::IdleLow,
             buf: [0; MAX_TRANSFER_SIZE],
         }
     }
 }
 
-/// Helper macro to get a GPIO pin by index, set it as input, and return a
-/// mutable reference. Returns the appropriate error type on out-of-bounds.
-macro_rules! gpio_input {
-    ($context:expr, $pin:expr, $err:expr) => {{
-        let gpio = $context.gpios.get_mut(usize::from($pin)).ok_or($err)?;
-        gpio.set_as_input();
+/// Helper macro to get a GPIO pin by index for input operations.
+/// In `LegacyAuto` mode, auto-switches to input. In `ExplicitInput` mode,
+/// uses the pin as-is. In `ExplicitOutput` mode, returns `WrongDirection`.
+macro_rules! gpio_for_input {
+    ($context:expr, $pin:expr) => {{
+        let idx = usize::from($pin);
+        let mode = *$context.pin_modes.get(idx).ok_or(GpioError::InvalidPin)?;
+        let gpio = $context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+        match mode {
+            PinMode::LegacyAuto => gpio.set_as_input(),
+            PinMode::ExplicitInput => {}
+            PinMode::ExplicitOutput => return Err(GpioError::WrongDirection),
+        }
         gpio
     }};
+}
+
+/// Maps an embassy-rp I2C error to our wire protocol error type.
+fn map_i2c_error(e: i2c::Error) -> I2cError {
+    match e {
+        i2c::Error::Abort(i2c::AbortReason::NoAcknowledge) => I2cError::NoAcknowledge,
+        i2c::Error::Abort(i2c::AbortReason::ArbitrationLoss) => I2cError::ArbitrationLoss,
+        i2c::Error::Abort(i2c::AbortReason::TxNotEmpty(_)) => I2cError::Overrun,
+        i2c::Error::Abort(i2c::AbortReason::Other(_)) => I2cError::Bus,
+        i2c::Error::InvalidReadBufferLength => I2cError::BufferTooLong,
+        i2c::Error::InvalidWriteBufferLength => I2cError::BufferTooLong,
+        i2c::Error::AddressOutOfRange(_) => I2cError::AddressOutOfRange,
+        #[allow(deprecated)]
+        i2c::Error::AddressReserved(_) => I2cError::AddressOutOfRange,
+    }
 }
 
 /// USB driver type for the RP2350.
@@ -224,8 +274,12 @@ define_dispatch! {
         | GpioWaitForRising   | async    | gpio_wait_for_rising_handler  |
         | GpioWaitForFalling  | async    | gpio_wait_for_falling_handler |
         | GpioWaitForAny      | async    | gpio_wait_for_any_handler     |
-        | I2cSetConfiguration | async    | i2c_set_config_handler        |
-        | SpiSetConfiguration | async    | spi_set_config_handler        |
+        | GpioSetConfiguration | async    | gpio_set_config_handler       |
+        | I2cSetConfiguration  | async    | i2c_set_config_handler        |
+        | I2cScan             | async    | i2c_scan_handler              |
+        | SpiSetConfiguration  | async    | spi_set_config_handler        |
+        | I2cGetConfiguration  | blocking | i2c_get_config_handler        |
+        | SpiGetConfiguration  | blocking | spi_get_config_handler        |
         | Version             | async    | version_handler               |
     };
     topics_in: {
@@ -315,16 +369,12 @@ async fn i2c_read_handler<'a>(
     let count = usize::from(req.count);
     if count > MAX_TRANSFER_SIZE {
         warn!("i2c read: requested count {} exceeds buffer", count);
-        return Err(I2cReadFail);
+        return Err(I2cError::BufferTooLong);
     }
 
     debug!("i2c read: addr={=u8:#x} count={=usize}", req.address, count);
     let buf = &mut context.buf[..count];
-    context
-        .i2c
-        .read_async(req.address, buf)
-        .await
-        .map_err(|_| I2cReadFail)?;
+    context.i2c.read_async(req.address, buf).await.map_err(map_i2c_error)?;
     Ok(&context.buf[..count])
 }
 
@@ -339,7 +389,7 @@ async fn i2c_write_handler<'a>(
         .i2c
         .write_async(req.address, req.contents.iter().copied())
         .await
-        .map_err(|_| I2cWriteFail)
+        .map_err(map_i2c_error)
 }
 
 /// Handler for `i2c/write-read` — writes then reads in a single I2C transaction.
@@ -351,7 +401,7 @@ async fn i2c_write_read_handler<'a>(
     let count = usize::from(req.count);
     if count > MAX_TRANSFER_SIZE {
         warn!("i2c write_read: requested count {} exceeds buffer", count);
-        return Err(I2cWriteReadFail);
+        return Err(I2cError::BufferTooLong);
     }
 
     debug!(
@@ -365,8 +415,45 @@ async fn i2c_write_read_handler<'a>(
         .i2c
         .write_read_async(req.address, req.contents.iter().copied(), buf)
         .await
-        .map_err(|_| I2cWriteReadFail)?;
+        .map_err(map_i2c_error)?;
     Ok(&context.buf[..count])
+}
+
+/// First standard (non-reserved) 7-bit I2C address.
+const I2C_ADDR_FIRST: u8 = 0x08;
+/// Last standard (non-reserved) 7-bit I2C address.
+const I2C_ADDR_LAST: u8 = 0x77;
+
+/// Handler for `i2c/scan` — probes I2C addresses and returns those that ACK.
+async fn i2c_scan_handler<'a>(
+    context: &'a mut Context,
+    _header: VarHeader,
+    req: I2cScanRequest,
+) -> I2cScanResponse<'a> {
+    let (start, end) = if req.include_reserved {
+        (0x00u8, 0x7Fu8)
+    } else {
+        (I2C_ADDR_FIRST, I2C_ADDR_LAST)
+    };
+
+    debug!("i2c scan: range={=u8:#x}..={=u8:#x}", start, end);
+
+    let mut found = 0usize;
+
+    for addr in start..=end {
+        // Probe by attempting a 1-byte read. ACK means a device is present.
+        let mut probe_buf = [0u8];
+        if context.i2c.read_async(addr, &mut probe_buf).await.is_ok() {
+            if found >= MAX_TRANSFER_SIZE {
+                break;
+            }
+            context.buf[found] = addr;
+            found += 1;
+        }
+    }
+
+    debug!("i2c scan: found {=usize} device(s)", found);
+    Ok(&context.buf[..found])
 }
 
 /// Handler for `spi/read` — reads bytes from the SPI bus.
@@ -378,12 +465,12 @@ async fn spi_read_handler<'a>(
     let count = usize::from(req.count);
     if count > MAX_TRANSFER_SIZE {
         warn!("spi read: requested count {} exceeds buffer", count);
-        return Err(SpiReadFail);
+        return Err(SpiError::BufferTooLong);
     }
 
     debug!("spi read: count={=usize}", count);
     let buf = &mut context.buf[..count];
-    context.spi.read(buf).await.map_err(|_| SpiReadFail)?;
+    context.spi.read(buf).await.map_err(|_| SpiError::Other)?;
     Ok(&context.buf[..count])
 }
 
@@ -394,13 +481,13 @@ async fn spi_write_handler<'a>(
     req: SpiWriteRequest<'a>,
 ) -> SpiWriteResponse {
     debug!("spi write: len={=usize}", req.contents.len());
-    context.spi.write(req.contents).await.map_err(|_| SpiWriteFail)
+    context.spi.write(req.contents).await.map_err(|_| SpiError::Other)
 }
 
 /// Handler for `spi/flush` — flushes the SPI interface.
 async fn spi_flush_handler(context: &mut Context, _header: VarHeader, _req: ()) -> SpiFlushResponse {
     debug!("spi flush");
-    context.spi.flush().map_err(|_| SpiFlushFail)
+    context.spi.flush().map_err(|_| SpiError::Other)
 }
 
 /// Handler for `spi/transfer` — performs a full-duplex SPI transfer via DMA.
@@ -412,7 +499,7 @@ async fn spi_transfer_handler<'a>(
     let len = req.contents.len();
     if len > MAX_TRANSFER_SIZE {
         warn!("spi transfer: requested len {} exceeds buffer", len);
-        return Err(SpiTransferFail);
+        return Err(SpiError::BufferTooLong);
     }
 
     debug!("spi transfer: len={=usize}", len);
@@ -421,13 +508,13 @@ async fn spi_transfer_handler<'a>(
         .spi
         .transfer(buf, req.contents)
         .await
-        .map_err(|_| SpiTransferFail)?;
+        .map_err(|_| SpiError::Other)?;
     Ok(&context.buf[..len])
 }
 
 /// Handler for `gpio/get` — reads the current logic level of a pin.
 async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGetRequest) -> GpioGetResponse {
-    let gpio = gpio_input!(context, req.pin, GpioGetFail);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio get: pin={=u8}", req.pin);
     match gpio.get_level() {
         Level::Low => Ok(GpioState::Low),
@@ -437,8 +524,15 @@ async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGe
 
 /// Handler for `gpio/put` — sets a GPIO pin to the requested level.
 async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPutRequest) -> GpioPutResponse {
-    let pin = usize::from(req.pin);
-    let gpio = context.gpios.get_mut(pin).ok_or(GpioPutFail)?;
+    let idx = usize::from(req.pin);
+    let mode = *context.pin_modes.get(idx).ok_or(GpioError::InvalidPin)?;
+    let gpio = context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+
+    match mode {
+        PinMode::LegacyAuto => gpio.set_as_output(),
+        PinMode::ExplicitOutput => {}
+        PinMode::ExplicitInput => return Err(GpioError::WrongDirection),
+    }
 
     let level = match req.state {
         GpioState::Low => Level::Low,
@@ -446,7 +540,6 @@ async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPu
     };
 
     debug!("gpio put: pin={=u8} level={=u8}", req.pin, level as u8);
-    gpio.set_as_output();
     gpio.set_level(level);
 
     Ok(())
@@ -458,7 +551,7 @@ async fn gpio_wait_for_high_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_high: pin={=u8}", req.pin);
     gpio.wait_for_high().await;
     Ok(())
@@ -470,7 +563,7 @@ async fn gpio_wait_for_low_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_low: pin={=u8}", req.pin);
     gpio.wait_for_low().await;
     Ok(())
@@ -482,7 +575,7 @@ async fn gpio_wait_for_rising_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_rising: pin={=u8}", req.pin);
     gpio.wait_for_rising_edge().await;
     Ok(())
@@ -494,7 +587,7 @@ async fn gpio_wait_for_falling_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_falling: pin={=u8}", req.pin);
     gpio.wait_for_falling_edge().await;
     Ok(())
@@ -506,9 +599,48 @@ async fn gpio_wait_for_any_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin, GpioWaitFail);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_any: pin={=u8}", req.pin);
     gpio.wait_for_any_edge().await;
+    Ok(())
+}
+
+/// Handler for `gpio/set-config` — configures a pin's direction and pull resistor.
+///
+/// Once configured, the pin enters explicit mode and `gpio_get`/`gpio_put` will
+/// no longer auto-switch direction. To restore auto-switching, reset the firmware.
+async fn gpio_set_config_handler(
+    context: &mut Context,
+    _header: VarHeader,
+    req: GpioSetConfigurationRequest,
+) -> GpioSetConfigurationResponse {
+    let idx = usize::from(req.pin);
+    let mode = context.pin_modes.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+    let gpio = context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+
+    // Apply pull resistor setting
+    gpio.set_pull(match req.pull {
+        GpioPull::None => Pull::None,
+        GpioPull::Up => Pull::Up,
+        GpioPull::Down => Pull::Down,
+    });
+
+    // Apply direction and update tracked mode
+    match req.direction {
+        GpioDirection::Input => {
+            gpio.set_as_input();
+            *mode = PinMode::ExplicitInput;
+        }
+        GpioDirection::Output => {
+            gpio.set_as_output();
+            *mode = PinMode::ExplicitOutput;
+        }
+    }
+
+    debug!(
+        "gpio set_config: pin={=u8} dir={=u8} pull={=u8}",
+        req.pin, req.direction as u8, req.pull as u8
+    );
     Ok(())
 }
 
@@ -528,15 +660,31 @@ async fn i2c_set_config_handler(
     i2c_config.frequency = frequency;
 
     debug!("i2c_set_config: freq={=u32}", frequency);
-    context.i2c.set_config(&i2c_config).map_err(|_| I2cSetConfigurationFail)
+    context
+        .i2c
+        .set_config(&i2c_config)
+        .map(|_| {
+            context.i2c_frequency = req.frequency;
+        })
+        .map_err(|_| I2cError::Other)
 }
 
 /// Handler for `spi/set-config` — reconfigures SPI bus parameters.
+///
+/// Validates the requested frequency before applying. The RP2350 SPI peripheral
+/// requires a non-zero frequency no greater than half the peripheral clock
+/// (75 MHz at the default 150 MHz system clock).
 async fn spi_set_config_handler(
     context: &mut Context,
     _header: VarHeader,
     req: SpiSetConfigurationRequest,
 ) -> SpiSetConfigurationResponse {
+    // Guard: embassy-rp's calc_prescs panics on freq == 0 or impossibly high values
+    if req.spi_frequency == 0 {
+        warn!("spi_set_config: frequency must be non-zero");
+        return Err(SpiError::Other);
+    }
+
     let mut spi_config = spi::Config::default();
     spi_config.frequency = req.spi_frequency;
     spi_config.phase = match req.spi_phase {
@@ -550,7 +698,24 @@ async fn spi_set_config_handler(
 
     debug!("spi_set_config: freq={=u32}", req.spi_frequency);
     context.spi.set_config(&spi_config);
+    context.spi_frequency = req.spi_frequency;
+    context.spi_phase = req.spi_phase;
+    context.spi_polarity = req.spi_polarity;
     Ok(())
+}
+
+/// Handler for `i2c/get-config` — returns the current I2C bus configuration.
+fn i2c_get_config_handler(context: &mut Context, _header: VarHeader, _req: ()) -> I2cGetConfigurationResponse {
+    context.i2c_frequency
+}
+
+/// Handler for `spi/get-config` — returns the current SPI bus configuration.
+fn spi_get_config_handler(context: &mut Context, _header: VarHeader, _req: ()) -> SpiGetConfigurationResponse {
+    SpiConfigurationInfo {
+        spi_frequency: context.spi_frequency,
+        spi_phase: context.spi_phase,
+        spi_polarity: context.spi_polarity,
+    }
 }
 
 /// Handler for `version` — returns the firmware version.

@@ -36,7 +36,7 @@
 //! negative values indicate errors. See [`Status`] for the full list.
 
 use futures::executor::block_on;
-use pico_de_gallo_lib as lib;
+use pico_de_gallo_lib::{self as lib, GpioError, I2cError, PicoDeGalloError, SpiError};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -101,6 +101,64 @@ pub enum Status {
     I2cSetConfigFailed = -16,
     /// Spi Set config failed
     SpiSetConfigFailed = -17,
+    /// I2C target did not acknowledge
+    I2cNack = -18,
+    /// I2C bus error
+    I2cBusError = -19,
+    /// I2C arbitration loss
+    I2cArbitrationLoss = -20,
+    /// I2C data overrun
+    I2cOverrun = -21,
+    /// Buffer exceeds firmware transfer limit
+    BufferTooLong = -22,
+    /// I2C address out of range
+    I2cAddressOutOfRange = -23,
+    /// GPIO pin number is invalid
+    GpioInvalidPin = -24,
+    /// USB communication failure
+    CommsFailed = -25,
+    /// I2C bus scan failed
+    I2cScanFailed = -26,
+    /// GPIO set config failed
+    GpioSetConfigFailed = -27,
+    /// GPIO pin configured in wrong direction for the requested operation
+    GpioWrongDirection = -28,
+    /// I2C get-config query failed
+    I2cGetConfigFailed = -29,
+    /// SPI get-config query failed
+    SpiGetConfigFailed = -30,
+}
+
+// ----------------------------- Error Mapping Helpers -----------------------------
+
+fn i2c_error_to_status(e: PicoDeGalloError<I2cError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(I2cError::NoAcknowledge) => Status::I2cNack,
+        PicoDeGalloError::Endpoint(I2cError::Bus) => Status::I2cBusError,
+        PicoDeGalloError::Endpoint(I2cError::ArbitrationLoss) => Status::I2cArbitrationLoss,
+        PicoDeGalloError::Endpoint(I2cError::Overrun) => Status::I2cOverrun,
+        PicoDeGalloError::Endpoint(I2cError::BufferTooLong) => Status::BufferTooLong,
+        PicoDeGalloError::Endpoint(I2cError::AddressOutOfRange) => Status::I2cAddressOutOfRange,
+        PicoDeGalloError::Endpoint(I2cError::Other) => Status::I2cReadFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn spi_error_to_status(e: PicoDeGalloError<SpiError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(SpiError::BufferTooLong) => Status::BufferTooLong,
+        PicoDeGalloError::Endpoint(SpiError::Other) => Status::SpiReadFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn gpio_error_to_status(e: PicoDeGalloError<GpioError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(GpioError::InvalidPin) => Status::GpioInvalidPin,
+        PicoDeGalloError::Endpoint(GpioError::WrongDirection) => Status::GpioWrongDirection,
+        PicoDeGalloError::Endpoint(GpioError::Other) => Status::GpioGetFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
 }
 
 // ----------------------------- Library Lifetime -----------------------------
@@ -260,7 +318,7 @@ pub unsafe extern "C" fn gallo_i2c_read(
             buf.copy_from_slice(&data);
             Status::Ok
         }
-        Err(_) => Status::I2cReadFailed,
+        Err(e) => i2c_error_to_status(e),
     }
 }
 
@@ -306,7 +364,7 @@ pub unsafe extern "C" fn gallo_i2c_write(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::I2cWriteFailed,
+        Err(e) => i2c_error_to_status(e),
     }
 }
 
@@ -367,7 +425,62 @@ pub unsafe extern "C" fn gallo_i2c_write_read(
             rxbuf.copy_from_slice(&data);
             Status::Ok
         }
-        Err(_) => Status::I2cWriteReadFailed,
+        Err(e) => i2c_error_to_status(e),
+    }
+}
+
+/// gallo_i2c_scan - Scan the I2C bus for responding devices.
+///
+/// The firmware probes each 7-bit address. Addresses that ACK are written
+/// into `buf`. The actual number of devices found is written to `*found`.
+///
+/// When `include_reserved` is `false`, only the standard range (0x08–0x77)
+/// is probed; when `true`, the full range (0x00–0x7F) is scanned.
+///
+/// Returns `Status::Ok` in case of success or various error codes. If
+/// `buf_len` is smaller than the number of responding devices the buffer is
+/// filled to capacity and `*found` reflects the total count.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, `buf` must be valid for
+/// `buf_len` bytes, and `found` must point to a valid `usize`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_i2c_scan(
+    gallo: *mut PicoDeGallo,
+    include_reserved: bool,
+    buf: *mut u8,
+    buf_len: usize,
+    found: *mut usize,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if buf.is_null() || found.is_null() {
+        eprintln!("Unexpected NULL pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    // Safety: caller must ensure buf is valid for buf_len bytes.
+    let buf = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+
+    let result = block_on(gallo.0.i2c_scan(include_reserved));
+
+    match result {
+        Ok(addresses) => {
+            let copy_len = addresses.len().min(buf.len());
+            buf[..copy_len].copy_from_slice(&addresses[..copy_len]);
+            unsafe { *found = addresses.len() };
+            Status::Ok
+        }
+        Err(e) => i2c_error_to_status(e),
     }
 }
 
@@ -425,7 +538,7 @@ pub unsafe extern "C" fn gallo_spi_read(
             buf.copy_from_slice(&data);
             Status::Ok
         }
-        Err(_) => Status::SpiReadFailed,
+        Err(e) => spi_error_to_status(e),
     }
 }
 
@@ -470,7 +583,7 @@ pub unsafe extern "C" fn gallo_spi_write(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::SpiWriteFailed,
+        Err(e) => spi_error_to_status(e),
     }
 }
 
@@ -497,7 +610,7 @@ pub unsafe extern "C" fn gallo_spi_flush(gallo: *mut PicoDeGallo) -> Status {
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::SpiFlushFailed,
+        Err(e) => spi_error_to_status(e),
     }
 }
 
@@ -538,7 +651,7 @@ pub unsafe extern "C" fn gallo_gpio_get(
             unsafe { *state = s == lib::GpioState::High };
             Status::Ok
         }
-        Err(_) => Status::GpioGetFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -570,7 +683,7 @@ pub unsafe extern "C" fn gallo_gpio_put(gallo: *mut PicoDeGallo, pin: u8, state:
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioPutFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -597,7 +710,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_high(gallo: *mut PicoDeGallo, pin: 
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -624,7 +737,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_low(gallo: *mut PicoDeGallo, pin: u
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -654,7 +767,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_rising_edge(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -684,7 +797,7 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_falling_edge(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -711,7 +824,68 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_any_edge(gallo: *mut PicoDeGallo, p
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::GpioWaitFailed,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+// ----------------------------- GPIO Set config endpoint -----------------------------
+
+/// gallo_gpio_set_config - Configure a GPIO pin's direction and pull resistor.
+///
+/// `direction`: 0 = Input, 1 = Output.
+/// `pull`: 0 = None, 1 = Pull-up, 2 = Pull-down.
+///
+/// After configuration, the pin enters explicit mode and get/put will no
+/// longer auto-switch direction. Calling `gallo_gpio_put` on an input pin
+/// (or `gallo_gpio_get`/wait on an output pin) returns
+/// `GpioWrongDirection`.
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_set_config(
+    gallo: *mut PicoDeGallo,
+    pin: u8,
+    direction: u8,
+    pull: u8,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    let dir = match direction {
+        0 => lib::GpioDirection::Input,
+        1 => lib::GpioDirection::Output,
+        _ => {
+            eprintln!("Invalid direction value: {direction}");
+            return Status::InvalidArgument;
+        }
+    };
+
+    let pull_cfg = match pull {
+        0 => lib::GpioPull::None,
+        1 => lib::GpioPull::Up,
+        2 => lib::GpioPull::Down,
+        _ => {
+            eprintln!("Invalid pull value: {pull}");
+            return Status::InvalidArgument;
+        }
+    };
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_set_config(pin, dir, pull_cfg));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
     }
 }
 
@@ -750,7 +924,7 @@ pub unsafe extern "C" fn gallo_i2c_set_config(gallo: *mut PicoDeGallo, frequency
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::I2cSetConfigFailed,
+        Err(e) => i2c_error_to_status(e),
     }
 }
 
@@ -802,7 +976,105 @@ pub unsafe extern "C" fn gallo_spi_set_config(
 
     match result {
         Ok(()) => Status::Ok,
-        Err(_) => Status::SpiSetConfigFailed,
+        Err(e) => spi_error_to_status(e),
+    }
+}
+
+// ----------------------------- I2C Get config endpoint -----------------------------
+
+/// gallo_i2c_get_config - Queries the current I2C bus configuration.
+///
+/// On success, writes the current frequency to `*out_frequency`:
+/// 0 = Standard (100 kHz), 1 = Fast (400 kHz), 2 = Fast+ (1 MHz).
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that `out_frequency`
+/// is a valid pointer to a `u8`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_i2c_get_config(
+    gallo: *mut PicoDeGallo,
+    out_frequency: *mut u8,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_frequency.is_null() {
+        eprintln!("Unexpected NULL out_frequency pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.i2c_get_config());
+
+    match result {
+        Ok(freq) => {
+            unsafe {
+                *out_frequency = freq as u8;
+            }
+            Status::Ok
+        }
+        Err(_) => Status::I2cGetConfigFailed,
+    }
+}
+
+// ----------------------------- SPI Get config endpoint -----------------------------
+
+/// gallo_spi_get_config - Queries the current SPI bus configuration.
+///
+/// On success, writes the current SPI parameters:
+/// - `*out_frequency`: SPI clock frequency in Hz
+/// - `*out_phase`: false = CPHA=0, true = CPHA=1
+/// - `*out_polarity`: false = CPOL=0, true = CPOL=1
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that all output
+/// pointers are valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_spi_get_config(
+    gallo: *mut PicoDeGallo,
+    out_frequency: *mut u32,
+    out_phase: *mut bool,
+    out_polarity: *mut bool,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_frequency.is_null() || out_phase.is_null() || out_polarity.is_null() {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.spi_get_config());
+
+    match result {
+        Ok(info) => {
+            unsafe {
+                *out_frequency = info.spi_frequency;
+                *out_phase = matches!(info.spi_phase, lib::SpiPhase::CaptureOnSecondTransition);
+                *out_polarity = matches!(info.spi_polarity, lib::SpiPolarity::IdleHigh);
+            }
+            Status::Ok
+        }
+        Err(_) => Status::SpiGetConfigFailed,
     }
 }
 
@@ -887,6 +1159,21 @@ mod tests {
             Status::SetConfigFailed as i32,
             Status::VersionFailed as i32,
             Status::I2cWriteReadFailed as i32,
+            Status::I2cSetConfigFailed as i32,
+            Status::SpiSetConfigFailed as i32,
+            Status::I2cNack as i32,
+            Status::I2cBusError as i32,
+            Status::I2cArbitrationLoss as i32,
+            Status::I2cOverrun as i32,
+            Status::BufferTooLong as i32,
+            Status::I2cAddressOutOfRange as i32,
+            Status::GpioInvalidPin as i32,
+            Status::CommsFailed as i32,
+            Status::I2cScanFailed as i32,
+            Status::GpioSetConfigFailed as i32,
+            Status::GpioWrongDirection as i32,
+            Status::I2cGetConfigFailed as i32,
+            Status::SpiGetConfigFailed as i32,
         ];
         for code in error_codes {
             assert!(code < 0, "error code {code} should be negative");
@@ -912,6 +1199,21 @@ mod tests {
             Status::SetConfigFailed as i32,
             Status::VersionFailed as i32,
             Status::I2cWriteReadFailed as i32,
+            Status::I2cSetConfigFailed as i32,
+            Status::SpiSetConfigFailed as i32,
+            Status::I2cNack as i32,
+            Status::I2cBusError as i32,
+            Status::I2cArbitrationLoss as i32,
+            Status::I2cOverrun as i32,
+            Status::BufferTooLong as i32,
+            Status::I2cAddressOutOfRange as i32,
+            Status::GpioInvalidPin as i32,
+            Status::CommsFailed as i32,
+            Status::I2cScanFailed as i32,
+            Status::GpioSetConfigFailed as i32,
+            Status::GpioWrongDirection as i32,
+            Status::I2cGetConfigFailed as i32,
+            Status::SpiGetConfigFailed as i32,
         ];
         let unique: HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len(), "duplicate status codes found");
@@ -1023,6 +1325,12 @@ mod tests {
     }
 
     #[test]
+    fn gpio_set_config_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_gpio_set_config(std::ptr::null_mut(), 0, 0, 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
     fn i2c_set_config_null_device_returns_uninitialized() {
         let status = unsafe { gallo_i2c_set_config(std::ptr::null_mut(), 1) };
         assert_eq!(status, Status::Uninitialized);
@@ -1043,6 +1351,29 @@ mod tests {
     #[test]
     fn spi_set_config_null_device_returns_uninitialized() {
         let status = unsafe { gallo_spi_set_config(std::ptr::null_mut(), 1_000_000, false, false) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn i2c_get_config_null_device_returns_uninitialized() {
+        let mut freq = 0u8;
+        let status = unsafe { gallo_i2c_get_config(std::ptr::null_mut(), &mut freq as *mut u8) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn spi_get_config_null_device_returns_uninitialized() {
+        let mut freq = 0u32;
+        let mut phase = false;
+        let mut polarity = false;
+        let status = unsafe {
+            gallo_spi_get_config(
+                std::ptr::null_mut(),
+                &mut freq as *mut u32,
+                &mut phase as *mut bool,
+                &mut polarity as *mut bool,
+            )
+        };
         assert_eq!(status, Status::Uninitialized);
     }
 

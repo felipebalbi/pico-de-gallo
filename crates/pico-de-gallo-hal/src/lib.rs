@@ -39,16 +39,19 @@
 //! |------------|---------------|-------------|
 //! | GPIO | [`OutputPin`](embedded_hal::digital::OutputPin), [`InputPin`](embedded_hal::digital::InputPin), [`StatefulOutputPin`](embedded_hal::digital::StatefulOutputPin) | [`Wait`](embedded_hal_async::digital::Wait) |
 //! | I2C | [`I2c`](embedded_hal::i2c::I2c) | [`I2c`](embedded_hal_async::i2c::I2c) |
-//! | SPI | [`SpiBus`](embedded_hal::spi::SpiBus) | [`SpiBus`](embedded_hal_async::spi::SpiBus) |
+//! | SPI | [`SpiBus`](embedded_hal::spi::SpiBus), [`SpiDevice`](embedded_hal::spi::SpiDevice) | [`SpiBus`](embedded_hal_async::spi::SpiBus), [`SpiDevice`](embedded_hal_async::spi::SpiDevice) |
 //! | Delay | [`DelayNs`](embedded_hal::delay::DelayNs) | [`DelayNs`](embedded_hal_async::delay::DelayNs) |
 
-use pico_de_gallo_lib::{GpioState, PicoDeGallo};
+use pico_de_gallo_lib::{
+    GpioDirection, GpioError, GpioPull, GpioState, I2cError, PicoDeGallo, PicoDeGalloError,
+    SpiError,
+};
 use std::sync::Arc;
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Mutex;
 use tokio::task::block_in_place;
 
-pub use pico_de_gallo_lib::{I2cFrequency, SpiPhase, SpiPolarity};
+pub use pico_de_gallo_lib::{I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity};
 
 /// Top-level HAL context for a Pico de Gallo device.
 ///
@@ -113,7 +116,7 @@ impl Hal {
     }
 
     /// Set I2C bus configuration parameters.
-    pub fn i2c_set_config(&mut self, frequency: I2cFrequency) -> Result<(), Error> {
+    pub fn i2c_set_config(&mut self, frequency: I2cFrequency) -> Result<(), I2cHalError> {
         if Self::in_async_context() {
             block_in_place(|| self.i2c_set_config_inner(frequency))
         } else {
@@ -121,12 +124,33 @@ impl Hal {
         }
     }
 
-    fn i2c_set_config_inner(&mut self, frequency: I2cFrequency) -> Result<(), Error> {
+    fn i2c_set_config_inner(&mut self, frequency: I2cFrequency) -> Result<(), I2cHalError> {
         let handle = self.handle.clone();
         let gallo = handle.block_on(self.gallo.lock());
         handle
             .block_on(gallo.i2c_set_config(frequency))
-            .map_err(|_| Error::Other)
+            .map_err(I2cHalError::from)
+    }
+
+    /// Scan the I2C bus and return the addresses of all responding devices.
+    ///
+    /// The firmware probes each 7-bit address by attempting a 1-byte read.
+    /// When `include_reserved` is `false`, only the standard range (0x08–0x77)
+    /// is probed; when `true`, the full range (0x00–0x7F) is scanned.
+    pub fn i2c_scan(&self, include_reserved: bool) -> Result<Vec<u8>, I2cHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.i2c_scan_inner(include_reserved))
+        } else {
+            self.i2c_scan_inner(include_reserved)
+        }
+    }
+
+    fn i2c_scan_inner(&self, include_reserved: bool) -> Result<Vec<u8>, I2cHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.i2c_scan(include_reserved))
+            .map_err(I2cHalError::from)
     }
 
     /// Set SPI bus configuration parameters.
@@ -135,7 +159,7 @@ impl Hal {
         spi_frequency: u32,
         spi_phase: SpiPhase,
         spi_polarity: SpiPolarity,
-    ) -> Result<(), Error> {
+    ) -> Result<(), SpiHalError> {
         if Self::in_async_context() {
             block_in_place(|| self.spi_set_config_inner(spi_frequency, spi_phase, spi_polarity))
         } else {
@@ -148,12 +172,58 @@ impl Hal {
         spi_frequency: u32,
         spi_phase: SpiPhase,
         spi_polarity: SpiPolarity,
-    ) -> Result<(), Error> {
+    ) -> Result<(), SpiHalError> {
         let handle = self.handle.clone();
         let gallo = handle.block_on(self.gallo.lock());
         handle
             .block_on(gallo.spi_set_config(spi_frequency, spi_phase, spi_polarity))
-            .map_err(|_| Error::Other)
+            .map_err(SpiHalError::from)
+    }
+
+    /// Query the current I2C bus configuration.
+    ///
+    /// Returns the [`I2cFrequency`] value active on the firmware
+    /// (default: `Standard` / 100 kHz).
+    pub fn i2c_get_config(&self) -> Result<I2cFrequency, I2cHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.i2c_get_config_inner())
+        } else {
+            self.i2c_get_config_inner()
+        }
+    }
+
+    fn i2c_get_config_inner(&self) -> Result<I2cFrequency, I2cHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.i2c_get_config())
+            .map_err(|e| match e {
+                PicoDeGalloError::Comms(c) => I2cHalError::Comms(format!("{c:?}")),
+                PicoDeGalloError::Endpoint(never) => match never {},
+            })
+    }
+
+    /// Query the current SPI bus configuration.
+    ///
+    /// Returns a [`SpiConfigurationInfo`] with the active frequency, phase,
+    /// and polarity (defaults: 1 MHz, `CaptureOnFirstTransition`, `IdleLow`).
+    pub fn spi_get_config(&self) -> Result<SpiConfigurationInfo, SpiHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.spi_get_config_inner())
+        } else {
+            self.spi_get_config_inner()
+        }
+    }
+
+    fn spi_get_config_inner(&self) -> Result<SpiConfigurationInfo, SpiHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.spi_get_config())
+            .map_err(|e| match e {
+                PicoDeGalloError::Comms(c) => SpiHalError::Comms(format!("{c:?}")),
+                PicoDeGalloError::Endpoint(never) => match never {},
+            })
     }
 
     /// Gpio
@@ -177,6 +247,35 @@ impl Hal {
         Spi { gallo, handle }
     }
 
+    /// Create an [`SpiDevice`] that manages chip-select on `cs_pin`.
+    ///
+    /// The CS pin is driven high (deasserted) immediately. Each
+    /// [`SpiDevice::transaction`](embedded_hal::spi::SpiDevice::transaction)
+    /// call will assert CS low, perform the operations, flush, then deassert
+    /// CS high.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SpiHalError` if the initial CS-high drive fails (e.g. the
+    /// device is not connected or `cs_pin` is out of range).
+    pub fn spi_device(&self, cs_pin: u8) -> Result<SpiDev, SpiHalError> {
+        let gallo = Arc::clone(&self.gallo);
+        let handle = self.handle.clone();
+
+        // Drive CS high so the line starts deasserted.
+        let guard = handle.block_on(gallo.lock());
+        handle
+            .block_on(guard.gpio_put(cs_pin, GpioState::High))
+            .map_err(|e| SpiHalError::Comms(format!("CS init failed: {e:?}")))?;
+        drop(guard);
+
+        Ok(SpiDev {
+            gallo,
+            handle,
+            cs_pin,
+        })
+    }
+
     /// Delay
     pub fn delay(&self) -> Delay {
         Delay
@@ -188,37 +287,120 @@ impl Hal {
     }
 }
 
-// ----------------------------- Error -----------------------------
+// ----------------------------- Error Types -----------------------------
 
-/// Error type for HAL operations.
-///
-/// This type implements error traits for all three embedded-hal peripheral
-/// categories (digital, I2C, SPI), always mapping to `ErrorKind::Other`.
+/// Error type for GPIO HAL operations.
 #[derive(Debug)]
-pub enum Error {
-    /// An error with a descriptive message.
-    Message(String),
-    /// An opaque error with no additional context.
-    Other,
+pub enum GpioHalError {
+    /// A GPIO-specific error from the device firmware.
+    Gpio(GpioError),
+    /// A USB communication error.
+    Comms(String),
 }
 
-impl Error {
-    /// Create an error with a descriptive message.
-    pub fn msg(s: impl Into<String>) -> Self {
-        Self::Message(s.into())
-    }
-}
-
-impl core::fmt::Display for Error {
+impl core::fmt::Display for GpioHalError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Message(msg) => write!(f, "{msg}"),
-            Self::Other => write!(f, "unknown error"),
+            Self::Gpio(e) => write!(f, "{e}"),
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for GpioHalError {}
+
+impl From<PicoDeGalloError<GpioError>> for GpioHalError {
+    fn from(e: PicoDeGalloError<GpioError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(e) => Self::Gpio(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
+impl embedded_hal::digital::Error for GpioHalError {
+    fn kind(&self) -> embedded_hal::digital::ErrorKind {
+        embedded_hal::digital::ErrorKind::Other
+    }
+}
+
+/// Error type for I2C HAL operations.
+#[derive(Debug)]
+pub enum I2cHalError {
+    /// An I2C-specific error from the device firmware.
+    I2c(I2cError),
+    /// A USB communication error.
+    Comms(String),
+}
+
+impl core::fmt::Display for I2cHalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::I2c(e) => write!(f, "{e}"),
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for I2cHalError {}
+
+impl From<PicoDeGalloError<I2cError>> for I2cHalError {
+    fn from(e: PicoDeGalloError<I2cError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(e) => Self::I2c(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
+impl embedded_hal::i2c::Error for I2cHalError {
+    fn kind(&self) -> embedded_hal::i2c::ErrorKind {
+        match self {
+            Self::I2c(I2cError::NoAcknowledge) => embedded_hal::i2c::ErrorKind::NoAcknowledge(
+                embedded_hal::i2c::NoAcknowledgeSource::Unknown,
+            ),
+            Self::I2c(I2cError::ArbitrationLoss) => embedded_hal::i2c::ErrorKind::ArbitrationLoss,
+            Self::I2c(I2cError::Bus) => embedded_hal::i2c::ErrorKind::Bus,
+            Self::I2c(I2cError::Overrun) => embedded_hal::i2c::ErrorKind::Overrun,
+            _ => embedded_hal::i2c::ErrorKind::Other,
+        }
+    }
+}
+
+/// Error type for SPI HAL operations.
+#[derive(Debug)]
+pub enum SpiHalError {
+    /// An SPI-specific error from the device firmware.
+    Spi(SpiError),
+    /// A USB communication error.
+    Comms(String),
+}
+
+impl core::fmt::Display for SpiHalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Spi(e) => write!(f, "{e}"),
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for SpiHalError {}
+
+impl From<PicoDeGalloError<SpiError>> for SpiHalError {
+    fn from(e: PicoDeGalloError<SpiError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(e) => Self::Spi(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
+impl embedded_hal::spi::Error for SpiHalError {
+    fn kind(&self) -> embedded_hal::spi::ErrorKind {
+        embedded_hal::spi::ErrorKind::Other
+    }
+}
 
 // ----------------------------- Gpio -----------------------------
 
@@ -233,49 +415,72 @@ pub struct Gpio {
 }
 
 impl Gpio {
-    fn set_low_inner(&mut self) -> std::result::Result<(), Error> {
+    /// Configure the pin's direction and internal pull resistor.
+    ///
+    /// After configuration, `set_low`/`set_high` on an input pin or
+    /// `is_low`/`is_high` on an output pin will return
+    /// [`GpioHalError::Gpio(GpioError::WrongDirection)`].
+    pub fn set_config(
+        &mut self,
+        direction: GpioDirection,
+        pull: GpioPull,
+    ) -> std::result::Result<(), GpioHalError> {
+        if Hal::in_async_context() {
+            block_in_place(|| self.set_config_inner(direction, pull))
+        } else {
+            self.set_config_inner(direction, pull)
+        }
+    }
+
+    fn set_config_inner(
+        &mut self,
+        direction: GpioDirection,
+        pull: GpioPull,
+    ) -> std::result::Result<(), GpioHalError> {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.gpio_set_config(self.pin, direction, pull))
+            .map_err(GpioHalError::from)
+    }
+
+    fn set_low_inner(&mut self) -> std::result::Result<(), GpioHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
         handle
             .block_on(gallo.gpio_put(self.pin, GpioState::Low))
-            .map_err(|_| Error::Other)
+            .map_err(GpioHalError::from)
     }
 
-    fn set_high_inner(&mut self) -> std::result::Result<(), Error> {
+    fn set_high_inner(&mut self) -> std::result::Result<(), GpioHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
         handle
             .block_on(gallo.gpio_put(self.pin, GpioState::High))
-            .map_err(|_| Error::Other)
+            .map_err(GpioHalError::from)
     }
 
-    fn is_low_inner(&mut self) -> std::result::Result<bool, Error> {
+    fn is_low_inner(&mut self) -> std::result::Result<bool, GpioHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
         handle
             .block_on(gallo.gpio_get(self.pin))
-            .map_err(|_| Error::Other)
+            .map_err(GpioHalError::from)
             .map(|s| s == GpioState::Low)
     }
 
-    fn is_high_inner(&mut self) -> std::result::Result<bool, Error> {
+    fn is_high_inner(&mut self) -> std::result::Result<bool, GpioHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
         handle
             .block_on(gallo.gpio_get(self.pin))
-            .map_err(|_| Error::Other)
+            .map_err(GpioHalError::from)
             .map(|s| s == GpioState::High)
     }
 }
 
-impl embedded_hal::digital::Error for Error {
-    fn kind(&self) -> embedded_hal::digital::ErrorKind {
-        embedded_hal::digital::ErrorKind::Other
-    }
-}
-
 impl embedded_hal::digital::ErrorType for Gpio {
-    type Error = Error;
+    type Error = GpioHalError;
 }
 
 impl embedded_hal::digital::OutputPin for Gpio {
@@ -330,7 +535,7 @@ impl embedded_hal_async::digital::Wait for Gpio {
         gallo
             .gpio_wait_for_high(self.pin)
             .await
-            .map_err(|_| Self::Error::Other)
+            .map_err(GpioHalError::from)
     }
 
     async fn wait_for_low(&mut self) -> Result<(), Self::Error> {
@@ -338,7 +543,7 @@ impl embedded_hal_async::digital::Wait for Gpio {
         gallo
             .gpio_wait_for_low(self.pin)
             .await
-            .map_err(|_| Self::Error::Other)
+            .map_err(GpioHalError::from)
     }
 
     async fn wait_for_rising_edge(&mut self) -> Result<(), Self::Error> {
@@ -346,7 +551,7 @@ impl embedded_hal_async::digital::Wait for Gpio {
         gallo
             .gpio_wait_for_rising_edge(self.pin)
             .await
-            .map_err(|_| Self::Error::Other)
+            .map_err(GpioHalError::from)
     }
 
     async fn wait_for_falling_edge(&mut self) -> Result<(), Self::Error> {
@@ -354,7 +559,7 @@ impl embedded_hal_async::digital::Wait for Gpio {
         gallo
             .gpio_wait_for_falling_edge(self.pin)
             .await
-            .map_err(|_| Self::Error::Other)
+            .map_err(GpioHalError::from)
     }
 
     async fn wait_for_any_edge(&mut self) -> Result<(), Self::Error> {
@@ -362,7 +567,7 @@ impl embedded_hal_async::digital::Wait for Gpio {
         gallo
             .gpio_wait_for_any_edge(self.pin)
             .await
-            .map_err(|_| Self::Error::Other)
+            .map_err(GpioHalError::from)
     }
 }
 
@@ -382,7 +587,7 @@ impl I2c {
         &mut self,
         address: embedded_hal::i2c::SevenBitAddress,
         operations: &mut [embedded_hal::i2c::Operation<'_>],
-    ) -> std::result::Result<(), Error> {
+    ) -> std::result::Result<(), I2cHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
 
@@ -391,12 +596,12 @@ impl I2c {
                 embedded_hal::i2c::Operation::Read(read) => {
                     let contents = handle
                         .block_on(gallo.i2c_read(address, read.len() as u16))
-                        .map_err(|_| Error::Other)?;
+                        .map_err(I2cHalError::from)?;
                     read.copy_from_slice(&contents);
                 }
                 embedded_hal::i2c::Operation::Write(write) => handle
                     .block_on(gallo.i2c_write(address, write))
-                    .map_err(|_| Error::Other)?,
+                    .map_err(I2cHalError::from)?,
             }
         }
 
@@ -404,14 +609,8 @@ impl I2c {
     }
 }
 
-impl embedded_hal::i2c::Error for Error {
-    fn kind(&self) -> embedded_hal::i2c::ErrorKind {
-        embedded_hal::i2c::ErrorKind::Other
-    }
-}
-
 impl embedded_hal::i2c::ErrorType for I2c {
-    type Error = Error;
+    type Error = I2cHalError;
 }
 
 impl embedded_hal::i2c::I2c<embedded_hal::i2c::SevenBitAddress> for I2c {
@@ -442,13 +641,13 @@ impl embedded_hal_async::i2c::I2c<embedded_hal_async::i2c::SevenBitAddress> for 
                     let contents = gallo
                         .i2c_read(address, read.len() as u16)
                         .await
-                        .map_err(|_| Self::Error::Other)?;
+                        .map_err(I2cHalError::from)?;
                     read.copy_from_slice(&contents);
                 }
                 embedded_hal_async::i2c::Operation::Write(write) => gallo
                     .i2c_write(address, write)
                     .await
-                    .map_err(|_| Self::Error::Other)?,
+                    .map_err(I2cHalError::from)?,
             }
         }
 
@@ -469,50 +668,50 @@ pub struct Spi {
 }
 
 impl Spi {
-    fn read_inner(&mut self, words: &mut [u8]) -> std::result::Result<(), Error> {
+    fn read_inner(&mut self, words: &mut [u8]) -> std::result::Result<(), SpiHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
         let contents = handle
             .block_on(gallo.spi_read(words.len() as u16))
-            .map_err(|_| Error::Other)?;
+            .map_err(SpiHalError::from)?;
         words.copy_from_slice(&contents);
         Ok(())
     }
 
-    fn write_inner(&mut self, words: &[u8]) -> std::result::Result<(), Error> {
+    fn write_inner(&mut self, words: &[u8]) -> std::result::Result<(), SpiHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
         handle
             .block_on(gallo.spi_write(words))
-            .map_err(|_| Error::Other)
+            .map_err(SpiHalError::from)
     }
 
-    fn transfer_inner(&mut self, read: &mut [u8], write: &[u8]) -> std::result::Result<(), Error> {
+    fn transfer_inner(
+        &mut self,
+        read: &mut [u8],
+        write: &[u8],
+    ) -> std::result::Result<(), SpiHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
         let contents = handle
             .block_on(gallo.spi_transfer(write))
-            .map_err(|_| Error::Other)?;
+            .map_err(SpiHalError::from)?;
         let len = read.len().min(contents.len());
         read[..len].copy_from_slice(&contents[..len]);
         Ok(())
     }
 
-    fn flush_inner(&mut self) -> std::result::Result<(), Error> {
+    fn flush_inner(&mut self) -> std::result::Result<(), SpiHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
-        handle.block_on(gallo.spi_flush()).map_err(|_| Error::Other)
-    }
-}
-
-impl embedded_hal::spi::Error for Error {
-    fn kind(&self) -> embedded_hal::spi::ErrorKind {
-        embedded_hal::spi::ErrorKind::Other
+        handle
+            .block_on(gallo.spi_flush())
+            .map_err(SpiHalError::from)
     }
 }
 
 impl embedded_hal::spi::ErrorType for Spi {
-    type Error = Error;
+    type Error = SpiHalError;
 }
 
 impl embedded_hal::spi::SpiBus for Spi {
@@ -567,14 +766,14 @@ impl embedded_hal_async::spi::SpiBus for Spi {
         let contents = gallo
             .spi_read(words.len() as u16)
             .await
-            .map_err(|_| Self::Error::Other)?;
+            .map_err(SpiHalError::from)?;
         words.copy_from_slice(&contents);
         Ok(())
     }
 
     async fn write(&mut self, words: &[u8]) -> std::result::Result<(), Self::Error> {
         let gallo = self.gallo.lock().await;
-        gallo.spi_write(words).await.map_err(|_| Self::Error::Other)
+        gallo.spi_write(words).await.map_err(SpiHalError::from)
     }
 
     async fn transfer(
@@ -583,10 +782,7 @@ impl embedded_hal_async::spi::SpiBus for Spi {
         write: &[u8],
     ) -> std::result::Result<(), Self::Error> {
         let gallo = self.gallo.lock().await;
-        let contents = gallo
-            .spi_transfer(write)
-            .await
-            .map_err(|_| Self::Error::Other)?;
+        let contents = gallo.spi_transfer(write).await.map_err(SpiHalError::from)?;
         let len = read.len().min(contents.len());
         read[..len].copy_from_slice(&contents[..len]);
         Ok(())
@@ -601,7 +797,7 @@ impl embedded_hal_async::spi::SpiBus for Spi {
         let contents = gallo
             .spi_transfer(&write_copy)
             .await
-            .map_err(|_| Self::Error::Other)?;
+            .map_err(SpiHalError::from)?;
         let len = words.len().min(contents.len());
         words[..len].copy_from_slice(&contents[..len]);
         Ok(())
@@ -609,7 +805,189 @@ impl embedded_hal_async::spi::SpiBus for Spi {
 
     async fn flush(&mut self) -> std::result::Result<(), Self::Error> {
         let gallo = self.gallo.lock().await;
-        gallo.spi_flush().await.map_err(|_| Self::Error::Other)
+        gallo.spi_flush().await.map_err(SpiHalError::from)
+    }
+}
+
+// ----------------------------- SpiDevice ----------------------------
+
+/// SPI device handle implementing [`embedded-hal`] [`SpiDevice`](embedded_hal::spi::SpiDevice) traits.
+///
+/// Obtained from [`Hal::spi_device`]. Wraps the SPI bus with firmware-managed
+/// chip-select (CS) assertion via a GPIO pin. Each call to
+/// [`transaction`](embedded_hal::spi::SpiDevice::transaction) will:
+///
+/// 1. Assert CS (drive low)
+/// 2. Perform all requested operations
+/// 3. Flush the bus
+/// 4. Deassert CS (drive high)
+///
+/// # Cancellation Safety
+///
+/// The async [`SpiDevice`](embedded_hal_async::spi::SpiDevice) implementation
+/// is **not** cancellation-safe. If the future returned by `transaction()` is
+/// dropped after CS is asserted but before it is deasserted, the CS line will
+/// remain low. This matches the behavior of `embedded-hal-bus::ExclusiveDevice`.
+///
+/// # CS Pin Ownership
+///
+/// The caller is responsible for ensuring that the CS pin is not used
+/// concurrently by other [`Gpio`] handles or [`SpiDev`] instances.
+pub struct SpiDev {
+    gallo: Arc<Mutex<PicoDeGallo>>,
+    handle: Handle,
+    cs_pin: u8,
+}
+
+impl SpiDev {
+    /// Execute a blocking SPI transaction with CS management.
+    fn transaction_inner(
+        &mut self,
+        operations: &mut [embedded_hal::spi::Operation<'_, u8>],
+    ) -> std::result::Result<(), SpiHalError> {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+
+        // Assert CS
+        handle
+            .block_on(gallo.gpio_put(self.cs_pin, GpioState::Low))
+            .map_err(|e| SpiHalError::Comms(format!("CS assert failed: {e:?}")))?;
+
+        // Run operations, capturing the first error
+        let op_result: std::result::Result<(), SpiHalError> = (|| {
+            for op in operations.iter_mut() {
+                match op {
+                    embedded_hal::spi::Operation::Read(buf) => {
+                        let contents = handle
+                            .block_on(gallo.spi_read(buf.len() as u16))
+                            .map_err(SpiHalError::from)?;
+                        buf.copy_from_slice(&contents);
+                    }
+                    embedded_hal::spi::Operation::Write(buf) => {
+                        handle
+                            .block_on(gallo.spi_write(buf))
+                            .map_err(SpiHalError::from)?;
+                    }
+                    embedded_hal::spi::Operation::Transfer(read, write) => {
+                        let contents = handle
+                            .block_on(gallo.spi_transfer(write))
+                            .map_err(SpiHalError::from)?;
+                        let len = read.len().min(contents.len());
+                        read[..len].copy_from_slice(&contents[..len]);
+                    }
+                    embedded_hal::spi::Operation::TransferInPlace(buf) => {
+                        let write_copy = buf.to_vec();
+                        let contents = handle
+                            .block_on(gallo.spi_transfer(&write_copy))
+                            .map_err(SpiHalError::from)?;
+                        let len = buf.len().min(contents.len());
+                        buf[..len].copy_from_slice(&contents[..len]);
+                    }
+                    embedded_hal::spi::Operation::DelayNs(ns) => {
+                        // Flush before sleeping so pending bytes are sent first
+                        handle
+                            .block_on(gallo.spi_flush())
+                            .map_err(SpiHalError::from)?;
+                        std::thread::sleep(std::time::Duration::from_nanos((*ns).into()));
+                    }
+                }
+            }
+            Ok(())
+        })();
+
+        // Flush (best-effort if operations already failed)
+        let flush_result = handle
+            .block_on(gallo.spi_flush())
+            .map_err(SpiHalError::from);
+
+        // Deassert CS (best-effort)
+        let _ = handle.block_on(gallo.gpio_put(self.cs_pin, GpioState::High));
+
+        // Bus/operation errors take priority over flush errors
+        op_result?;
+        flush_result
+    }
+}
+
+impl embedded_hal::spi::ErrorType for SpiDev {
+    type Error = SpiHalError;
+}
+
+impl embedded_hal::spi::SpiDevice for SpiDev {
+    fn transaction(
+        &mut self,
+        operations: &mut [embedded_hal::spi::Operation<'_, u8>],
+    ) -> std::result::Result<(), Self::Error> {
+        if Hal::in_async_context() {
+            block_in_place(|| self.transaction_inner(operations))
+        } else {
+            self.transaction_inner(operations)
+        }
+    }
+}
+
+impl embedded_hal_async::spi::SpiDevice for SpiDev {
+    async fn transaction(
+        &mut self,
+        operations: &mut [embedded_hal_async::spi::Operation<'_, u8>],
+    ) -> std::result::Result<(), Self::Error> {
+        let gallo = self.gallo.lock().await;
+
+        // Assert CS
+        gallo
+            .gpio_put(self.cs_pin, GpioState::Low)
+            .await
+            .map_err(|e| SpiHalError::Comms(format!("CS assert failed: {e:?}")))?;
+
+        // Run operations, capturing the first error
+        let op_result: std::result::Result<(), SpiHalError> = async {
+            for op in operations.iter_mut() {
+                match op {
+                    embedded_hal_async::spi::Operation::Read(buf) => {
+                        let contents = gallo
+                            .spi_read(buf.len() as u16)
+                            .await
+                            .map_err(SpiHalError::from)?;
+                        buf.copy_from_slice(&contents);
+                    }
+                    embedded_hal_async::spi::Operation::Write(buf) => {
+                        gallo.spi_write(buf).await.map_err(SpiHalError::from)?;
+                    }
+                    embedded_hal_async::spi::Operation::Transfer(read, write) => {
+                        let contents =
+                            gallo.spi_transfer(write).await.map_err(SpiHalError::from)?;
+                        let len = read.len().min(contents.len());
+                        read[..len].copy_from_slice(&contents[..len]);
+                    }
+                    embedded_hal_async::spi::Operation::TransferInPlace(buf) => {
+                        let write_copy = buf.to_vec();
+                        let contents = gallo
+                            .spi_transfer(&write_copy)
+                            .await
+                            .map_err(SpiHalError::from)?;
+                        let len = buf.len().min(contents.len());
+                        buf[..len].copy_from_slice(&contents[..len]);
+                    }
+                    embedded_hal_async::spi::Operation::DelayNs(ns) => {
+                        // Flush before sleeping so pending bytes are sent first
+                        gallo.spi_flush().await.map_err(SpiHalError::from)?;
+                        tokio::time::sleep(tokio::time::Duration::from_nanos((*ns).into())).await;
+                    }
+                }
+            }
+            Ok(())
+        }
+        .await;
+
+        // Flush (best-effort if operations already failed)
+        let flush_result = gallo.spi_flush().await.map_err(SpiHalError::from);
+
+        // Deassert CS (best-effort)
+        let _ = gallo.gpio_put(self.cs_pin, GpioState::High).await;
+
+        // Bus/operation errors take priority over flush errors
+        op_result?;
+        flush_result
     }
 }
 
@@ -642,21 +1020,70 @@ mod tests {
     #[test]
     fn digital_error_kind_is_other() {
         use embedded_hal::digital::Error as _;
-        let err = Error::Other;
+        let err = GpioHalError::Gpio(GpioError::Other);
         assert_eq!(err.kind(), embedded_hal::digital::ErrorKind::Other);
     }
 
     #[test]
-    fn i2c_error_kind_is_other() {
+    fn i2c_error_kind_nack() {
         use embedded_hal::i2c::Error as _;
-        let err = Error::Other;
+        let err = I2cHalError::I2c(I2cError::NoAcknowledge);
+        assert_eq!(
+            err.kind(),
+            embedded_hal::i2c::ErrorKind::NoAcknowledge(
+                embedded_hal::i2c::NoAcknowledgeSource::Unknown
+            )
+        );
+    }
+
+    #[test]
+    fn i2c_error_kind_bus() {
+        use embedded_hal::i2c::Error as _;
+        let err = I2cHalError::I2c(I2cError::Bus);
+        assert_eq!(err.kind(), embedded_hal::i2c::ErrorKind::Bus);
+    }
+
+    #[test]
+    fn i2c_error_kind_arbitration_loss() {
+        use embedded_hal::i2c::Error as _;
+        let err = I2cHalError::I2c(I2cError::ArbitrationLoss);
+        assert_eq!(err.kind(), embedded_hal::i2c::ErrorKind::ArbitrationLoss);
+    }
+
+    #[test]
+    fn i2c_error_kind_overrun() {
+        use embedded_hal::i2c::Error as _;
+        let err = I2cHalError::I2c(I2cError::Overrun);
+        assert_eq!(err.kind(), embedded_hal::i2c::ErrorKind::Overrun);
+    }
+
+    #[test]
+    fn i2c_error_kind_other_for_comms() {
+        use embedded_hal::i2c::Error as _;
+        let err = I2cHalError::Comms("USB disconnected".into());
         assert_eq!(err.kind(), embedded_hal::i2c::ErrorKind::Other);
     }
 
     #[test]
     fn spi_error_kind_is_other() {
         use embedded_hal::spi::Error as _;
-        let err = Error::Other;
+        let err = SpiHalError::Spi(SpiError::Other);
+        assert_eq!(err.kind(), embedded_hal::spi::ErrorKind::Other);
+    }
+
+    #[test]
+    fn spi_device_error_type_matches_spi_bus() {
+        // SpiDev and Spi share the same error type (SpiHalError),
+        // so drivers can mix SpiBus and SpiDevice errors.
+        fn assert_error_type<T: embedded_hal::spi::ErrorType<Error = SpiHalError>>() {}
+        assert_error_type::<Spi>();
+        assert_error_type::<SpiDev>();
+    }
+
+    #[test]
+    fn spi_device_comms_error_kind_is_other() {
+        use embedded_hal::spi::Error as _;
+        let err = SpiHalError::Comms("CS assert failed".into());
         assert_eq!(err.kind(), embedded_hal::spi::ErrorKind::Other);
     }
 

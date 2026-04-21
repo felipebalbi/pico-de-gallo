@@ -45,16 +45,18 @@
 
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
-    GpioGet, GpioGetFail, GpioGetRequest, GpioPut, GpioPutFail, GpioPutRequest, GpioWaitFail, GpioWaitForAny,
-    GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cRead, I2cReadFail,
-    I2cReadRequest, I2cSetConfiguration, I2cSetConfigurationFail, I2cSetConfigurationRequest, I2cWrite, I2cWriteFail,
-    I2cWriteRead, I2cWriteReadFail, I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, SpiFlush,
-    SpiFlushFail, SpiRead, SpiReadFail, SpiReadRequest, SpiSetConfiguration, SpiSetConfigurationFail,
-    SpiSetConfigurationRequest, SpiTransfer, SpiTransferFail, SpiTransferRequest, SpiWrite, SpiWriteFail,
-    SpiWriteRequest, Version,
+    GpioGet, GpioGetRequest, GpioPut, GpioPutRequest, GpioSetConfiguration, GpioSetConfigurationRequest,
+    GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest,
+    I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest, I2cSetConfiguration,
+    I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID,
+    PICO_DE_GALLO_PID, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, Version,
 };
 
-pub use pico_de_gallo_internal::{GpioState, I2cFrequency, SpiPhase, SpiPolarity, VersionInfo};
+pub use pico_de_gallo_internal::{
+    GpioDirection, GpioPull, GpioState, I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity, VersionInfo,
+};
+pub use pico_de_gallo_internal::{GpioError, I2cError, SpiError};
 
 use postcard_rpc::{
     header::VarSeqKind,
@@ -97,8 +99,8 @@ pub fn list_devices() -> Vec<DeviceDescription> {
 /// Error type for Pico de Gallo operations.
 ///
 /// Every method on [`PicoDeGallo`] returns this error type, parameterized by the
-/// endpoint-specific error `E`. In practice, `E` is a unit struct like
-/// [`pico_de_gallo_internal::I2cReadFail`].
+/// endpoint-specific error `E`. In practice, `E` is a rich error enum like
+/// [`I2cError`], [`SpiError`], or [`GpioError`].
 #[derive(Debug)]
 pub enum PicoDeGalloError<E> {
     /// A transport-level communication error (USB disconnect, timeout, wire format error).
@@ -190,8 +192,8 @@ impl PicoDeGallo {
     /// Read `count` bytes from the I2C device at `address`.
     ///
     /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
-    /// (512) bytes. Reads exceeding this limit will be truncated.
-    pub async fn i2c_read(&self, address: u8, count: u16) -> Result<Vec<u8>, PicoDeGalloError<I2cReadFail>> {
+    /// (4096) bytes. Reads exceeding this limit will be truncated.
+    pub async fn i2c_read(&self, address: u8, count: u16) -> Result<Vec<u8>, PicoDeGalloError<I2cError>> {
         self.client
             .send_resp::<I2cRead>(&I2cReadRequest { address, count })
             .await?
@@ -199,7 +201,7 @@ impl PicoDeGallo {
     }
 
     /// Write `contents` to the I2C device at `address`.
-    pub async fn i2c_write(&self, address: u8, contents: &[u8]) -> Result<(), PicoDeGalloError<I2cWriteFail>> {
+    pub async fn i2c_write(&self, address: u8, contents: &[u8]) -> Result<(), PicoDeGalloError<I2cError>> {
         self.client
             .send_resp::<I2cWrite>(&I2cWriteRequest { address, contents })
             .await?
@@ -209,13 +211,13 @@ impl PicoDeGallo {
     /// Write `contents` to the I2C device at `address` and read back `count` bytes.
     ///
     /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
-    /// (512) bytes. Reads exceeding this limit will be truncated.
+    /// (4096) bytes. Reads exceeding this limit will be truncated.
     pub async fn i2c_write_read(
         &self,
         address: u8,
         contents: &[u8],
         count: u16,
-    ) -> Result<Vec<u8>, PicoDeGalloError<I2cWriteReadFail>> {
+    ) -> Result<Vec<u8>, PicoDeGalloError<I2cError>> {
         self.client
             .send_resp::<I2cWriteRead>(&I2cWriteReadRequest {
                 address,
@@ -226,11 +228,24 @@ impl PicoDeGallo {
             .map_err(PicoDeGalloError::Endpoint)
     }
 
+    /// Scan the I2C bus and return the addresses of all responding devices.
+    ///
+    /// The firmware probes each 7-bit address by attempting a 1-byte read.
+    /// Addresses that ACK are returned in ascending order. When
+    /// `include_reserved` is `false`, only the standard range (0x08–0x77) is
+    /// probed; when `true`, the full range (0x00–0x7F) is scanned.
+    pub async fn i2c_scan(&self, include_reserved: bool) -> Result<Vec<u8>, PicoDeGalloError<I2cError>> {
+        self.client
+            .send_resp::<I2cScan>(&I2cScanRequest { include_reserved })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
     /// Read `count` bytes from the SPI bus.
     ///
     /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
-    /// (512) bytes. Reads exceeding this limit will be truncated.
-    pub async fn spi_read(&self, count: u16) -> Result<Vec<u8>, PicoDeGalloError<SpiReadFail>> {
+    /// (4096) bytes. Reads exceeding this limit will be truncated.
+    pub async fn spi_read(&self, count: u16) -> Result<Vec<u8>, PicoDeGalloError<SpiError>> {
         self.client
             .send_resp::<SpiRead>(&SpiReadRequest { count })
             .await?
@@ -238,7 +253,7 @@ impl PicoDeGallo {
     }
 
     /// Write `contents` to the SPI bus.
-    pub async fn spi_write(&self, contents: &[u8]) -> Result<(), PicoDeGalloError<SpiWriteFail>> {
+    pub async fn spi_write(&self, contents: &[u8]) -> Result<(), PicoDeGalloError<SpiError>> {
         self.client
             .send_resp::<SpiWrite>(&SpiWriteRequest { contents })
             .await?
@@ -246,7 +261,7 @@ impl PicoDeGallo {
     }
 
     /// Flush the SPI interface.
-    pub async fn spi_flush(&self) -> Result<(), PicoDeGalloError<SpiFlushFail>> {
+    pub async fn spi_flush(&self) -> Result<(), PicoDeGalloError<SpiError>> {
         self.client
             .send_resp::<SpiFlush>(&())
             .await?
@@ -258,7 +273,7 @@ impl PicoDeGallo {
     /// Simultaneously sends `write_data` and receives the same number of bytes.
     /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
     /// bytes. Transfers exceeding this limit will be rejected.
-    pub async fn spi_transfer(&self, write_data: &[u8]) -> Result<Vec<u8>, PicoDeGalloError<SpiTransferFail>> {
+    pub async fn spi_transfer(&self, write_data: &[u8]) -> Result<Vec<u8>, PicoDeGalloError<SpiError>> {
         self.client
             .send_resp::<SpiTransfer>(&SpiTransferRequest { contents: write_data })
             .await?
@@ -268,7 +283,7 @@ impl PicoDeGallo {
     /// Get the current state of GPIO numbered by `pin`.
     ///
     /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
-    pub async fn gpio_get(&self, pin: u8) -> Result<GpioState, PicoDeGalloError<GpioGetFail>> {
+    pub async fn gpio_get(&self, pin: u8) -> Result<GpioState, PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioGet>(&GpioGetRequest { pin })
             .await?
@@ -278,7 +293,7 @@ impl PicoDeGallo {
     /// Set the GPIO numbered by `pin` to state `state`.
     ///
     /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
-    pub async fn gpio_put(&self, pin: u8, state: GpioState) -> Result<(), PicoDeGalloError<GpioPutFail>> {
+    pub async fn gpio_put(&self, pin: u8, state: GpioState) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioPut>(&GpioPutRequest { pin, state })
             .await?
@@ -288,7 +303,7 @@ impl PicoDeGallo {
     /// Wait for GPIO numbered by `pin` to reach `High` state.
     ///
     /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
-    pub async fn gpio_wait_for_high(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioWaitFail>> {
+    pub async fn gpio_wait_for_high(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForHigh>(&GpioWaitRequest { pin })
             .await?
@@ -298,7 +313,7 @@ impl PicoDeGallo {
     /// Wait for GPIO numbered by `pin` to reach `Low` state.
     ///
     /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
-    pub async fn gpio_wait_for_low(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioWaitFail>> {
+    pub async fn gpio_wait_for_low(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForLow>(&GpioWaitRequest { pin })
             .await?
@@ -308,7 +323,7 @@ impl PicoDeGallo {
     /// Wait for a rising edge on the GPIO numbered by `pin`.
     ///
     /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
-    pub async fn gpio_wait_for_rising_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioWaitFail>> {
+    pub async fn gpio_wait_for_rising_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForRising>(&GpioWaitRequest { pin })
             .await?
@@ -318,7 +333,7 @@ impl PicoDeGallo {
     /// Wait for a falling edge on the GPIO numbered by `pin`.
     ///
     /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
-    pub async fn gpio_wait_for_falling_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioWaitFail>> {
+    pub async fn gpio_wait_for_falling_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForFalling>(&GpioWaitRequest { pin })
             .await?
@@ -329,9 +344,29 @@ impl PicoDeGallo {
     /// numbered by `pin`.
     ///
     /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
-    pub async fn gpio_wait_for_any_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioWaitFail>> {
+    pub async fn gpio_wait_for_any_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForAny>(&GpioWaitRequest { pin })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Configure a GPIO pin's direction and internal pull resistor.
+    ///
+    /// After configuration, the pin enters explicit mode: `gpio_get` and
+    /// `gpio_put` will no longer auto-switch direction. Calling `gpio_put`
+    /// on an input pin (or `gpio_get`/wait on an output pin) will return
+    /// [`GpioError::WrongDirection`].
+    ///
+    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    pub async fn gpio_set_config(
+        &self,
+        pin: u8,
+        direction: GpioDirection,
+        pull: GpioPull,
+    ) -> Result<(), PicoDeGalloError<GpioError>> {
+        self.client
+            .send_resp::<GpioSetConfiguration>(&GpioSetConfigurationRequest { pin, direction, pull })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
@@ -340,10 +375,7 @@ impl PicoDeGallo {
     ///
     /// Changes the I2C bus clock frequency. Takes effect immediately before
     /// the next I2C operation.
-    pub async fn i2c_set_config(
-        &self,
-        frequency: I2cFrequency,
-    ) -> Result<(), PicoDeGalloError<I2cSetConfigurationFail>> {
+    pub async fn i2c_set_config(&self, frequency: I2cFrequency) -> Result<(), PicoDeGalloError<I2cError>> {
         self.client
             .send_resp::<I2cSetConfiguration>(&I2cSetConfigurationRequest { frequency })
             .await?
@@ -359,7 +391,7 @@ impl PicoDeGallo {
         spi_frequency: u32,
         spi_phase: SpiPhase,
         spi_polarity: SpiPolarity,
-    ) -> Result<(), PicoDeGalloError<SpiSetConfigurationFail>> {
+    ) -> Result<(), PicoDeGalloError<SpiError>> {
         self.client
             .send_resp::<SpiSetConfiguration>(&SpiSetConfigurationRequest {
                 spi_frequency,
@@ -373,6 +405,23 @@ impl PicoDeGallo {
     /// Get the firmware version from the Pico de Gallo device.
     pub async fn version(&self) -> Result<VersionInfo, PicoDeGalloError<Infallible>> {
         Ok(self.client.send_resp::<Version>(&()).await?)
+    }
+
+    /// Query the current I2C bus configuration.
+    ///
+    /// Returns the [`I2cFrequency`] value that is currently active on the
+    /// firmware. The default is [`I2cFrequency::Standard`] (100 kHz).
+    pub async fn i2c_get_config(&self) -> Result<I2cFrequency, PicoDeGalloError<Infallible>> {
+        Ok(self.client.send_resp::<I2cGetConfiguration>(&()).await?)
+    }
+
+    /// Query the current SPI bus configuration.
+    ///
+    /// Returns a [`SpiConfigurationInfo`] struct with the active SPI
+    /// frequency, phase, and polarity. The defaults are 1 MHz,
+    /// `CaptureOnFirstTransition`, and `IdleLow`.
+    pub async fn spi_get_config(&self) -> Result<SpiConfigurationInfo, PicoDeGalloError<Infallible>> {
+        Ok(self.client.send_resp::<SpiGetConfiguration>(&()).await?)
     }
 }
 
@@ -400,11 +449,11 @@ mod tests {
 
     #[test]
     fn map_err_converts_err() {
-        let result: Result<(), I2cWriteFail> = Err(I2cWriteFail);
+        let result: Result<(), I2cError> = Err(I2cError::NoAcknowledge);
         let mapped = result.map_err(PicoDeGalloError::Endpoint);
         match mapped {
-            Err(PicoDeGalloError::Endpoint(I2cWriteFail)) => {}
-            _ => panic!("expected Endpoint(I2cWriteFail)"),
+            Err(PicoDeGalloError::Endpoint(I2cError::NoAcknowledge)) => {}
+            _ => panic!("expected Endpoint(I2cError::NoAcknowledge)"),
         }
     }
 
@@ -424,10 +473,10 @@ mod tests {
 
     #[test]
     fn error_debug_format_is_readable() {
-        let err: PicoDeGalloError<I2cReadFail> = PicoDeGalloError::Endpoint(I2cReadFail);
+        let err: PicoDeGalloError<I2cError> = PicoDeGalloError::Endpoint(I2cError::Bus);
         let debug = format!("{:?}", err);
         assert!(debug.contains("Endpoint"));
-        assert!(debug.contains("I2cReadFail"));
+        assert!(debug.contains("Bus"));
 
         let comms_err: PicoDeGalloError<Infallible> = PicoDeGalloError::Comms(HostErr::Closed);
         let debug = format!("{:?}", comms_err);
