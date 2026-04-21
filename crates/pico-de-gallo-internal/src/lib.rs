@@ -1168,6 +1168,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "use-std")]
     fn gpio_direction_golden_bytes() {
         // Lock exact wire encoding: Input=0x00, Output=0x01
         assert_eq!(to_allocvec(&GpioDirection::Input).unwrap(), vec![0x00]);
@@ -1175,6 +1176,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "use-std")]
     fn gpio_pull_golden_bytes() {
         // Lock exact wire encoding: None=0x00, Up=0x01, Down=0x02
         assert_eq!(to_allocvec(&GpioPull::None).unwrap(), vec![0x00]);
