@@ -9,6 +9,7 @@
 //! - **UART**: read, write, flush, and baud rate configuration
 //! - **PWM**: duty cycle control, enable/disable, frequency/phase configuration
 //! - **ADC**: single-shot reads, temperature sensor, configuration queries
+//! - **GPIO**: read/write pins, edge event monitoring with subscribe/unsubscribe
 //! - **Configuration**: set I2C/SPI/UART bus frequencies and SPI mode
 //! - **Device management**: list connected devices, query firmware version
 //!
@@ -33,7 +34,7 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::{Result, eyre::eyre};
-use pico_de_gallo_lib::{AdcChannel, I2cFrequency, PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
+use pico_de_gallo_lib::{AdcChannel, GpioEdge, I2cFrequency, PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
 use pico_de_gallo_lib::{GpioDirection, GpioPull, GpioState};
 use std::num::ParseIntError;
 use tabled::builder::Builder;
@@ -96,6 +97,27 @@ impl From<GpioPullArg> for GpioPull {
             GpioPullArg::None => GpioPull::None,
             GpioPullArg::Up => GpioPull::Up,
             GpioPullArg::Down => GpioPull::Down,
+        }
+    }
+}
+
+/// GPIO edge detection mode for CLI argument parsing.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpioEdgeArg {
+    /// Trigger on rising edge (low → high)
+    Rising,
+    /// Trigger on falling edge (high → low)
+    Falling,
+    /// Trigger on any edge (rising or falling)
+    Any,
+}
+
+impl From<GpioEdgeArg> for GpioEdge {
+    fn from(arg: GpioEdgeArg) -> Self {
+        match arg {
+            GpioEdgeArg::Rising => GpioEdge::Rising,
+            GpioEdgeArg::Falling => GpioEdge::Falling,
+            GpioEdgeArg::Any => GpioEdge::Any,
         }
     }
 }
@@ -330,6 +352,17 @@ enum GpioCommands {
         #[arg(long, default_value = "none")]
         pull: GpioPullArg,
     },
+
+    /// Monitor a GPIO pin for edge events (Ctrl+C to stop)
+    Monitor {
+        /// GPIO pin number (0–3)
+        #[arg(short, long)]
+        pin: u8,
+
+        /// Edge detection mode
+        #[arg(short, long, default_value = "any")]
+        edge: GpioEdgeArg,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -514,6 +547,7 @@ impl Cli {
                 GpioCommands::Get { pin } => self.gpio_get(*pin).await,
                 GpioCommands::Put { pin, high } => self.gpio_put(*pin, *high).await,
                 GpioCommands::SetConfig { pin, direction, pull } => self.gpio_set_config(*pin, *direction, *pull).await,
+                GpioCommands::Monitor { pin, edge } => self.gpio_monitor(*pin, *edge).await,
             },
             Commands::Uart { command } => match command {
                 UartCommands::Read { count, timeout } => self.uart_read(*count, *timeout).await,
@@ -795,6 +829,49 @@ impl Cli {
 
         println!("GPIO pin {pin} configured as {direction:?} with pull {pull:?}");
         Ok(())
+    }
+
+    async fn gpio_monitor(&self, pin: u8, edge: GpioEdgeArg) -> Result<()> {
+        let pg = self.connect();
+
+        pg.gpio_subscribe(pin, edge.into())
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("gpio subscribe failed"))?;
+
+        println!("Monitoring GPIO pin {pin} for {edge:?} edges (Ctrl+C to stop)...");
+
+        let mut sub = pg
+            .subscribe_gpio_events(4)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("failed to open event subscription"))?;
+
+        let result = loop {
+            tokio::select! {
+                event = sub.recv() => {
+                    match event {
+                        Ok(event) => {
+                            println!(
+                                "[{:>12} µs] pin={} edge={:?}",
+                                event.timestamp_us, event.pin, event.edge,
+                            );
+                        }
+                        Err(_) => {
+                            break Err(eyre!("event subscription closed"));
+                        }
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    break Ok(());
+                }
+            }
+        };
+
+        pg.gpio_unsubscribe(pin)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("gpio unsubscribe failed"))?;
+
+        println!("Stopped monitoring GPIO pin {pin}");
+        result
     }
 
     async fn uart_read(&self, count: u16, timeout_ms: u32) -> Result<()> {

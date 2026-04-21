@@ -40,6 +40,7 @@
 //! (4096) bytes for I2C and SPI data. Requests exceeding this limit are
 //! rejected with an error.
 
+use core::sync::atomic::{AtomicU16, Ordering};
 use defmt::{debug, info, warn};
 use embassy_embedded_hal::SetConfig;
 use embassy_executor::Spawner;
@@ -48,7 +49,10 @@ use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio::{Flex, Level, Pull};
 use embassy_rp::pwm::{self, Pwm};
-use embassy_time::{Duration, with_timeout};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Instant, with_timeout};
 use fixed::traits::ToFixed;
 
 /// Per-pin direction mode tracked by firmware.
@@ -80,31 +84,33 @@ use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
     ADC_NOMINAL_REFERENCE_MV, ADC_RESOLUTION_BITS, AdcChannel, AdcConfigurationInfo, AdcError, AdcGetConfiguration,
     AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse, AdcReadTemperature,
-    AdcReadTemperatureResponse, ENDPOINT_LIST, GpioDirection, GpioError, GpioGet, GpioGetRequest, GpioGetResponse,
-    GpioPull, GpioPut, GpioPutRequest, GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest,
-    GpioSetConfigurationResponse, GpioState, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
-    GpioWaitForRising, GpioWaitRequest, GpioWaitResponse, I2cError, I2cFrequency, I2cGetConfiguration,
-    I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse, I2cScan, I2cScanRequest, I2cScanResponse,
-    I2cSetConfiguration, I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite, I2cWriteRead,
-    I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID,
-    NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS, PICO_DE_GALLO_PID, PingEndpoint, PwmConfigurationInfo, PwmDisable,
-    PwmDisableRequest, PwmDisableResponse, PwmDutyCycleInfo, PwmEnable, PwmEnableRequest, PwmEnableResponse, PwmError,
-    PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetConfigurationResponse, PwmGetDutyCycle,
-    PwmGetDutyCycleRequest, PwmGetDutyCycleResponse, PwmSetConfiguration, PwmSetConfigurationRequest,
-    PwmSetConfigurationResponse, PwmSetDutyCycle, PwmSetDutyCycleRequest, PwmSetDutyCycleResponse,
-    SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration, SpiGetConfigurationResponse,
-    SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest,
-    SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest,
-    SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, UartConfigurationInfo, UartError, UartFlush, UartFlushResponse,
-    UartGetConfiguration, UartGetConfigurationResponse, UartRead, UartReadRequest, UartReadResponse,
-    UartSetConfiguration, UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite, UartWriteRequest,
-    UartWriteResponse, Version, VersionInfo,
+    AdcReadTemperatureResponse, ENDPOINT_LIST, GpioDirection, GpioEdge, GpioError, GpioEvent, GpioEventTopic, GpioGet,
+    GpioGetRequest, GpioGetResponse, GpioPull, GpioPut, GpioPutRequest, GpioPutResponse, GpioSetConfiguration,
+    GpioSetConfigurationRequest, GpioSetConfigurationResponse, GpioState, GpioSubscribe, GpioSubscribeRequest,
+    GpioSubscribeResponse, GpioUnsubscribe, GpioUnsubscribeRequest, GpioUnsubscribeResponse, GpioWaitForAny,
+    GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, GpioWaitResponse,
+    I2cError, I2cFrequency, I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse,
+    I2cScan, I2cScanRequest, I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest,
+    I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest,
+    I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID, NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS, PICO_DE_GALLO_PID,
+    PingEndpoint, PwmConfigurationInfo, PwmDisable, PwmDisableRequest, PwmDisableResponse, PwmDutyCycleInfo, PwmEnable,
+    PwmEnableRequest, PwmEnableResponse, PwmError, PwmGetConfiguration, PwmGetConfigurationRequest,
+    PwmGetConfigurationResponse, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmGetDutyCycleResponse, PwmSetConfiguration,
+    PwmSetConfigurationRequest, PwmSetConfigurationResponse, PwmSetDutyCycle, PwmSetDutyCycleRequest,
+    PwmSetDutyCycleResponse, SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration,
+    SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse,
+    SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, UartConfigurationInfo, UartError,
+    UartFlush, UartFlushResponse, UartGetConfiguration, UartGetConfigurationResponse, UartRead, UartReadRequest,
+    UartReadResponse, UartSetConfiguration, UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite,
+    UartWriteRequest, UartWriteResponse, Version, VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
     header::VarHeader,
+    header::VarKeyKind,
     server::{
-        Dispatch, Server,
+        Dispatch, Sender, Server,
         impls::embassy_usb_v0_5::{
             PacketBuffers,
             dispatch_impl::{WireRxBuf, WireRxImpl, WireSpawnImpl, WireStorage, WireTxImpl},
@@ -159,7 +165,7 @@ pub struct Context {
     i2c: I2c<'static, I2C1, i2c::Async>,
     spi: Spi<'static, SPI0, spi::Async>,
     uart: BufferedUart,
-    gpios: [Flex<'static>; NUM_GPIOS],
+    gpios: [Option<Flex<'static>>; NUM_GPIOS],
     pin_modes: [PinMode; NUM_GPIOS],
     pwm_slices: [Pwm<'static>; NUM_PWM_SLICES],
     pwm_configs: [pwm::Config; NUM_PWM_SLICES],
@@ -184,12 +190,13 @@ impl Context {
         adc: Adc<'static, adc::Blocking>,
         adc_channels: [adc::Channel<'static>; NUM_ADC_CHANNELS],
     ) -> Self {
+        let [g0, g1, g2, g3] = gpios;
         // Defaults match embassy-rp Config::default()
         Self {
             i2c,
             spi,
             uart,
-            gpios,
+            gpios: [Some(g0), Some(g1), Some(g2), Some(g3)],
             pin_modes: [PinMode::LegacyAuto; NUM_GPIOS],
             pwm_slices,
             pwm_configs,
@@ -208,11 +215,17 @@ impl Context {
 /// Helper macro to get a GPIO pin by index for input operations.
 /// In `LegacyAuto` mode, auto-switches to input. In `ExplicitInput` mode,
 /// uses the pin as-is. In `ExplicitOutput` mode, returns `WrongDirection`.
+/// Returns `PinMonitored` if the pin is currently subscribed for event monitoring.
 macro_rules! gpio_for_input {
     ($context:expr, $pin:expr) => {{
         let idx = usize::from($pin);
         let mode = *$context.pin_modes.get(idx).ok_or(GpioError::InvalidPin)?;
-        let gpio = $context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+        let gpio = $context
+            .gpios
+            .get_mut(idx)
+            .ok_or(GpioError::InvalidPin)?
+            .as_mut()
+            .ok_or(GpioError::PinMonitored)?;
         match mode {
             PinMode::LegacyAuto => gpio.set_as_input(),
             PinMode::ExplicitInput => {}
@@ -252,6 +265,97 @@ type AppServer = Server<AppTx, AppRx, WireRxBuf, PicoDeGallo>;
 
 static PBUFS: ConstStaticCell<BufStorage> = ConstStaticCell::new(BufStorage::new());
 static STORAGE: AppStorage = AppStorage::new();
+
+// --- GPIO event monitoring infrastructure ---
+
+/// Channel for sending a (Flex, GpioEdge) pair to start monitoring pin `n`.
+static GPIO_MONITOR_START: [Channel<CriticalSectionRawMutex, (Flex<'static>, GpioEdge), 1>; NUM_GPIOS] =
+    [Channel::new(), Channel::new(), Channel::new(), Channel::new()];
+
+/// Signal to stop monitoring pin `n`.
+static GPIO_MONITOR_STOP: [Signal<CriticalSectionRawMutex, ()>; NUM_GPIOS] =
+    [Signal::new(), Signal::new(), Signal::new(), Signal::new()];
+
+/// Channel for returning the Flex pin after monitoring stops.
+static GPIO_MONITOR_RETURN: [Channel<CriticalSectionRawMutex, Flex<'static>, 1>; NUM_GPIOS] =
+    [Channel::new(), Channel::new(), Channel::new(), Channel::new()];
+
+/// Ack channel: monitor task signals it is armed and listening.
+static GPIO_MONITOR_ARMED: [Channel<CriticalSectionRawMutex, (), 1>; NUM_GPIOS] =
+    [Channel::new(), Channel::new(), Channel::new(), Channel::new()];
+
+/// Monotonic sequence counter for published GPIO events.
+static GPIO_EVENT_SEQ: AtomicU16 = AtomicU16::new(0);
+
+/// Background task that monitors GPIO pin `N` for edge events.
+///
+/// The task waits for a `(Flex, GpioEdge)` on `GPIO_MONITOR_START[N]`,
+/// sends an armed ack, then loops detecting edges and publishing
+/// `GpioEvent` topics until `GPIO_MONITOR_STOP[N]` is signalled.
+/// After stopping, the `Flex` pin is returned via `GPIO_MONITOR_RETURN[N]`.
+///
+/// Edge detection is best-effort: if the pin changes faster than the
+/// monitor loop cadence, intermediate transitions may be missed.
+#[embassy_executor::task(pool_size = 4)]
+async fn gpio_monitor_task(slot: usize, tx: AppTx, vkk: VarKeyKind) {
+    let sender = Sender::new(tx, vkk);
+
+    loop {
+        // Wait for a subscribe request to hand us a pin
+        let (mut flex, edge) = GPIO_MONITOR_START[slot].receive().await;
+
+        // Configure as input for edge detection
+        flex.set_as_input();
+
+        // Signal that we are armed and listening
+        GPIO_MONITOR_ARMED[slot].send(()).await;
+
+        debug!("gpio monitor[{}]: armed, edge={=u8}", slot, edge as u8);
+
+        // Monitor loop: wait for edge or stop signal
+        loop {
+            use embassy_futures::select::{Either, select};
+
+            let edge_future = async {
+                match edge {
+                    GpioEdge::Rising => flex.wait_for_rising_edge().await,
+                    GpioEdge::Falling => flex.wait_for_falling_edge().await,
+                    GpioEdge::Any => flex.wait_for_any_edge().await,
+                }
+            };
+
+            match select(edge_future, GPIO_MONITOR_STOP[slot].wait()).await {
+                Either::First(()) => {
+                    let state = match flex.get_level() {
+                        Level::Low => GpioState::Low,
+                        Level::High => GpioState::High,
+                    };
+                    let timestamp_us = Instant::now().as_micros();
+                    let seq = GPIO_EVENT_SEQ.fetch_add(1, Ordering::Relaxed);
+
+                    let event = GpioEvent {
+                        pin: slot as u8,
+                        edge,
+                        state,
+                        timestamp_us,
+                    };
+
+                    debug!(
+                        "gpio monitor[{}]: edge detected, state={=u8}, ts={=u64}",
+                        slot, state as u8, timestamp_us
+                    );
+
+                    let _ = sender.publish::<GpioEventTopic>(seq.into(), &event).await;
+                }
+                Either::Second(()) => {
+                    debug!("gpio monitor[{}]: stop requested", slot);
+                    GPIO_MONITOR_RETURN[slot].send(flex).await;
+                    break;
+                }
+            }
+        }
+    }
+}
 
 /// Build the USB device configuration.
 ///
@@ -329,6 +433,8 @@ define_dispatch! {
         | GpioWaitForFalling  | async    | gpio_wait_for_falling_handler |
         | GpioWaitForAny      | async    | gpio_wait_for_any_handler     |
         | GpioSetConfiguration | async    | gpio_set_config_handler       |
+        | GpioSubscribe        | async    | gpio_subscribe_handler        |
+        | GpioUnsubscribe      | async    | gpio_unsubscribe_handler      |
         | I2cSetConfiguration  | async    | i2c_set_config_handler        |
         | I2cScan             | async    | i2c_scan_handler              |
         | SpiSetConfiguration  | async    | spi_set_config_handler        |
@@ -433,6 +539,13 @@ async fn main(spawner: Spawner) {
     );
     let dispatcher = PicoDeGallo::new(context, spawner.into());
     let vkk = dispatcher.min_key_len();
+
+    // Spawn GPIO monitor tasks before creating the server.
+    // EUsbWireTx is Clone, so we clone tx_impl for each task.
+    for slot in 0..NUM_GPIOS {
+        spawner.must_spawn(gpio_monitor_task(slot, tx_impl.clone(), vkk));
+    }
+
     let mut server: AppServer = Server::new(tx_impl, rx_impl, pbufs.rx_buf.as_mut_slice(), dispatcher, vkk);
     spawner.must_spawn(usb_task(device));
 
@@ -623,7 +736,12 @@ async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGe
 async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPutRequest) -> GpioPutResponse {
     let idx = usize::from(req.pin);
     let mode = *context.pin_modes.get(idx).ok_or(GpioError::InvalidPin)?;
-    let gpio = context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+    let gpio = context
+        .gpios
+        .get_mut(idx)
+        .ok_or(GpioError::InvalidPin)?
+        .as_mut()
+        .ok_or(GpioError::PinMonitored)?;
 
     match mode {
         PinMode::LegacyAuto => gpio.set_as_output(),
@@ -713,7 +831,12 @@ async fn gpio_set_config_handler(
 ) -> GpioSetConfigurationResponse {
     let idx = usize::from(req.pin);
     let mode = context.pin_modes.get_mut(idx).ok_or(GpioError::InvalidPin)?;
-    let gpio = context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+    let gpio = context
+        .gpios
+        .get_mut(idx)
+        .ok_or(GpioError::InvalidPin)?
+        .as_mut()
+        .ok_or(GpioError::PinMonitored)?;
 
     // Apply pull resistor setting
     gpio.set_pull(match req.pull {
@@ -738,6 +861,58 @@ async fn gpio_set_config_handler(
         "gpio set_config: pin={=u8} dir={=u8} pull={=u8}",
         req.pin, req.direction as u8, req.pull as u8
     );
+    Ok(())
+}
+
+/// Handler for `gpio/subscribe` — starts edge-event monitoring on a pin.
+///
+/// Takes ownership of the pin from Context, sends it to a background monitor
+/// task, and waits for the armed acknowledgement before returning. While
+/// subscribed, the pin cannot be used by other GPIO operations.
+async fn gpio_subscribe_handler(
+    context: &mut Context,
+    _header: VarHeader,
+    req: GpioSubscribeRequest,
+) -> GpioSubscribeResponse {
+    let idx = usize::from(req.pin);
+    if idx >= NUM_GPIOS {
+        return Err(GpioError::InvalidPin);
+    }
+
+    let flex = context.gpios[idx].take().ok_or(GpioError::PinMonitored)?;
+
+    debug!("gpio subscribe: pin={=u8} edge={=u8}", req.pin, req.edge as u8);
+
+    GPIO_MONITOR_START[idx].send((flex, req.edge)).await;
+    GPIO_MONITOR_ARMED[idx].receive().await;
+
+    Ok(())
+}
+
+/// Handler for `gpio/unsubscribe` — stops edge-event monitoring on a pin.
+///
+/// Signals the monitor task to stop, waits for the pin to be returned, and
+/// puts it back into Context so regular GPIO operations can resume.
+async fn gpio_unsubscribe_handler(
+    context: &mut Context,
+    _header: VarHeader,
+    req: GpioUnsubscribeRequest,
+) -> GpioUnsubscribeResponse {
+    let idx = usize::from(req.pin);
+    if idx >= NUM_GPIOS {
+        return Err(GpioError::InvalidPin);
+    }
+
+    if context.gpios[idx].is_some() {
+        return Err(GpioError::PinNotMonitored);
+    }
+
+    debug!("gpio unsubscribe: pin={=u8}", req.pin);
+
+    GPIO_MONITOR_STOP[idx].signal(());
+    let flex = GPIO_MONITOR_RETURN[idx].receive().await;
+    context.gpios[idx] = Some(flex);
+
     Ok(())
 }
 

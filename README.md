@@ -16,7 +16,7 @@ Pico de Gallo provides:
 - **I²C**: read, write, write-then-read, and bus scanning
 - **SPI**: read, write, full-duplex transfer, and write-then-read
 - **UART**: read, write, flush, and baud rate configuration
-- **GPIO**: digital input/output and edge detection
+- **GPIO**: digital input/output, edge event monitoring (subscribe/unsubscribe)
 - **PWM**: 4-channel PWM output with configurable frequency and duty cycle
 - **ADC**: 4 GPIO-based analog inputs plus on-die temperature sensor (12-bit)
 - **Configuration**: runtime I²C/SPI/UART/PWM frequency and SPI mode changes

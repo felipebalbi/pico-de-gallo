@@ -118,6 +118,10 @@ pub type GpioPutResponse = Result<(), GpioError>;
 pub type GpioWaitResponse = Result<(), GpioError>;
 /// Response type for GPIO set-configuration operations.
 pub type GpioSetConfigurationResponse = Result<(), GpioError>;
+/// Response type for GPIO subscribe operations.
+pub type GpioSubscribeResponse = Result<(), GpioError>;
+/// Response type for GPIO unsubscribe operations.
+pub type GpioUnsubscribeResponse = Result<(), GpioError>;
 /// Response type for I2C bus configuration operations.
 pub type I2cSetConfigurationResponse = Result<(), I2cConfigError>;
 /// Response type for I2C bus scan operations.
@@ -225,6 +229,8 @@ endpoints! {
     | AdcRead               | AdcReadRequest                | AdcReadResponse               | "adc/read"           |
     | AdcReadTemperature    | ()                            | AdcReadTemperatureResponse    | "adc/read-temperature" |
     | AdcGetConfiguration   | ()                            | AdcGetConfigurationResponse   | "adc/get-config"     |
+    | GpioSubscribe         | GpioSubscribeRequest          | GpioSubscribeResponse         | "gpio/subscribe"     |
+    | GpioUnsubscribe       | GpioUnsubscribeRequest        | GpioUnsubscribeResponse       | "gpio/unsubscribe"   |
     | Version               | ()                            | VersionInfo                   | "version"            |
 }
 
@@ -238,8 +244,9 @@ topics! {
 topics! {
     list = TOPICS_OUT_LIST;
     direction = TopicDirection::ToClient;
-    | TopicTy | MessageTy | Path | Cfg |
-    | ------- | --------- | ---- | --- |
+    | TopicTy         | MessageTy  | Path              | Cfg |
+    | -------         | --------- | ----               | --- |
+    | GpioEventTopic  | GpioEvent | "gpio/event"       |     |
 }
 
 // --- I2C
@@ -407,6 +414,11 @@ pub enum GpioError {
     Other,
     /// The pin is configured in a direction that does not support this operation.
     WrongDirection,
+    /// The pin is currently being monitored for events and cannot be used
+    /// for regular GPIO operations. Unsubscribe first.
+    PinMonitored,
+    /// The pin is not currently monitored — cannot unsubscribe.
+    PinNotMonitored,
 }
 
 impl core::fmt::Display for GpioError {
@@ -415,6 +427,8 @@ impl core::fmt::Display for GpioError {
             Self::InvalidPin => write!(f, "invalid GPIO pin number"),
             Self::Other => write!(f, "GPIO error"),
             Self::WrongDirection => write!(f, "GPIO pin configured in wrong direction"),
+            Self::PinMonitored => write!(f, "GPIO pin is being monitored for events"),
+            Self::PinNotMonitored => write!(f, "GPIO pin is not monitored"),
         }
     }
 }
@@ -504,6 +518,82 @@ pub struct GpioSetConfigurationRequest {
     pub direction: GpioDirection,
     /// Internal pull resistor setting.
     pub pull: GpioPull,
+}
+
+// --- GPIO event monitoring
+
+/// Edge type for GPIO event monitoring.
+///
+/// Selects which transitions trigger a [`GpioEvent`] notification.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index**. Do **not** reorder or insert
+/// variants in the middle — only append at the end.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GpioEdge {
+    /// Trigger on low-to-high transitions.
+    Rising = 0,
+    /// Trigger on high-to-low transitions.
+    Falling = 1,
+    /// Trigger on any transition (rising or falling).
+    Any = 2,
+}
+
+impl core::fmt::Display for GpioEdge {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Rising => write!(f, "rising"),
+            Self::Falling => write!(f, "falling"),
+            Self::Any => write!(f, "any"),
+        }
+    }
+}
+
+/// A GPIO event notification published by the firmware.
+///
+/// Sent as a [`GpioEventTopic`] message whenever a monitored pin detects
+/// an edge matching its subscription. The host receives these via
+/// [`postcard_rpc::host_client::HostClient::subscribe`].
+///
+/// **Note:** Event delivery is best-effort. Edges faster than the
+/// firmware's monitor loop may be coalesced or missed.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct GpioEvent {
+    /// GPIO pin index (0–3) that triggered the event.
+    pub pin: u8,
+    /// The edge type that was detected.
+    pub edge: GpioEdge,
+    /// Pin level sampled immediately after the event (may differ from
+    /// the triggering edge if the signal bounced).
+    pub state: GpioState,
+    /// Monotonic timestamp in microseconds since firmware boot.
+    pub timestamp_us: u64,
+}
+
+/// Request to subscribe a GPIO pin to edge-event monitoring.
+///
+/// Once subscribed, the pin is exclusively owned by the monitor task.
+/// Regular GPIO operations ([`GpioGet`], [`GpioPut`], wait, set-config)
+/// on this pin will return [`GpioError::PinMonitored`] until
+/// [`GpioUnsubscribe`] is called.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct GpioSubscribeRequest {
+    /// GPIO pin index (0–3).
+    pub pin: u8,
+    /// Which edges to monitor.
+    pub edge: GpioEdge,
+}
+
+/// Request to unsubscribe a GPIO pin from edge-event monitoring.
+///
+/// The pin is returned to normal GPIO mode and can be used for regular
+/// operations again.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct GpioUnsubscribeRequest {
+    /// GPIO pin index (0–3).
+    pub pin: u8,
 }
 
 // --- Set config
@@ -1198,6 +1288,8 @@ mod tests {
             GpioError::InvalidPin,
             GpioError::Other,
             GpioError::WrongDirection,
+            GpioError::PinMonitored,
+            GpioError::PinNotMonitored,
         ] {
             let bytes = to_allocvec(&err).unwrap();
             let decoded: GpioError = from_bytes(&bytes).unwrap();
@@ -1250,6 +1342,14 @@ mod tests {
         assert_eq!(
             format!("{}", GpioError::WrongDirection),
             "GPIO pin configured in wrong direction"
+        );
+        assert_eq!(
+            format!("{}", GpioError::PinMonitored),
+            "GPIO pin is being monitored for events"
+        );
+        assert_eq!(
+            format!("{}", GpioError::PinNotMonitored),
+            "GPIO pin is not monitored"
         );
     }
 
@@ -2110,5 +2210,109 @@ mod tests {
         assert_eq!(to_allocvec(&AdcChannel::Adc2).unwrap(), [2]);
         assert_eq!(to_allocvec(&AdcChannel::Adc3).unwrap(), [3]);
         assert_eq!(to_allocvec(&AdcChannel::TempSensor).unwrap(), [4]);
+    }
+
+    // --- GPIO event monitoring tests ---
+
+    #[test]
+    fn gpio_edge_round_trip() {
+        for edge in [GpioEdge::Rising, GpioEdge::Falling, GpioEdge::Any] {
+            let bytes = to_allocvec(&edge).unwrap();
+            let decoded: GpioEdge = from_bytes(&bytes).unwrap();
+            assert_eq!(edge, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_edge_discriminants_are_stable() {
+        assert_eq!(GpioEdge::Rising as u8, 0);
+        assert_eq!(GpioEdge::Falling as u8, 1);
+        assert_eq!(GpioEdge::Any as u8, 2);
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn gpio_edge_display() {
+        assert_eq!(format!("{}", GpioEdge::Rising), "rising");
+        assert_eq!(format!("{}", GpioEdge::Falling), "falling");
+        assert_eq!(format!("{}", GpioEdge::Any), "any");
+    }
+
+    #[test]
+    fn gpio_event_round_trip() {
+        let event = GpioEvent {
+            pin: 2,
+            edge: GpioEdge::Rising,
+            state: GpioState::High,
+            timestamp_us: 123_456_789,
+        };
+        let bytes = to_allocvec(&event).unwrap();
+        let decoded: GpioEvent = from_bytes(&bytes).unwrap();
+        assert_eq!(event, decoded);
+    }
+
+    #[test]
+    fn gpio_event_all_edge_variants() {
+        for edge in [GpioEdge::Rising, GpioEdge::Falling, GpioEdge::Any] {
+            for state in [GpioState::Low, GpioState::High] {
+                let event = GpioEvent {
+                    pin: 0,
+                    edge,
+                    state,
+                    timestamp_us: 0,
+                };
+                let bytes = to_allocvec(&event).unwrap();
+                let decoded: GpioEvent = from_bytes(&bytes).unwrap();
+                assert_eq!(event, decoded);
+            }
+        }
+    }
+
+    #[test]
+    fn gpio_event_wire_stability() {
+        let event = GpioEvent {
+            pin: 1,
+            edge: GpioEdge::Falling,
+            state: GpioState::Low,
+            timestamp_us: 999_999,
+        };
+        let bytes = to_allocvec(&event).unwrap();
+        let canonical = bytes.clone();
+        let decoded: GpioEvent = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, event);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn gpio_subscribe_request_round_trip() {
+        for edge in [GpioEdge::Rising, GpioEdge::Falling, GpioEdge::Any] {
+            let req = GpioSubscribeRequest { pin: 3, edge };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: GpioSubscribeRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_unsubscribe_request_round_trip() {
+        for pin in 0..4u8 {
+            let req = GpioUnsubscribeRequest { pin };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: GpioUnsubscribeRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_subscribe_request_wire_stability() {
+        let req = GpioSubscribeRequest {
+            pin: 2,
+            edge: GpioEdge::Any,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: GpioSubscribeRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
     }
 }

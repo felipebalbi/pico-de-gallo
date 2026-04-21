@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   etc.) with 3 rich error enums: `I2cError` (7 variants), `SpiError` (2 variants),
   `GpioError` (2 variants). Wire protocol is **not** backward compatible —
   firmware and host must be upgraded together.
+- **internal**: `GpioError` now has 4 variants — added `PinMonitored` and
+  `PinNotMonitored` for the GPIO event subscription system.
+- **firmware**: `gpios` field in `Context` changed from `[Flex<'static>; NUM_GPIOS]`
+  to `[Option<Flex<'static>>; NUM_GPIOS]`. GPIO operations on a monitored pin
+  return `GpioError::PinMonitored`.
 - **lib**: All method return types updated from `PicoDeGalloError<*Fail>` to
   `PicoDeGalloError<I2cError>`, `PicoDeGalloError<SpiError>`, or
   `PicoDeGalloError<GpioError>`.
@@ -32,6 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **internal**: `GpioEventTopic` (device-to-host topic), `GpioEdge` enum
+  (Rising/Falling/Any), `GpioEvent` struct (pin, edge, timestamp_us),
+  `GpioSubscribe`/`GpioUnsubscribe` endpoints with request/response types.
+  `TOPICS_OUT_LIST` now contains the GPIO event topic.
+- **firmware**: GPIO event monitoring via 4 pooled `gpio_monitor_task` instances.
+  Subscribe takes ownership of the pin, monitors for edges, and publishes
+  `GpioEvent` via `Sender::publish`. Unsubscribe returns the pin to the
+  context. Static channels for start/stop/return/armed synchronization.
+- **lib**: `gpio_subscribe(pin, edge)`, `gpio_unsubscribe(pin)`, and
+  `subscribe_gpio_events(depth)` methods. Re-exported `GpioEdge`, `GpioEvent`,
+  `IoClosed`, `MultiSubscription`.
+- **hal**: `gpio_subscribe(pin, edge)` and `gpio_unsubscribe(pin)` blocking
+  methods. Re-exported `GpioEdge`, `GpioEvent`.
+- **ffi**: `gallo_gpio_subscribe(pin, edge)` and `gallo_gpio_unsubscribe(pin)`
+  FFI functions. 4 new status codes: `GpioPinMonitored` (-54),
+  `GpioPinNotMonitored` (-55), `GpioSubscribeFailed` (-56),
+  `GpioUnsubscribeFailed` (-57).
+- **app**: `gallo gpio monitor --pin N --edge rising|falling|any` command.
+  Subscribes, prints edge events with timestamps, unsubscribes on Ctrl+C.
 - **internal**: 6 PWM endpoints (`pwm/set-duty-cycle`, `pwm/get-duty-cycle`,
   `pwm/enable`, `pwm/disable`, `pwm/set-config`, `pwm/get-config`), `PwmError`
   enum (4 variants), request/response types, `PwmDutyCycleInfo` and

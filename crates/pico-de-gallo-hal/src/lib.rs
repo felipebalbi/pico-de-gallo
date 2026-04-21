@@ -44,8 +44,8 @@
 //! | Delay | [`DelayNs`](embedded_hal::delay::DelayNs) | [`DelayNs`](embedded_hal_async::delay::DelayNs) |
 
 use pico_de_gallo_lib::{
-    AdcChannel, AdcConfigurationInfo, AdcError, GpioDirection, GpioError, GpioPull, GpioState,
-    I2cError, PicoDeGallo, PicoDeGalloError, PwmError, SpiError, UartError,
+    AdcChannel, AdcConfigurationInfo, AdcError, GpioDirection, GpioEdge, GpioError, GpioPull,
+    GpioState, I2cError, PicoDeGallo, PicoDeGalloError, PwmError, SpiError, UartError,
 };
 use std::sync::Arc;
 use tokio::runtime::{Handle, Runtime};
@@ -53,7 +53,7 @@ use tokio::sync::Mutex;
 use tokio::task::block_in_place;
 
 pub use pico_de_gallo_lib::{
-    I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo,
+    GpioEvent, I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo,
 };
 
 /// Top-level HAL context for a Pico de Gallo device.
@@ -390,6 +390,46 @@ impl Hal {
                 PicoDeGalloError::Comms(c) => AdcHalError::Comms(format!("{c:?}")),
                 PicoDeGalloError::Endpoint(never) => match never {},
             })
+    }
+
+    /// Subscribe to GPIO edge events on a pin.
+    ///
+    /// Starts push-based monitoring for the specified edge type. While subscribed,
+    /// the pin cannot be used by other GPIO operations. Use
+    /// [`gpio_unsubscribe`](Self::gpio_unsubscribe) to release the pin.
+    pub fn gpio_subscribe(&self, pin: u8, edge: GpioEdge) -> Result<(), GpioHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.gpio_subscribe_inner(pin, edge))
+        } else {
+            self.gpio_subscribe_inner(pin, edge)
+        }
+    }
+
+    fn gpio_subscribe_inner(&self, pin: u8, edge: GpioEdge) -> Result<(), GpioHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.gpio_subscribe(pin, edge))
+            .map_err(GpioHalError::from)
+    }
+
+    /// Unsubscribe from GPIO edge events on a pin.
+    ///
+    /// Stops monitoring and returns the pin to normal operation.
+    pub fn gpio_unsubscribe(&self, pin: u8) -> Result<(), GpioHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.gpio_unsubscribe_inner(pin))
+        } else {
+            self.gpio_unsubscribe_inner(pin)
+        }
+    }
+
+    fn gpio_unsubscribe_inner(&self, pin: u8) -> Result<(), GpioHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.gpio_unsubscribe(pin))
+            .map_err(GpioHalError::from)
     }
 
     /// Create an [`SpiDevice`] that manages chip-select on `cs_pin`.

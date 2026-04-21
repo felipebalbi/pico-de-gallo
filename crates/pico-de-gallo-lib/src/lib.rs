@@ -46,12 +46,13 @@
 
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
-    AdcGetConfiguration, AdcRead, AdcReadRequest, AdcReadTemperature, GpioGet, GpioGetRequest, GpioPut, GpioPutRequest,
-    GpioSetConfiguration, GpioSetConfigurationRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh,
-    GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan,
-    I2cScanRequest, I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest,
-    I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable, PwmEnableRequest,
-    PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmSetConfiguration,
+    AdcGetConfiguration, AdcRead, AdcReadRequest, AdcReadTemperature, GpioEventTopic, GpioGet, GpioGetRequest, GpioPut,
+    GpioPutRequest, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSubscribe, GpioSubscribeRequest,
+    GpioUnsubscribe, GpioUnsubscribeRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
+    GpioWaitForRising, GpioWaitRequest, I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest,
+    I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest,
+    MICROSOFT_VID, PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable, PwmEnableRequest, PwmGetConfiguration,
+    PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmSetConfiguration,
     PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SpiFlush, SpiGetConfiguration, SpiRead,
     SpiReadRequest, SpiSetConfiguration, SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite,
     SpiWriteRequest, UartFlush, UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration,
@@ -59,11 +60,13 @@ use pico_de_gallo_internal::{
 };
 
 pub use pico_de_gallo_internal::{
-    AdcChannel, AdcConfigurationInfo, GpioDirection, GpioPull, GpioState, I2cFrequency, PwmConfigurationInfo,
-    PwmDutyCycleInfo, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo, VersionInfo,
+    AdcChannel, AdcConfigurationInfo, GpioDirection, GpioEdge, GpioEvent, GpioPull, GpioState, I2cFrequency,
+    PwmConfigurationInfo, PwmDutyCycleInfo, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo,
+    VersionInfo,
 };
 pub use pico_de_gallo_internal::{AdcError, GpioError, I2cError, PwmError, SpiError, UartError};
 
+pub use postcard_rpc::host_client::{IoClosed, MultiSubscription};
 use postcard_rpc::{
     header::VarSeqKind,
     host_client::{HostClient, HostErr},
@@ -414,6 +417,52 @@ impl PicoDeGallo {
             .send_resp::<GpioSetConfiguration>(&GpioSetConfigurationRequest { pin, direction, pull })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Subscribe to GPIO edge events on a pin.
+    ///
+    /// Starts push-based monitoring for the specified edge type. While subscribed,
+    /// the pin cannot be used by other GPIO operations (they will return
+    /// [`GpioError::PinMonitored`]). Use [`gpio_unsubscribe`](Self::gpio_unsubscribe)
+    /// to release the pin.
+    ///
+    /// Call [`subscribe_gpio_events`](Self::subscribe_gpio_events) to receive the
+    /// event stream.
+    pub async fn gpio_subscribe(&self, pin: u8, edge: GpioEdge) -> Result<(), PicoDeGalloError<GpioError>> {
+        self.client
+            .send_resp::<GpioSubscribe>(&GpioSubscribeRequest { pin, edge })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Unsubscribe from GPIO edge events on a pin.
+    ///
+    /// Stops monitoring and returns the pin to normal operation. Returns
+    /// [`GpioError::PinNotMonitored`] if the pin is not currently subscribed.
+    pub async fn gpio_unsubscribe(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
+        self.client
+            .send_resp::<GpioUnsubscribe>(&GpioUnsubscribeRequest { pin })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Subscribe to the GPIO event topic stream.
+    ///
+    /// Returns a [`MultiSubscription`] that yields [`GpioEvent`] messages as edges
+    /// are detected on any subscribed pin. Call this *before* or *after*
+    /// [`gpio_subscribe`](Self::gpio_subscribe) — events are buffered up to
+    /// `depth` messages.
+    ///
+    /// Edge detection is best-effort: if the pin changes faster than the
+    /// firmware monitor loop cadence, intermediate transitions may be missed.
+    pub async fn subscribe_gpio_events(
+        &self,
+        depth: usize,
+    ) -> Result<MultiSubscription<GpioEvent>, PicoDeGalloError<Infallible>> {
+        self.client
+            .subscribe_multi::<GpioEventTopic>(depth)
+            .await
+            .map_err(|_| PicoDeGalloError::Comms(HostErr::Closed))
     }
 
     /// Set I2C bus configuration parameters.

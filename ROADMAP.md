@@ -30,8 +30,8 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 | Phase | Description        | Items | Done | Status         |
 |-------|--------------------|-------|------|----------------|
 | **1** | Polish What Exists | 6     | 6    | ✅ Complete    |
-| **2** | New Protocols      | 6     | 1    | 🟡 In progress |
-| **3** | Advanced Features  | 6     | 0    | 🔴 Not started |
+| **2** | New Protocols      | 6     | 3    | 🟡 In progress |
+| **3** | Advanced Features  | 6     | 1    | 🟡 In progress |
 | **4** | Hardware Rev 2     | 6     | 0    | 🔴 Not started |
 
 ---
@@ -312,7 +312,7 @@ architecture changes.*
 
 |   | Item                                                              | Tracking |
 |---|-------------------------------------------------------------------|----------|
-| ☐ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) | [#13](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/13) |
+| ☑ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) | [#13](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/13) |
 | ☐ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       | [#14](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/14) |
 | ☐ | [3.3 1-Wire via PIO](#33-1-wire-support-via-pio)                  | [#15](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/15) |
 | ☐ | [3.4 Protocol Sniffing](#34-protocol-sniffing--logic-capture)     | [#16](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/16) |

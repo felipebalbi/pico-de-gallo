@@ -176,6 +176,14 @@ pub enum Status {
     AdcGetConfigFailed = -52,
     /// ADC conversion error
     AdcConversionFailed = -53,
+    /// GPIO pin is currently being monitored (subscribed)
+    GpioPinMonitored = -54,
+    /// GPIO pin is not being monitored (not subscribed)
+    GpioPinNotMonitored = -55,
+    /// GPIO subscribe failed
+    GpioSubscribeFailed = -56,
+    /// GPIO unsubscribe failed
+    GpioUnsubscribeFailed = -57,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -205,6 +213,8 @@ fn gpio_error_to_status(e: PicoDeGalloError<GpioError>) -> Status {
     match e {
         PicoDeGalloError::Endpoint(GpioError::InvalidPin) => Status::GpioInvalidPin,
         PicoDeGalloError::Endpoint(GpioError::WrongDirection) => Status::GpioWrongDirection,
+        PicoDeGalloError::Endpoint(GpioError::PinMonitored) => Status::GpioPinMonitored,
+        PicoDeGalloError::Endpoint(GpioError::PinNotMonitored) => Status::GpioPinNotMonitored,
         PicoDeGalloError::Endpoint(GpioError::Other) => Status::GpioGetFailed,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
@@ -964,6 +974,85 @@ pub unsafe extern "C" fn gallo_gpio_set_config(
     let gallo = unsafe { &*gallo };
 
     let result = block_on(gallo.0.gpio_set_config(pin, dir, pull_cfg));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+// ----------------------------- GPIO Subscribe/Unsubscribe endpoints -----------------------------
+
+/// gallo_gpio_subscribe - Subscribe to GPIO edge events on a pin.
+///
+/// `edge`: 0 = Rising, 1 = Falling, 2 = Any. Any other value returns
+/// `Status::InvalidArgument`.
+///
+/// While subscribed, other GPIO operations on this pin will return
+/// `Status::GpioPinMonitored`. Use [`gallo_gpio_unsubscribe`] to release.
+///
+/// Returns `Status::Ok` on success.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_subscribe(
+    gallo: *mut PicoDeGallo,
+    pin: u8,
+    edge: u8,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    let edge_val = match edge {
+        0 => lib::GpioEdge::Rising,
+        1 => lib::GpioEdge::Falling,
+        2 => lib::GpioEdge::Any,
+        _ => {
+            eprintln!("Invalid edge value: {edge}");
+            return Status::InvalidArgument;
+        }
+    };
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_subscribe(pin, edge_val));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+/// gallo_gpio_unsubscribe - Unsubscribe from GPIO edge events on a pin.
+///
+/// Stops monitoring and returns the pin to normal operation. Returns
+/// `Status::GpioPinNotMonitored` if the pin is not currently subscribed.
+///
+/// Returns `Status::Ok` on success.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_unsubscribe(gallo: *mut PicoDeGallo, pin: u8) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_unsubscribe(pin));
 
     match result {
         Ok(()) => Status::Ok,
@@ -1810,6 +1899,10 @@ mod tests {
             Status::AdcReadTemperatureFailed as i32,
             Status::AdcGetConfigFailed as i32,
             Status::AdcConversionFailed as i32,
+            Status::GpioPinMonitored as i32,
+            Status::GpioPinNotMonitored as i32,
+            Status::GpioSubscribeFailed as i32,
+            Status::GpioUnsubscribeFailed as i32,
         ];
         for code in error_codes {
             assert!(code < 0, "error code {code} should be negative");
@@ -1873,6 +1966,10 @@ mod tests {
             Status::AdcReadTemperatureFailed as i32,
             Status::AdcGetConfigFailed as i32,
             Status::AdcConversionFailed as i32,
+            Status::GpioPinMonitored as i32,
+            Status::GpioPinNotMonitored as i32,
+            Status::GpioSubscribeFailed as i32,
+            Status::GpioUnsubscribeFailed as i32,
         ];
         let unique: HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len(), "duplicate status codes found");
@@ -1986,6 +2083,25 @@ mod tests {
     #[test]
     fn gpio_set_config_null_device_returns_uninitialized() {
         let status = unsafe { gallo_gpio_set_config(std::ptr::null_mut(), 0, 0, 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_subscribe_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_gpio_subscribe(std::ptr::null_mut(), 0, 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_subscribe_invalid_edge_returns_uninitialized() {
+        // null check happens before edge validation
+        let status = unsafe { gallo_gpio_subscribe(std::ptr::null_mut(), 0, 99) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_unsubscribe_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_gpio_unsubscribe(std::ptr::null_mut(), 0) };
         assert_eq!(status, Status::Uninitialized);
     }
 
@@ -2304,5 +2420,29 @@ mod tests {
             adc_error_to_status(PicoDeGalloError::Endpoint(AdcError::Other)),
             Status::AdcReadFailed
         );
+    }
+
+    #[test]
+    fn gpio_error_to_status_maps_pin_monitored() {
+        assert_eq!(
+            gpio_error_to_status(PicoDeGalloError::Endpoint(GpioError::PinMonitored)),
+            Status::GpioPinMonitored
+        );
+    }
+
+    #[test]
+    fn gpio_error_to_status_maps_pin_not_monitored() {
+        assert_eq!(
+            gpio_error_to_status(PicoDeGalloError::Endpoint(GpioError::PinNotMonitored)),
+            Status::GpioPinNotMonitored
+        );
+    }
+
+    #[test]
+    fn gpio_subscribe_status_codes_are_stable() {
+        assert_eq!(Status::GpioPinMonitored as i32, -54);
+        assert_eq!(Status::GpioPinNotMonitored as i32, -55);
+        assert_eq!(Status::GpioSubscribeFailed as i32, -56);
+        assert_eq!(Status::GpioUnsubscribeFailed as i32, -57);
     }
 }
