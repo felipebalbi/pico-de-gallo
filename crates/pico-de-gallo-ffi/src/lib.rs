@@ -119,6 +119,10 @@ pub enum Status {
     CommsFailed = -25,
     /// I2C bus scan failed
     I2cScanFailed = -26,
+    /// GPIO set config failed
+    GpioSetConfigFailed = -27,
+    /// GPIO pin configured in wrong direction for the requested operation
+    GpioWrongDirection = -28,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -147,6 +151,7 @@ fn spi_error_to_status(e: PicoDeGalloError<SpiError>) -> Status {
 fn gpio_error_to_status(e: PicoDeGalloError<GpioError>) -> Status {
     match e {
         PicoDeGalloError::Endpoint(GpioError::InvalidPin) => Status::GpioInvalidPin,
+        PicoDeGalloError::Endpoint(GpioError::WrongDirection) => Status::GpioWrongDirection,
         PicoDeGalloError::Endpoint(GpioError::Other) => Status::GpioGetFailed,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
@@ -819,6 +824,67 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_any_edge(gallo: *mut PicoDeGallo, p
     }
 }
 
+// ----------------------------- GPIO Set config endpoint -----------------------------
+
+/// gallo_gpio_set_config - Configure a GPIO pin's direction and pull resistor.
+///
+/// `direction`: 0 = Input, 1 = Output.
+/// `pull`: 0 = None, 1 = Pull-up, 2 = Pull-down.
+///
+/// After configuration, the pin enters explicit mode and get/put will no
+/// longer auto-switch direction. Calling `gallo_gpio_put` on an input pin
+/// (or `gallo_gpio_get`/wait on an output pin) returns
+/// `GpioWrongDirection`.
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_set_config(
+    gallo: *mut PicoDeGallo,
+    pin: u8,
+    direction: u8,
+    pull: u8,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    let dir = match direction {
+        0 => lib::GpioDirection::Input,
+        1 => lib::GpioDirection::Output,
+        _ => {
+            eprintln!("Invalid direction value: {direction}");
+            return Status::InvalidArgument;
+        }
+    };
+
+    let pull_cfg = match pull {
+        0 => lib::GpioPull::None,
+        1 => lib::GpioPull::Up,
+        2 => lib::GpioPull::Down,
+        _ => {
+            eprintln!("Invalid pull value: {pull}");
+            return Status::InvalidArgument;
+        }
+    };
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_set_config(pin, dir, pull_cfg));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
 // ----------------------------- I2C Set config endpoint -----------------------------
 
 /// gallo_i2c_set_config - Sets the I2C bus configuration parameters.
@@ -1001,6 +1067,9 @@ mod tests {
             Status::I2cAddressOutOfRange as i32,
             Status::GpioInvalidPin as i32,
             Status::CommsFailed as i32,
+            Status::I2cScanFailed as i32,
+            Status::GpioSetConfigFailed as i32,
+            Status::GpioWrongDirection as i32,
         ];
         for code in error_codes {
             assert!(code < 0, "error code {code} should be negative");
@@ -1036,6 +1105,9 @@ mod tests {
             Status::I2cAddressOutOfRange as i32,
             Status::GpioInvalidPin as i32,
             Status::CommsFailed as i32,
+            Status::I2cScanFailed as i32,
+            Status::GpioSetConfigFailed as i32,
+            Status::GpioWrongDirection as i32,
         ];
         let unique: HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len(), "duplicate status codes found");
@@ -1143,6 +1215,12 @@ mod tests {
     #[test]
     fn gpio_wait_for_any_edge_null_device_returns_uninitialized() {
         let status = unsafe { gallo_gpio_wait_for_any_edge(std::ptr::null_mut(), 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_set_config_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_gpio_set_config(std::ptr::null_mut(), 0, 0, 0) };
         assert_eq!(status, Status::Uninitialized);
     }
 

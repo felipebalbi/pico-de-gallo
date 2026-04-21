@@ -30,6 +30,7 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::{Result, eyre::eyre};
+use pico_de_gallo_lib::{GpioDirection, GpioPull, GpioState};
 use pico_de_gallo_lib::{I2cFrequency, PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
 use std::num::ParseIntError;
 use tabled::builder::Builder;
@@ -53,6 +54,45 @@ impl From<I2cFrequencyArg> for I2cFrequency {
             I2cFrequencyArg::Standard => I2cFrequency::Standard,
             I2cFrequencyArg::Fast => I2cFrequency::Fast,
             I2cFrequencyArg::FastPlus => I2cFrequency::FastPlus,
+        }
+    }
+}
+
+/// GPIO pin direction for CLI argument parsing.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpioDirectionArg {
+    /// Configure pin as input
+    Input,
+    /// Configure pin as output
+    Output,
+}
+
+impl From<GpioDirectionArg> for GpioDirection {
+    fn from(arg: GpioDirectionArg) -> Self {
+        match arg {
+            GpioDirectionArg::Input => GpioDirection::Input,
+            GpioDirectionArg::Output => GpioDirection::Output,
+        }
+    }
+}
+
+/// GPIO pull resistor configuration for CLI argument parsing.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpioPullArg {
+    /// No internal pull resistor
+    None,
+    /// Internal pull-up resistor
+    Up,
+    /// Internal pull-down resistor
+    Down,
+}
+
+impl From<GpioPullArg> for GpioPull {
+    fn from(arg: GpioPullArg) -> Self {
+        match arg {
+            GpioPullArg::None => GpioPull::None,
+            GpioPullArg::Up => GpioPull::Up,
+            GpioPullArg::Down => GpioPull::Down,
         }
     }
 }
@@ -112,6 +152,13 @@ enum Commands {
         /// SPI commands
         #[command(subcommand)]
         command: SpiCommands,
+    },
+
+    /// GPIO access methods
+    Gpio {
+        /// GPIO commands
+        #[command(subcommand)]
+        command: GpioCommands,
     },
 }
 
@@ -219,6 +266,42 @@ enum SpiCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum GpioCommands {
+    /// Read the current level of a GPIO pin
+    Get {
+        /// GPIO pin number (0–7)
+        #[arg(short, long)]
+        pin: u8,
+    },
+
+    /// Set a GPIO pin to a specific level
+    Put {
+        /// GPIO pin number (0–7)
+        #[arg(short, long)]
+        pin: u8,
+
+        /// Desired level: true = high, false = low
+        #[arg(short, long)]
+        high: bool,
+    },
+
+    /// Configure a GPIO pin's direction and pull resistor
+    SetConfig {
+        /// GPIO pin number (0–7)
+        #[arg(short, long)]
+        pin: u8,
+
+        /// Pin direction: input or output
+        #[arg(short, long)]
+        direction: GpioDirectionArg,
+
+        /// Internal pull resistor: none, up, or down
+        #[arg(long, default_value = "none")]
+        pull: GpioPullArg,
+    },
+}
+
 fn print_data(data: &[u8], format: &OutputFormat) {
     match format {
         OutputFormat::Hex => {
@@ -287,6 +370,11 @@ impl Cli {
                     first_transition,
                     idle_low,
                 } => self.spi_set_config(*frequency, *first_transition, *idle_low).await,
+            },
+            Commands::Gpio { command } => match command {
+                GpioCommands::Get { pin } => self.gpio_get(*pin).await,
+                GpioCommands::Put { pin, high } => self.gpio_put(*pin, *high).await,
+                GpioCommands::SetConfig { pin, direction, pull } => self.gpio_set_config(*pin, *direction, *pull).await,
             },
         }
     }
@@ -466,6 +554,45 @@ impl Cli {
         pg.spi_set_config(frequency, spi_phase, spi_polarity)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("spi set-config failed"))
+    }
+
+    async fn gpio_get(&self, pin: u8) -> Result<()> {
+        let pg = self.connect();
+
+        let level = pg
+            .gpio_get(pin)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("gpio get failed"))?;
+
+        let label = match level {
+            GpioState::High => "HIGH",
+            GpioState::Low => "LOW",
+        };
+        println!("GPIO pin {pin}: {label}");
+        Ok(())
+    }
+
+    async fn gpio_put(&self, pin: u8, high: bool) -> Result<()> {
+        let pg = self.connect();
+
+        let state = if high { GpioState::High } else { GpioState::Low };
+        pg.gpio_put(pin, state)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("gpio put failed"))?;
+
+        println!("GPIO pin {pin} set to {}", if high { "HIGH" } else { "LOW" });
+        Ok(())
+    }
+
+    async fn gpio_set_config(&self, pin: u8, direction: GpioDirectionArg, pull: GpioPullArg) -> Result<()> {
+        let pg = self.connect();
+
+        pg.gpio_set_config(pin, direction.into(), pull.into())
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("gpio set-config failed"))?;
+
+        println!("GPIO pin {pin} configured as {direction:?} with pull {pull:?}");
+        Ok(())
     }
 }
 

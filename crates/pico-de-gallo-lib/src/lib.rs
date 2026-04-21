@@ -45,15 +45,18 @@
 
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
-    GpioGet, GpioGetRequest, GpioPut, GpioPutRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh,
-    GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest,
-    I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest,
-    MICROSOFT_VID, PICO_DE_GALLO_PID, SpiFlush, SpiRead, SpiReadRequest, SpiSetConfiguration,
-    SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, Version,
+    GpioGet, GpioGetRequest, GpioPut, GpioPutRequest, GpioSetConfiguration, GpioSetConfigurationRequest,
+    GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cRead,
+    I2cReadRequest, I2cScan, I2cScanRequest, I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead,
+    I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, SpiFlush, SpiRead, SpiReadRequest,
+    SpiSetConfiguration, SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest,
+    Version,
 };
 
+pub use pico_de_gallo_internal::{
+    GpioDirection, GpioPull, GpioState, I2cFrequency, SpiPhase, SpiPolarity, VersionInfo,
+};
 pub use pico_de_gallo_internal::{GpioError, I2cError, SpiError};
-pub use pico_de_gallo_internal::{GpioState, I2cFrequency, SpiPhase, SpiPolarity, VersionInfo};
 
 use postcard_rpc::{
     header::VarSeqKind,
@@ -344,6 +347,26 @@ impl PicoDeGallo {
     pub async fn gpio_wait_for_any_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForAny>(&GpioWaitRequest { pin })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Configure a GPIO pin's direction and internal pull resistor.
+    ///
+    /// After configuration, the pin enters explicit mode: `gpio_get` and
+    /// `gpio_put` will no longer auto-switch direction. Calling `gpio_put`
+    /// on an input pin (or `gpio_get`/wait on an output pin) will return
+    /// [`GpioError::WrongDirection`].
+    ///
+    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    pub async fn gpio_set_config(
+        &self,
+        pin: u8,
+        direction: GpioDirection,
+        pull: GpioPull,
+    ) -> Result<(), PicoDeGalloError<GpioError>> {
+        self.client
+            .send_resp::<GpioSetConfiguration>(&GpioSetConfigurationRequest { pin, direction, pull })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }

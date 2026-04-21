@@ -27,9 +27,11 @@
 //! - **SPI types**: [`SpiReadRequest`], [`SpiWriteRequest`], [`SpiTransferRequest`]
 //!   and their shared error type [`SpiError`].
 //! - **GPIO types**: [`GpioGetRequest`], [`GpioPutRequest`], [`GpioWaitRequest`],
-//!   [`GpioState`], and their shared error type [`GpioError`].
+//!   [`GpioState`], [`GpioDirection`], [`GpioPull`], [`GpioSetConfigurationRequest`],
+//!   and their shared error type [`GpioError`].
 //! - **Configuration**: [`I2cSetConfigurationRequest`], [`SpiSetConfigurationRequest`],
-//!   [`I2cFrequency`], [`SpiPhase`], [`SpiPolarity`].
+//!   [`GpioSetConfigurationRequest`], [`I2cFrequency`], [`SpiPhase`], [`SpiPolarity`],
+//!   [`GpioDirection`], [`GpioPull`].
 //! - **Version**: [`VersionInfo`].
 
 #![cfg_attr(not(feature = "use-std"), no_std)]
@@ -102,6 +104,8 @@ pub type GpioGetResponse = Result<GpioState, GpioError>;
 pub type GpioPutResponse = Result<(), GpioError>;
 /// Response type for GPIO wait operations.
 pub type GpioWaitResponse = Result<(), GpioError>;
+/// Response type for GPIO set-configuration operations.
+pub type GpioSetConfigurationResponse = Result<(), GpioError>;
 /// Response type for I2C bus configuration operations.
 pub type I2cSetConfigurationResponse = Result<(), I2cConfigError>;
 /// Response type for I2C bus scan operations.
@@ -138,8 +142,9 @@ endpoints! {
     | GpioWaitForAny      | GpioWaitRequest            | GpioWaitResponse            | "gpio/wait-any"     |
     | I2cSetConfiguration | I2cSetConfigurationRequest | I2cSetConfigurationResponse | "i2c/set-config"    |
     | I2cScan             | I2cScanRequest             | I2cScanResponse<'a>         | "i2c/scan"          |
-    | SpiSetConfiguration | SpiSetConfigurationRequest | SpiSetConfigurationResponse | "spi/set-config"    |
-    | Version             | ()                         | VersionInfo                 | "version"           |
+    | SpiSetConfiguration  | SpiSetConfigurationRequest  | SpiSetConfigurationResponse  | "spi/set-config"    |
+    | GpioSetConfiguration | GpioSetConfigurationRequest | GpioSetConfigurationResponse | "gpio/set-config"   |
+    | Version              | ()                          | VersionInfo                  | "version"           |
 }
 
 topics! {
@@ -319,6 +324,8 @@ pub enum GpioError {
     InvalidPin,
     /// An unspecified error occurred in the firmware.
     Other,
+    /// The pin is configured in a direction that does not support this operation.
+    WrongDirection,
 }
 
 impl core::fmt::Display for GpioError {
@@ -326,6 +333,7 @@ impl core::fmt::Display for GpioError {
         match self {
             Self::InvalidPin => write!(f, "invalid GPIO pin number"),
             Self::Other => write!(f, "GPIO error"),
+            Self::WrongDirection => write!(f, "GPIO pin configured in wrong direction"),
         }
     }
 }
@@ -372,6 +380,49 @@ impl From<GpioState> for bool {
 pub struct GpioWaitRequest {
     /// GPIO pin index (0–7).
     pub pin: u8,
+}
+
+/// GPIO pin direction.
+//
+// WARNING: Do not reorder enum variants — postcard serializes by
+// variant index, not by discriminant. Reordering breaks wire compat.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GpioDirection {
+    /// Configure the pin as a digital input.
+    Input = 0,
+    /// Configure the pin as a digital output.
+    Output = 1,
+}
+
+/// GPIO internal pull resistor configuration.
+//
+// WARNING: Do not reorder enum variants — postcard serializes by
+// variant index, not by discriminant. Reordering breaks wire compat.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GpioPull {
+    /// No internal pull resistor.
+    None = 0,
+    /// Internal pull-up resistor enabled.
+    Up = 1,
+    /// Internal pull-down resistor enabled.
+    Down = 2,
+}
+
+/// Request to configure a GPIO pin's direction and pull resistor.
+///
+/// After configuration, the pin retains its explicit mode until the
+/// firmware is reset. See [`GpioDirection`] and [`GpioPull`] for
+/// available options.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct GpioSetConfigurationRequest {
+    /// GPIO pin index (0–7).
+    pub pin: u8,
+    /// Desired pin direction.
+    pub direction: GpioDirection,
+    /// Internal pull resistor setting.
+    pub pull: GpioPull,
 }
 
 // --- Set config
@@ -697,7 +748,11 @@ mod tests {
 
     #[test]
     fn gpio_error_variants_round_trip() {
-        for err in [GpioError::InvalidPin, GpioError::Other] {
+        for err in [
+            GpioError::InvalidPin,
+            GpioError::Other,
+            GpioError::WrongDirection,
+        ] {
             let bytes = to_allocvec(&err).unwrap();
             let decoded: GpioError = from_bytes(&bytes).unwrap();
             assert_eq!(err, decoded);
@@ -746,6 +801,10 @@ mod tests {
             "invalid GPIO pin number"
         );
         assert_eq!(format!("{}", GpioError::Other), "GPIO error");
+        assert_eq!(
+            format!("{}", GpioError::WrongDirection),
+            "GPIO pin configured in wrong direction"
+        );
     }
 
     // --- P1: Schema stability tests ---
@@ -1019,5 +1078,95 @@ mod tests {
             to_allocvec(&GpioState::Low).unwrap(),
             to_allocvec(&GpioState::High).unwrap()
         );
+    }
+
+    // --- GPIO direction/pull tests ---
+
+    #[test]
+    fn gpio_direction_round_trip() {
+        for dir in [GpioDirection::Input, GpioDirection::Output] {
+            let bytes = to_allocvec(&dir).unwrap();
+            let decoded: GpioDirection = from_bytes(&bytes).unwrap();
+            assert_eq!(dir, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_pull_round_trip() {
+        for pull in [GpioPull::None, GpioPull::Up, GpioPull::Down] {
+            let bytes = to_allocvec(&pull).unwrap();
+            let decoded: GpioPull = from_bytes(&bytes).unwrap();
+            assert_eq!(pull, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_set_configuration_request_round_trip() {
+        let req = GpioSetConfigurationRequest {
+            pin: 3,
+            direction: GpioDirection::Input,
+            pull: GpioPull::Up,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: GpioSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn gpio_set_configuration_request_all_combinations() {
+        for dir in [GpioDirection::Input, GpioDirection::Output] {
+            for pull in [GpioPull::None, GpioPull::Up, GpioPull::Down] {
+                let req = GpioSetConfigurationRequest {
+                    pin: 0,
+                    direction: dir,
+                    pull,
+                };
+                let bytes = to_allocvec(&req).unwrap();
+                let decoded: GpioSetConfigurationRequest = from_bytes(&bytes).unwrap();
+                assert_eq!(req, decoded);
+            }
+        }
+    }
+
+    #[test]
+    fn gpio_direction_discriminants_are_stable() {
+        assert_eq!(GpioDirection::Input as u8, 0);
+        assert_eq!(GpioDirection::Output as u8, 1);
+    }
+
+    #[test]
+    fn gpio_pull_discriminants_are_stable() {
+        assert_eq!(GpioPull::None as u8, 0);
+        assert_eq!(GpioPull::Up as u8, 1);
+        assert_eq!(GpioPull::Down as u8, 2);
+    }
+
+    #[test]
+    fn gpio_direction_golden_bytes() {
+        // Lock exact wire encoding: Input=0x00, Output=0x01
+        assert_eq!(to_allocvec(&GpioDirection::Input).unwrap(), vec![0x00]);
+        assert_eq!(to_allocvec(&GpioDirection::Output).unwrap(), vec![0x01]);
+    }
+
+    #[test]
+    fn gpio_pull_golden_bytes() {
+        // Lock exact wire encoding: None=0x00, Up=0x01, Down=0x02
+        assert_eq!(to_allocvec(&GpioPull::None).unwrap(), vec![0x00]);
+        assert_eq!(to_allocvec(&GpioPull::Up).unwrap(), vec![0x01]);
+        assert_eq!(to_allocvec(&GpioPull::Down).unwrap(), vec![0x02]);
+    }
+
+    #[test]
+    fn gpio_set_configuration_request_wire_stability() {
+        let req = GpioSetConfigurationRequest {
+            pin: 5,
+            direction: GpioDirection::Output,
+            pull: GpioPull::None,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: GpioSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
     }
 }

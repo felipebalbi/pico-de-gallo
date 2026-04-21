@@ -34,7 +34,23 @@ use embassy_embedded_hal::SetConfig;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::ClockConfig;
-use embassy_rp::gpio::{Flex, Level};
+use embassy_rp::gpio::{Flex, Level, Pull};
+
+/// Per-pin direction mode tracked by firmware.
+///
+/// Pins start in `LegacyAuto` mode, which preserves backward-compatible
+/// behavior: `gpio_get` auto-switches to input, `gpio_put` auto-switches
+/// to output. Once configured via `gpio/set-config`, the pin enters an
+/// explicit mode and direction changes are no longer automatic.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PinMode {
+    /// Default: auto-switch direction on get/put (backward compatible).
+    LegacyAuto,
+    /// Explicitly configured as input via `gpio/set-config`.
+    ExplicitInput,
+    /// Explicitly configured as output via `gpio/set-config`.
+    ExplicitOutput,
+}
 use embassy_rp::i2c::{self, I2c};
 use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, SPI0, USB};
 use embassy_rp::spi::{self, Phase, Polarity, Spi};
@@ -45,7 +61,8 @@ use embassy_rp::usb::Driver;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
-    ENDPOINT_LIST, GpioError, GpioGet, GpioGetRequest, GpioGetResponse, GpioPut, GpioPutRequest, GpioPutResponse,
+    ENDPOINT_LIST, GpioDirection, GpioError, GpioGet, GpioGetRequest, GpioGetResponse, GpioPull, GpioPut,
+    GpioPutRequest, GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSetConfigurationResponse,
     GpioState, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest,
     GpioWaitResponse, I2cError, I2cFrequency, I2cRead, I2cReadRequest, I2cReadResponse, I2cScan, I2cScanRequest,
     I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite,
@@ -104,6 +121,7 @@ pub struct Context {
     i2c: I2c<'static, I2C1, i2c::Async>,
     spi: Spi<'static, SPI0, spi::Async>,
     gpios: [Flex<'static>; NUM_GPIOS],
+    pin_modes: [PinMode; NUM_GPIOS],
     buf: [u8; MAX_TRANSFER_SIZE],
 }
 
@@ -117,17 +135,25 @@ impl Context {
             i2c,
             spi,
             gpios,
+            pin_modes: [PinMode::LegacyAuto; NUM_GPIOS],
             buf: [0; MAX_TRANSFER_SIZE],
         }
     }
 }
 
-/// Helper macro to get a GPIO pin by index, set it as input, and return a
-/// mutable reference. Returns `GpioError::InvalidPin` on out-of-bounds.
-macro_rules! gpio_input {
+/// Helper macro to get a GPIO pin by index for input operations.
+/// In `LegacyAuto` mode, auto-switches to input. In `ExplicitInput` mode,
+/// uses the pin as-is. In `ExplicitOutput` mode, returns `WrongDirection`.
+macro_rules! gpio_for_input {
     ($context:expr, $pin:expr) => {{
-        let gpio = $context.gpios.get_mut(usize::from($pin)).ok_or(GpioError::InvalidPin)?;
-        gpio.set_as_input();
+        let idx = usize::from($pin);
+        let mode = *$context.pin_modes.get(idx).ok_or(GpioError::InvalidPin)?;
+        let gpio = $context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+        match mode {
+            PinMode::LegacyAuto => gpio.set_as_input(),
+            PinMode::ExplicitInput => {}
+            PinMode::ExplicitOutput => return Err(GpioError::WrongDirection),
+        }
         gpio
     }};
 }
@@ -238,7 +264,8 @@ define_dispatch! {
         | GpioWaitForRising   | async    | gpio_wait_for_rising_handler  |
         | GpioWaitForFalling  | async    | gpio_wait_for_falling_handler |
         | GpioWaitForAny      | async    | gpio_wait_for_any_handler     |
-        | I2cSetConfiguration | async    | i2c_set_config_handler        |
+        | GpioSetConfiguration | async    | gpio_set_config_handler       |
+        | I2cSetConfiguration  | async    | i2c_set_config_handler        |
         | I2cScan             | async    | i2c_scan_handler              |
         | SpiSetConfiguration | async    | spi_set_config_handler        |
         | Version             | async    | version_handler               |
@@ -475,7 +502,7 @@ async fn spi_transfer_handler<'a>(
 
 /// Handler for `gpio/get` — reads the current logic level of a pin.
 async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGetRequest) -> GpioGetResponse {
-    let gpio = gpio_input!(context, req.pin);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio get: pin={=u8}", req.pin);
     match gpio.get_level() {
         Level::Low => Ok(GpioState::Low),
@@ -485,8 +512,15 @@ async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGe
 
 /// Handler for `gpio/put` — sets a GPIO pin to the requested level.
 async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPutRequest) -> GpioPutResponse {
-    let pin = usize::from(req.pin);
-    let gpio = context.gpios.get_mut(pin).ok_or(GpioError::InvalidPin)?;
+    let idx = usize::from(req.pin);
+    let mode = *context.pin_modes.get(idx).ok_or(GpioError::InvalidPin)?;
+    let gpio = context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+
+    match mode {
+        PinMode::LegacyAuto => gpio.set_as_output(),
+        PinMode::ExplicitOutput => {}
+        PinMode::ExplicitInput => return Err(GpioError::WrongDirection),
+    }
 
     let level = match req.state {
         GpioState::Low => Level::Low,
@@ -494,7 +528,6 @@ async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPu
     };
 
     debug!("gpio put: pin={=u8} level={=u8}", req.pin, level as u8);
-    gpio.set_as_output();
     gpio.set_level(level);
 
     Ok(())
@@ -506,7 +539,7 @@ async fn gpio_wait_for_high_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_high: pin={=u8}", req.pin);
     gpio.wait_for_high().await;
     Ok(())
@@ -518,7 +551,7 @@ async fn gpio_wait_for_low_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_low: pin={=u8}", req.pin);
     gpio.wait_for_low().await;
     Ok(())
@@ -530,7 +563,7 @@ async fn gpio_wait_for_rising_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_rising: pin={=u8}", req.pin);
     gpio.wait_for_rising_edge().await;
     Ok(())
@@ -542,7 +575,7 @@ async fn gpio_wait_for_falling_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_falling: pin={=u8}", req.pin);
     gpio.wait_for_falling_edge().await;
     Ok(())
@@ -554,9 +587,48 @@ async fn gpio_wait_for_any_handler(
     _header: VarHeader,
     req: GpioWaitRequest,
 ) -> GpioWaitResponse {
-    let gpio = gpio_input!(context, req.pin);
+    let gpio = gpio_for_input!(context, req.pin);
     debug!("gpio wait_for_any: pin={=u8}", req.pin);
     gpio.wait_for_any_edge().await;
+    Ok(())
+}
+
+/// Handler for `gpio/set-config` — configures a pin's direction and pull resistor.
+///
+/// Once configured, the pin enters explicit mode and `gpio_get`/`gpio_put` will
+/// no longer auto-switch direction. To restore auto-switching, reset the firmware.
+async fn gpio_set_config_handler(
+    context: &mut Context,
+    _header: VarHeader,
+    req: GpioSetConfigurationRequest,
+) -> GpioSetConfigurationResponse {
+    let idx = usize::from(req.pin);
+    let mode = context.pin_modes.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+    let gpio = context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+
+    // Apply pull resistor setting
+    gpio.set_pull(match req.pull {
+        GpioPull::None => Pull::None,
+        GpioPull::Up => Pull::Up,
+        GpioPull::Down => Pull::Down,
+    });
+
+    // Apply direction and update tracked mode
+    match req.direction {
+        GpioDirection::Input => {
+            gpio.set_as_input();
+            *mode = PinMode::ExplicitInput;
+        }
+        GpioDirection::Output => {
+            gpio.set_as_output();
+            *mode = PinMode::ExplicitOutput;
+        }
+    }
+
+    debug!(
+        "gpio set_config: pin={=u8} dir={=u8} pull={=u8}",
+        req.pin, req.direction as u8, req.pull as u8
+    );
     Ok(())
 }
 

@@ -42,7 +42,10 @@
 //! | SPI | [`SpiBus`](embedded_hal::spi::SpiBus), [`SpiDevice`](embedded_hal::spi::SpiDevice) | [`SpiBus`](embedded_hal_async::spi::SpiBus), [`SpiDevice`](embedded_hal_async::spi::SpiDevice) |
 //! | Delay | [`DelayNs`](embedded_hal::delay::DelayNs) | [`DelayNs`](embedded_hal_async::delay::DelayNs) |
 
-use pico_de_gallo_lib::{GpioError, GpioState, I2cError, PicoDeGallo, PicoDeGalloError, SpiError};
+use pico_de_gallo_lib::{
+    GpioDirection, GpioError, GpioPull, GpioState, I2cError, PicoDeGallo, PicoDeGalloError,
+    SpiError,
+};
 use std::sync::Arc;
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Mutex;
@@ -366,6 +369,35 @@ pub struct Gpio {
 }
 
 impl Gpio {
+    /// Configure the pin's direction and internal pull resistor.
+    ///
+    /// After configuration, `set_low`/`set_high` on an input pin or
+    /// `is_low`/`is_high` on an output pin will return
+    /// [`GpioHalError::Gpio(GpioError::WrongDirection)`].
+    pub fn set_config(
+        &mut self,
+        direction: GpioDirection,
+        pull: GpioPull,
+    ) -> std::result::Result<(), GpioHalError> {
+        if Hal::in_async_context() {
+            block_in_place(|| self.set_config_inner(direction, pull))
+        } else {
+            self.set_config_inner(direction, pull)
+        }
+    }
+
+    fn set_config_inner(
+        &mut self,
+        direction: GpioDirection,
+        pull: GpioPull,
+    ) -> std::result::Result<(), GpioHalError> {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.gpio_set_config(self.pin, direction, pull))
+            .map_err(GpioHalError::from)
+    }
+
     fn set_low_inner(&mut self) -> std::result::Result<(), GpioHalError> {
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
@@ -807,7 +839,9 @@ impl SpiDev {
                     }
                     embedded_hal::spi::Operation::DelayNs(ns) => {
                         // Flush before sleeping so pending bytes are sent first
-                        handle.block_on(gallo.spi_flush()).map_err(SpiHalError::from)?;
+                        handle
+                            .block_on(gallo.spi_flush())
+                            .map_err(SpiHalError::from)?;
                         std::thread::sleep(std::time::Duration::from_nanos((*ns).into()));
                     }
                 }
@@ -816,7 +850,9 @@ impl SpiDev {
         })();
 
         // Flush (best-effort if operations already failed)
-        let flush_result = handle.block_on(gallo.spi_flush()).map_err(SpiHalError::from);
+        let flush_result = handle
+            .block_on(gallo.spi_flush())
+            .map_err(SpiHalError::from);
 
         // Deassert CS (best-effort)
         let _ = handle.block_on(gallo.gpio_put(self.cs_pin, GpioState::High));

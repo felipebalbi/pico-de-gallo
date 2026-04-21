@@ -44,6 +44,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `embedded_hal_async::spi::SpiDevice`. Manages chip-select (CS) via a GPIO pin,
   asserting CS low before operations and deasserting high afterward with
   automatic flush. Created via `Hal::spi_device(cs_pin)`.
+- **internal**: `GpioDirection` and `GpioPull` enums, `GpioSetConfigurationRequest`,
+  `GpioSetConfigurationResponse`, and `GpioSetConfiguration` endpoint for runtime
+  GPIO pin direction and pull-resistor configuration.
+- **internal**: `GpioError::WrongDirection` variant — returned when a get/wait is
+  attempted on a pin configured as output, or a put on a pin configured as input.
+- **firmware**: `gpio_set_config_handler` and per-pin `PinMode` tracking. Once a
+  pin is configured via `gpio/set-config`, it enters explicit mode and
+  get/put/wait respect the configured direction (returns `WrongDirection` on
+  mismatch). Legacy auto-switching preserved for unconfigured pins.
+- **lib**: `PicoDeGallo::gpio_set_config(pin, direction, pull)` method;
+  re-exported `GpioDirection` and `GpioPull`.
+- **hal**: `Gpio::set_config(pin, direction, pull)` method.
+- **ffi**: `gallo_gpio_set_config()` function and `GpioSetConfigFailed` /
+  `GpioWrongDirection` status codes.
+- **app**: `gallo gpio set-config`, `gallo gpio get`, and `gallo gpio put`
+  subcommands for direct GPIO access from the command line.
 
 ### Fixed
 
