@@ -270,6 +270,8 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `gpio_set_config`            | `pin`, `direction` (Input/Output), `pull` (None/Up/Down)      | Configures GPIO #`pin` direction and pull resistor. Enters explicit mode.  |
 | `i2c_set_config`             | `frequency` (Standard/Fast/FastPlus)                          | Sets I<sup>2</sup>C bus clock frequency                                     |
 | `spi_set_config`             | `spi_frequency`, `spi_phase`, `spi_polarity`                  | Sets SPI bus clock frequency, phase, and polarity                            |
+| `i2c_get_config`             |                                                               | Returns the active I<sup>2</sup>C bus configuration (frequency)              |
+| `spi_get_config`             |                                                               | Returns the active SPI bus configuration (frequency, phase, polarity)        |
 | `version`                    |                                                               | Reads the current Firmware version from *Pico de Gallo*                    |
 
 ## Gallo Hal

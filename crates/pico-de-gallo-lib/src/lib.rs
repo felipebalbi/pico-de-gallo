@@ -46,15 +46,15 @@
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
     GpioGet, GpioGetRequest, GpioPut, GpioPutRequest, GpioSetConfiguration, GpioSetConfigurationRequest,
-    GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cRead,
-    I2cReadRequest, I2cScan, I2cScanRequest, I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead,
-    I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, SpiFlush, SpiRead, SpiReadRequest,
-    SpiSetConfiguration, SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest,
-    Version,
+    GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest,
+    I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest, I2cSetConfiguration,
+    I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID,
+    PICO_DE_GALLO_PID, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, Version,
 };
 
 pub use pico_de_gallo_internal::{
-    GpioDirection, GpioPull, GpioState, I2cFrequency, SpiPhase, SpiPolarity, VersionInfo,
+    GpioDirection, GpioPull, GpioState, I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity, VersionInfo,
 };
 pub use pico_de_gallo_internal::{GpioError, I2cError, SpiError};
 
@@ -405,6 +405,23 @@ impl PicoDeGallo {
     /// Get the firmware version from the Pico de Gallo device.
     pub async fn version(&self) -> Result<VersionInfo, PicoDeGalloError<Infallible>> {
         Ok(self.client.send_resp::<Version>(&()).await?)
+    }
+
+    /// Query the current I2C bus configuration.
+    ///
+    /// Returns the [`I2cFrequency`] value that is currently active on the
+    /// firmware. The default is [`I2cFrequency::Standard`] (100 kHz).
+    pub async fn i2c_get_config(&self) -> Result<I2cFrequency, PicoDeGalloError<Infallible>> {
+        Ok(self.client.send_resp::<I2cGetConfiguration>(&()).await?)
+    }
+
+    /// Query the current SPI bus configuration.
+    ///
+    /// Returns a [`SpiConfigurationInfo`] struct with the active SPI
+    /// frequency, phase, and polarity. The defaults are 1 MHz,
+    /// `CaptureOnFirstTransition`, and `IdleLow`.
+    pub async fn spi_get_config(&self) -> Result<SpiConfigurationInfo, PicoDeGalloError<Infallible>> {
+        Ok(self.client.send_resp::<SpiGetConfiguration>(&()).await?)
     }
 }
 

@@ -123,6 +123,10 @@ pub enum Status {
     GpioSetConfigFailed = -27,
     /// GPIO pin configured in wrong direction for the requested operation
     GpioWrongDirection = -28,
+    /// I2C get-config query failed
+    I2cGetConfigFailed = -29,
+    /// SPI get-config query failed
+    SpiGetConfigFailed = -30,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -976,6 +980,104 @@ pub unsafe extern "C" fn gallo_spi_set_config(
     }
 }
 
+// ----------------------------- I2C Get config endpoint -----------------------------
+
+/// gallo_i2c_get_config - Queries the current I2C bus configuration.
+///
+/// On success, writes the current frequency to `*out_frequency`:
+/// 0 = Standard (100 kHz), 1 = Fast (400 kHz), 2 = Fast+ (1 MHz).
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that `out_frequency`
+/// is a valid pointer to a `u8`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_i2c_get_config(
+    gallo: *mut PicoDeGallo,
+    out_frequency: *mut u8,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_frequency.is_null() {
+        eprintln!("Unexpected NULL out_frequency pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.i2c_get_config());
+
+    match result {
+        Ok(freq) => {
+            unsafe {
+                *out_frequency = freq as u8;
+            }
+            Status::Ok
+        }
+        Err(_) => Status::I2cGetConfigFailed,
+    }
+}
+
+// ----------------------------- SPI Get config endpoint -----------------------------
+
+/// gallo_spi_get_config - Queries the current SPI bus configuration.
+///
+/// On success, writes the current SPI parameters:
+/// - `*out_frequency`: SPI clock frequency in Hz
+/// - `*out_phase`: false = CPHA=0, true = CPHA=1
+/// - `*out_polarity`: false = CPOL=0, true = CPOL=1
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that all output
+/// pointers are valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_spi_get_config(
+    gallo: *mut PicoDeGallo,
+    out_frequency: *mut u32,
+    out_phase: *mut bool,
+    out_polarity: *mut bool,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_frequency.is_null() || out_phase.is_null() || out_polarity.is_null() {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.spi_get_config());
+
+    match result {
+        Ok(info) => {
+            unsafe {
+                *out_frequency = info.spi_frequency;
+                *out_phase = matches!(info.spi_phase, lib::SpiPhase::CaptureOnSecondTransition);
+                *out_polarity = matches!(info.spi_polarity, lib::SpiPolarity::IdleHigh);
+            }
+            Status::Ok
+        }
+        Err(_) => Status::SpiGetConfigFailed,
+    }
+}
+
 // ----------------------------- Version endpoint -----------------------------
 
 #[unsafe(no_mangle)]
@@ -1070,6 +1172,8 @@ mod tests {
             Status::I2cScanFailed as i32,
             Status::GpioSetConfigFailed as i32,
             Status::GpioWrongDirection as i32,
+            Status::I2cGetConfigFailed as i32,
+            Status::SpiGetConfigFailed as i32,
         ];
         for code in error_codes {
             assert!(code < 0, "error code {code} should be negative");
@@ -1108,6 +1212,8 @@ mod tests {
             Status::I2cScanFailed as i32,
             Status::GpioSetConfigFailed as i32,
             Status::GpioWrongDirection as i32,
+            Status::I2cGetConfigFailed as i32,
+            Status::SpiGetConfigFailed as i32,
         ];
         let unique: HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len(), "duplicate status codes found");
@@ -1245,6 +1351,29 @@ mod tests {
     #[test]
     fn spi_set_config_null_device_returns_uninitialized() {
         let status = unsafe { gallo_spi_set_config(std::ptr::null_mut(), 1_000_000, false, false) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn i2c_get_config_null_device_returns_uninitialized() {
+        let mut freq = 0u8;
+        let status = unsafe { gallo_i2c_get_config(std::ptr::null_mut(), &mut freq as *mut u8) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn spi_get_config_null_device_returns_uninitialized() {
+        let mut freq = 0u32;
+        let mut phase = false;
+        let mut polarity = false;
+        let status = unsafe {
+            gallo_spi_get_config(
+                std::ptr::null_mut(),
+                &mut freq as *mut u32,
+                &mut phase as *mut bool,
+                &mut polarity as *mut bool,
+            )
+        };
         assert_eq!(status, Status::Uninitialized);
     }
 

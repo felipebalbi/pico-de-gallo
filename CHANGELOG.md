@@ -60,6 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GpioWrongDirection` status codes.
 - **app**: `gallo gpio set-config`, `gallo gpio get`, and `gallo gpio put`
   subcommands for direct GPIO access from the command line.
+- **internal**: `I2cGetConfiguration` and `SpiGetConfiguration` endpoints with
+  `SpiConfigurationInfo` struct for querying the active bus configuration without
+  relying on local state.
+- **firmware**: `i2c_get_config_handler` and `spi_get_config_handler` — return
+  the currently active configuration. Firmware now tracks config values set by
+  `set-config` endpoints.
+- **lib**: `PicoDeGallo::i2c_get_config()` and `spi_get_config()` methods;
+  re-exported `SpiConfigurationInfo`.
+- **hal**: `Hal::i2c_get_config()` and `spi_get_config()` methods.
+- **ffi**: `gallo_i2c_get_config()` and `gallo_spi_get_config()` functions,
+  `I2cGetConfigFailed` and `SpiGetConfigFailed` status codes.
+- **app**: `gallo i2c get-config` and `gallo spi get-config` subcommands.
 
 ### Fixed
 

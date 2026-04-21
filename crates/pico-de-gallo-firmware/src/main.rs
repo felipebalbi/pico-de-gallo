@@ -64,13 +64,14 @@ use pico_de_gallo_internal::{
     ENDPOINT_LIST, GpioDirection, GpioError, GpioGet, GpioGetRequest, GpioGetResponse, GpioPull, GpioPut,
     GpioPutRequest, GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSetConfigurationResponse,
     GpioState, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest,
-    GpioWaitResponse, I2cError, I2cFrequency, I2cRead, I2cReadRequest, I2cReadResponse, I2cScan, I2cScanRequest,
-    I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite,
-    I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE,
-    MICROSOFT_VID, PICO_DE_GALLO_PID, PingEndpoint, SpiError, SpiFlush, SpiFlushResponse, SpiPhase, SpiPolarity,
-    SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest,
-    SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest,
-    SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
+    GpioWaitResponse, I2cError, I2cFrequency, I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead,
+    I2cReadRequest, I2cReadResponse, I2cScan, I2cScanRequest, I2cScanResponse, I2cSetConfiguration,
+    I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest,
+    I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID, PICO_DE_GALLO_PID,
+    PingEndpoint, SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration,
+    SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse,
+    SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
@@ -122,6 +123,10 @@ pub struct Context {
     spi: Spi<'static, SPI0, spi::Async>,
     gpios: [Flex<'static>; NUM_GPIOS],
     pin_modes: [PinMode; NUM_GPIOS],
+    i2c_frequency: I2cFrequency,
+    spi_frequency: u32,
+    spi_phase: SpiPhase,
+    spi_polarity: SpiPolarity,
     buf: [u8; MAX_TRANSFER_SIZE],
 }
 
@@ -131,11 +136,16 @@ impl Context {
         spi: Spi<'static, SPI0, spi::Async>,
         gpios: [Flex<'static>; NUM_GPIOS],
     ) -> Self {
+        // Defaults match embassy-rp Config::default()
         Self {
             i2c,
             spi,
             gpios,
             pin_modes: [PinMode::LegacyAuto; NUM_GPIOS],
+            i2c_frequency: I2cFrequency::Standard,
+            spi_frequency: 1_000_000,
+            spi_phase: SpiPhase::CaptureOnFirstTransition,
+            spi_polarity: SpiPolarity::IdleLow,
             buf: [0; MAX_TRANSFER_SIZE],
         }
     }
@@ -267,7 +277,9 @@ define_dispatch! {
         | GpioSetConfiguration | async    | gpio_set_config_handler       |
         | I2cSetConfiguration  | async    | i2c_set_config_handler        |
         | I2cScan             | async    | i2c_scan_handler              |
-        | SpiSetConfiguration | async    | spi_set_config_handler        |
+        | SpiSetConfiguration  | async    | spi_set_config_handler        |
+        | I2cGetConfiguration  | blocking | i2c_get_config_handler        |
+        | SpiGetConfiguration  | blocking | spi_get_config_handler        |
         | Version             | async    | version_handler               |
     };
     topics_in: {
@@ -648,7 +660,13 @@ async fn i2c_set_config_handler(
     i2c_config.frequency = frequency;
 
     debug!("i2c_set_config: freq={=u32}", frequency);
-    context.i2c.set_config(&i2c_config).map_err(|_| I2cError::Other)
+    context
+        .i2c
+        .set_config(&i2c_config)
+        .map(|_| {
+            context.i2c_frequency = req.frequency;
+        })
+        .map_err(|_| I2cError::Other)
 }
 
 /// Handler for `spi/set-config` — reconfigures SPI bus parameters.
@@ -680,7 +698,24 @@ async fn spi_set_config_handler(
 
     debug!("spi_set_config: freq={=u32}", req.spi_frequency);
     context.spi.set_config(&spi_config);
+    context.spi_frequency = req.spi_frequency;
+    context.spi_phase = req.spi_phase;
+    context.spi_polarity = req.spi_polarity;
     Ok(())
+}
+
+/// Handler for `i2c/get-config` — returns the current I2C bus configuration.
+fn i2c_get_config_handler(context: &mut Context, _header: VarHeader, _req: ()) -> I2cGetConfigurationResponse {
+    context.i2c_frequency
+}
+
+/// Handler for `spi/get-config` — returns the current SPI bus configuration.
+fn spi_get_config_handler(context: &mut Context, _header: VarHeader, _req: ()) -> SpiGetConfigurationResponse {
+    SpiConfigurationInfo {
+        spi_frequency: context.spi_frequency,
+        spi_phase: context.spi_phase,
+        spi_polarity: context.spi_polarity,
+    }
 }
 
 /// Handler for `version` — returns the firmware version.

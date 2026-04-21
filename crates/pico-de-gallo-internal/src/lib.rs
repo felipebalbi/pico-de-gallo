@@ -31,7 +31,7 @@
 //!   and their shared error type [`GpioError`].
 //! - **Configuration**: [`I2cSetConfigurationRequest`], [`SpiSetConfigurationRequest`],
 //!   [`GpioSetConfigurationRequest`], [`I2cFrequency`], [`SpiPhase`], [`SpiPolarity`],
-//!   [`GpioDirection`], [`GpioPull`].
+//!   [`GpioDirection`], [`GpioPull`], [`SpiConfigurationInfo`].
 //! - **Version**: [`VersionInfo`].
 
 #![cfg_attr(not(feature = "use-std"), no_std)]
@@ -121,6 +121,16 @@ pub type I2cScanResponse<'a> = Result<&'a [u8], I2cError>;
 /// Response type for SPI bus configuration operations.
 pub type SpiSetConfigurationResponse = Result<(), SpiConfigError>;
 
+/// Response type for I2C get-configuration queries.
+///
+/// Returns the currently active I2C bus frequency.
+pub type I2cGetConfigurationResponse = I2cFrequency;
+
+/// Response type for SPI get-configuration queries.
+///
+/// Returns the currently active SPI bus parameters.
+pub type SpiGetConfigurationResponse = SpiConfigurationInfo;
+
 endpoints! {
     list = ENDPOINT_LIST;
     | EndpointTy          | RequestTy                  | ResponseTy                  | Path                |
@@ -144,6 +154,8 @@ endpoints! {
     | I2cScan             | I2cScanRequest             | I2cScanResponse<'a>         | "i2c/scan"          |
     | SpiSetConfiguration  | SpiSetConfigurationRequest  | SpiSetConfigurationResponse  | "spi/set-config"    |
     | GpioSetConfiguration | GpioSetConfigurationRequest | GpioSetConfigurationResponse | "gpio/set-config"   |
+    | I2cGetConfiguration  | ()                          | I2cGetConfigurationResponse  | "i2c/get-config"    |
+    | SpiGetConfiguration  | ()                          | SpiGetConfigurationResponse  | "spi/get-config"    |
     | Version              | ()                          | VersionInfo                  | "version"           |
 }
 
@@ -503,6 +515,20 @@ pub enum SpiPolarity {
 /// This is a convenience alias — SPI configuration shares the same error
 /// type as other SPI operations.
 pub type SpiConfigError = SpiError;
+
+/// Current SPI bus configuration as reported by the firmware.
+///
+/// Returned by `spi/get-config`. The field names mirror
+/// [`SpiSetConfigurationRequest`] for consistency.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct SpiConfigurationInfo {
+    /// SPI bus clock frequency in Hz.
+    pub spi_frequency: u32,
+    /// SPI clock phase.
+    pub spi_phase: SpiPhase,
+    /// SPI clock polarity.
+    pub spi_polarity: SpiPolarity,
+}
 
 // --- Version
 /// Firmware version information.
@@ -1168,5 +1194,60 @@ mod tests {
         let decoded: GpioSetConfigurationRequest = from_bytes(&bytes).unwrap();
         assert_eq!(decoded, req);
         assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    // --- Config query round-trip tests ---
+
+    #[test]
+    fn spi_configuration_info_round_trip() {
+        let info = SpiConfigurationInfo {
+            spi_frequency: 1_000_000,
+            spi_phase: SpiPhase::CaptureOnFirstTransition,
+            spi_polarity: SpiPolarity::IdleLow,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: SpiConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn spi_configuration_info_all_variants() {
+        let info = SpiConfigurationInfo {
+            spi_frequency: 25_000_000,
+            spi_phase: SpiPhase::CaptureOnSecondTransition,
+            spi_polarity: SpiPolarity::IdleHigh,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: SpiConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn spi_configuration_info_golden_bytes() {
+        // freq=1_000_000 (varint), phase=0, polarity=0
+        let info = SpiConfigurationInfo {
+            spi_frequency: 1_000_000,
+            spi_phase: SpiPhase::CaptureOnFirstTransition,
+            spi_polarity: SpiPolarity::IdleLow,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: SpiConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, info);
+        // phase and polarity are varint-0
+        assert_eq!(bytes[bytes.len() - 2], 0x00); // phase
+        assert_eq!(bytes[bytes.len() - 1], 0x00); // polarity
+    }
+
+    #[test]
+    fn i2c_frequency_round_trip_all_variants() {
+        for freq in [
+            I2cFrequency::Standard,
+            I2cFrequency::Fast,
+            I2cFrequency::FastPlus,
+        ] {
+            let bytes = to_allocvec(&freq).unwrap();
+            let decoded: I2cFrequency = from_bytes(&bytes).unwrap();
+            assert_eq!(freq, decoded);
+        }
     }
 }

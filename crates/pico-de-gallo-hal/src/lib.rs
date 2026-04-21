@@ -51,7 +51,7 @@ use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Mutex;
 use tokio::task::block_in_place;
 
-pub use pico_de_gallo_lib::{I2cFrequency, SpiPhase, SpiPolarity};
+pub use pico_de_gallo_lib::{I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity};
 
 /// Top-level HAL context for a Pico de Gallo device.
 ///
@@ -178,6 +178,52 @@ impl Hal {
         handle
             .block_on(gallo.spi_set_config(spi_frequency, spi_phase, spi_polarity))
             .map_err(SpiHalError::from)
+    }
+
+    /// Query the current I2C bus configuration.
+    ///
+    /// Returns the [`I2cFrequency`] value active on the firmware
+    /// (default: `Standard` / 100 kHz).
+    pub fn i2c_get_config(&self) -> Result<I2cFrequency, I2cHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.i2c_get_config_inner())
+        } else {
+            self.i2c_get_config_inner()
+        }
+    }
+
+    fn i2c_get_config_inner(&self) -> Result<I2cFrequency, I2cHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.i2c_get_config())
+            .map_err(|e| match e {
+                PicoDeGalloError::Comms(c) => I2cHalError::Comms(format!("{c:?}")),
+                PicoDeGalloError::Endpoint(never) => match never {},
+            })
+    }
+
+    /// Query the current SPI bus configuration.
+    ///
+    /// Returns a [`SpiConfigurationInfo`] with the active frequency, phase,
+    /// and polarity (defaults: 1 MHz, `CaptureOnFirstTransition`, `IdleLow`).
+    pub fn spi_get_config(&self) -> Result<SpiConfigurationInfo, SpiHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.spi_get_config_inner())
+        } else {
+            self.spi_get_config_inner()
+        }
+    }
+
+    fn spi_get_config_inner(&self) -> Result<SpiConfigurationInfo, SpiHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.spi_get_config())
+            .map_err(|e| match e {
+                PicoDeGalloError::Comms(c) => SpiHalError::Comms(format!("{c:?}")),
+                PicoDeGalloError::Endpoint(never) => match never {},
+            })
     }
 
     /// Gpio

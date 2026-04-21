@@ -214,6 +214,9 @@ enum I2cCommands {
         #[arg(long)]
         frequency: I2cFrequencyArg,
     },
+
+    /// Query the current I2C bus configuration
+    GetConfig,
 }
 
 #[derive(Subcommand, Debug)]
@@ -264,6 +267,9 @@ enum SpiCommands {
         #[arg(long, default_value_t)]
         idle_low: bool,
     },
+
+    /// Query the current SPI bus configuration
+    GetConfig,
 }
 
 #[derive(Subcommand, Debug)]
@@ -359,6 +365,7 @@ impl Cli {
                     self.i2c_write_then_read(address, bytes, count).await
                 }
                 I2cCommands::SetConfig { frequency } => self.i2c_set_config((*frequency).into()).await,
+                I2cCommands::GetConfig => self.i2c_get_config().await,
             },
             Commands::Spi { command } => match command {
                 SpiCommands::Read { count } => self.spi_read(count).await,
@@ -370,6 +377,7 @@ impl Cli {
                     first_transition,
                     idle_low,
                 } => self.spi_set_config(*frequency, *first_transition, *idle_low).await,
+                SpiCommands::GetConfig => self.spi_get_config().await,
             },
             Commands::Gpio { command } => match command {
                 GpioCommands::Get { pin } => self.gpio_get(*pin).await,
@@ -536,6 +544,23 @@ impl Cli {
             .map_err(|e| eyre!("{:?}", e).wrap_err("i2c set-config failed"))
     }
 
+    async fn i2c_get_config(&self) -> Result<()> {
+        let pg = self.connect();
+
+        let freq = pg
+            .i2c_get_config()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("i2c get-config failed"))?;
+
+        let label = match freq {
+            I2cFrequency::Standard => "Standard (100 kHz)",
+            I2cFrequency::Fast => "Fast (400 kHz)",
+            I2cFrequency::FastPlus => "Fast+ (1 MHz)",
+        };
+        println!("I2C frequency: {label}");
+        Ok(())
+    }
+
     async fn spi_set_config(&self, frequency: u32, first_transition: bool, idle_low: bool) -> Result<()> {
         let pg = self.connect();
 
@@ -554,6 +579,28 @@ impl Cli {
         pg.spi_set_config(frequency, spi_phase, spi_polarity)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("spi set-config failed"))
+    }
+
+    async fn spi_get_config(&self) -> Result<()> {
+        let pg = self.connect();
+
+        let info = pg
+            .spi_get_config()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("spi get-config failed"))?;
+
+        let phase = match info.spi_phase {
+            SpiPhase::CaptureOnFirstTransition => "CaptureOnFirstTransition (CPHA=0)",
+            SpiPhase::CaptureOnSecondTransition => "CaptureOnSecondTransition (CPHA=1)",
+        };
+        let polarity = match info.spi_polarity {
+            SpiPolarity::IdleLow => "IdleLow (CPOL=0)",
+            SpiPolarity::IdleHigh => "IdleHigh (CPOL=1)",
+        };
+        println!("SPI frequency: {} Hz", info.spi_frequency);
+        println!("SPI phase:     {phase}");
+        println!("SPI polarity:  {polarity}");
+        Ok(())
     }
 
     async fn gpio_get(&self, pin: u8) -> Result<()> {
