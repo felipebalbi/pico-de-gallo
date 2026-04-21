@@ -1,12 +1,15 @@
 //! Command-line interface for the Pico de Gallo USB bridge.
 //!
-//! The `gallo` CLI provides direct access to I2C, SPI, and GPIO peripherals
+//! The `gallo` CLI provides direct access to I2C, SPI, UART, GPIO, and PWM peripherals
 //! connected through a Pico de Gallo device. It is built with
 //! [clap](https://docs.rs/clap) and supports:
 //!
 //! - **I2C**: bus scanning, read, write, and write-then-read operations
 //! - **SPI**: read, write, full-duplex transfer, and write-then-read
-//! - **Configuration**: set I2C/SPI bus frequencies and SPI mode
+//! - **UART**: read, write, flush, and baud rate configuration
+//! - **PWM**: duty cycle control, enable/disable, frequency/phase configuration
+//! - **ADC**: single-shot reads, temperature sensor, configuration queries
+//! - **Configuration**: set I2C/SPI/UART bus frequencies and SPI mode
 //! - **Device management**: list connected devices, query firmware version
 //!
 //! # Examples
@@ -30,8 +33,8 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::{Result, eyre::eyre};
+use pico_de_gallo_lib::{AdcChannel, I2cFrequency, PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
 use pico_de_gallo_lib::{GpioDirection, GpioPull, GpioState};
-use pico_de_gallo_lib::{I2cFrequency, PicoDeGallo, SpiPhase, SpiPolarity, list_devices};
 use std::num::ParseIntError;
 use tabled::builder::Builder;
 use tabled::settings::object::Rows;
@@ -159,6 +162,27 @@ enum Commands {
         /// GPIO commands
         #[command(subcommand)]
         command: GpioCommands,
+    },
+
+    /// UART access methods
+    Uart {
+        /// UART commands
+        #[command(subcommand)]
+        command: UartCommands,
+    },
+
+    /// PWM control methods
+    Pwm {
+        /// PWM commands
+        #[command(subcommand)]
+        command: PwmCommands,
+    },
+
+    /// ADC access methods
+    Adc {
+        /// ADC commands
+        #[command(subcommand)]
+        command: AdcCommands,
     },
 }
 
@@ -308,6 +332,113 @@ enum GpioCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum UartCommands {
+    /// Read bytes from the UART bus
+    Read {
+        /// Number of bytes to read (up to 4096)
+        #[arg(short, long)]
+        count: u16,
+
+        /// Read timeout in milliseconds (0 = non-blocking)
+        #[arg(short, long, default_value_t = 1000)]
+        timeout: u32,
+    },
+
+    /// Write bytes to the UART bus
+    Write {
+        /// Bytes to send
+        #[arg(short, long, num_args(1..), value_parser(parse_byte))]
+        bytes: Vec<u8>,
+    },
+
+    /// Flush the UART transmit buffer
+    Flush,
+
+    /// Set UART bus parameters
+    SetConfig {
+        /// Baud rate in bits per second (e.g. 9600, 115200)
+        #[arg(long)]
+        baud_rate: u32,
+    },
+
+    /// Query the current UART bus configuration
+    GetConfig,
+}
+
+#[derive(Subcommand, Debug)]
+enum PwmCommands {
+    /// Set the duty cycle of a PWM channel (raw value)
+    SetDuty {
+        /// PWM channel (0–3)
+        #[arg(short, long)]
+        channel: u8,
+
+        /// Raw duty cycle value (0 to top)
+        #[arg(short, long)]
+        duty: u16,
+    },
+
+    /// Query the current duty cycle of a PWM channel
+    GetDuty {
+        /// PWM channel (0–3)
+        #[arg(short, long)]
+        channel: u8,
+    },
+
+    /// Enable a PWM slice (both channels on the slice)
+    Enable {
+        /// PWM channel (0–3). The parent slice is enabled.
+        #[arg(short, long)]
+        channel: u8,
+    },
+
+    /// Disable a PWM slice (both channels on the slice)
+    Disable {
+        /// PWM channel (0–3). The parent slice is disabled.
+        #[arg(short, long)]
+        channel: u8,
+    },
+
+    /// Configure PWM frequency and phase-correct mode
+    SetConfig {
+        /// PWM channel (0–3). The parent slice is configured.
+        #[arg(short, long)]
+        channel: u8,
+
+        /// Desired output frequency in Hz
+        #[arg(short, long)]
+        frequency: u32,
+
+        /// Enable phase-correct mode
+        #[arg(short, long, default_value_t = false)]
+        phase_correct: bool,
+    },
+
+    /// Query the current PWM configuration
+    GetConfig {
+        /// PWM channel (0–3)
+        #[arg(short, long)]
+        channel: u8,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AdcCommands {
+    /// Read a single ADC sample (raw 12-bit value)
+    Read {
+        /// ADC channel: 0–3 for GPIO26–29, 4 for temperature sensor
+        #[arg(short, long)]
+        channel: u8,
+    },
+
+    /// Read the on-die temperature sensor (°C)
+    Temperature,
+
+    /// Query ADC configuration (resolution, reference, channels)
+    Info,
+}
+
 fn print_data(data: &[u8], format: &OutputFormat) {
     match format {
         OutputFormat::Hex => {
@@ -383,6 +514,30 @@ impl Cli {
                 GpioCommands::Get { pin } => self.gpio_get(*pin).await,
                 GpioCommands::Put { pin, high } => self.gpio_put(*pin, *high).await,
                 GpioCommands::SetConfig { pin, direction, pull } => self.gpio_set_config(*pin, *direction, *pull).await,
+            },
+            Commands::Uart { command } => match command {
+                UartCommands::Read { count, timeout } => self.uart_read(*count, *timeout).await,
+                UartCommands::Write { bytes } => self.uart_write(bytes).await,
+                UartCommands::Flush => self.uart_flush().await,
+                UartCommands::SetConfig { baud_rate } => self.uart_set_config(*baud_rate).await,
+                UartCommands::GetConfig => self.uart_get_config().await,
+            },
+            Commands::Pwm { command } => match command {
+                PwmCommands::SetDuty { channel, duty } => self.pwm_set_duty(*channel, *duty).await,
+                PwmCommands::GetDuty { channel } => self.pwm_get_duty(*channel).await,
+                PwmCommands::Enable { channel } => self.pwm_enable(*channel).await,
+                PwmCommands::Disable { channel } => self.pwm_disable(*channel).await,
+                PwmCommands::SetConfig {
+                    channel,
+                    frequency,
+                    phase_correct,
+                } => self.pwm_set_config(*channel, *frequency, *phase_correct).await,
+                PwmCommands::GetConfig { channel } => self.pwm_get_config(*channel).await,
+            },
+            Commands::Adc { command } => match command {
+                AdcCommands::Read { channel } => self.adc_read(*channel).await,
+                AdcCommands::Temperature => self.adc_read_temperature().await,
+                AdcCommands::Info => self.adc_get_info().await,
             },
         }
     }
@@ -639,6 +794,177 @@ impl Cli {
             .map_err(|e| eyre!("{:?}", e).wrap_err("gpio set-config failed"))?;
 
         println!("GPIO pin {pin} configured as {direction:?} with pull {pull:?}");
+        Ok(())
+    }
+
+    async fn uart_read(&self, count: u16, timeout_ms: u32) -> Result<()> {
+        let pg = self.connect();
+
+        let data = pg
+            .uart_read(count, timeout_ms)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("uart read failed"))?;
+
+        if data.is_empty() {
+            println!("(no data received within timeout)");
+        } else {
+            print_data(&data, &self.format);
+        }
+        Ok(())
+    }
+
+    async fn uart_write(&self, bytes: &[u8]) -> Result<()> {
+        let pg = self.connect();
+
+        pg.uart_write(bytes)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("uart write failed"))?;
+
+        println!("Wrote {} byte(s)", bytes.len());
+        Ok(())
+    }
+
+    async fn uart_flush(&self) -> Result<()> {
+        let pg = self.connect();
+
+        pg.uart_flush()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("uart flush failed"))?;
+
+        println!("UART TX buffer flushed");
+        Ok(())
+    }
+
+    async fn uart_set_config(&self, baud_rate: u32) -> Result<()> {
+        let pg = self.connect();
+
+        pg.uart_set_config(baud_rate)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("uart set-config failed"))?;
+
+        println!("UART baud rate set to {baud_rate}");
+        Ok(())
+    }
+
+    async fn uart_get_config(&self) -> Result<()> {
+        let pg = self.connect();
+
+        let info = pg
+            .uart_get_config()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("uart get-config failed"))?;
+
+        println!("UART baud rate: {} bps", info.baud_rate);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // PWM
+    // -----------------------------------------------------------------------
+
+    async fn pwm_set_duty(&self, channel: u8, duty: u16) -> Result<()> {
+        let pg = self.connect();
+        pg.pwm_set_duty_cycle(channel, duty)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm set-duty failed"))?;
+        println!("PWM channel {channel}: duty set to {duty}");
+        Ok(())
+    }
+
+    async fn pwm_get_duty(&self, channel: u8) -> Result<()> {
+        let pg = self.connect();
+        let info = pg
+            .pwm_get_duty_cycle(channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm get-duty failed"))?;
+        println!(
+            "PWM channel {channel}: duty={} / max={}",
+            info.current_duty, info.max_duty
+        );
+        Ok(())
+    }
+
+    async fn pwm_enable(&self, channel: u8) -> Result<()> {
+        let pg = self.connect();
+        pg.pwm_enable(channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm enable failed"))?;
+        println!("PWM channel {channel}: slice enabled");
+        Ok(())
+    }
+
+    async fn pwm_disable(&self, channel: u8) -> Result<()> {
+        let pg = self.connect();
+        pg.pwm_disable(channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm disable failed"))?;
+        println!("PWM channel {channel}: slice disabled");
+        Ok(())
+    }
+
+    async fn pwm_set_config(&self, channel: u8, frequency_hz: u32, phase_correct: bool) -> Result<()> {
+        let pg = self.connect();
+        pg.pwm_set_config(channel, frequency_hz, phase_correct)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm set-config failed"))?;
+        println!("PWM channel {channel}: frequency={frequency_hz} Hz, phase_correct={phase_correct}");
+        Ok(())
+    }
+
+    async fn pwm_get_config(&self, channel: u8) -> Result<()> {
+        let pg = self.connect();
+        let info = pg
+            .pwm_get_config(channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm get-config failed"))?;
+        println!(
+            "PWM channel {channel}: frequency={} Hz, phase_correct={}, enabled={}",
+            info.frequency_hz, info.phase_correct, info.enabled
+        );
+        Ok(())
+    }
+
+    async fn adc_read(&self, channel: u8) -> Result<()> {
+        let adc_channel = match channel {
+            0 => AdcChannel::Adc0,
+            1 => AdcChannel::Adc1,
+            2 => AdcChannel::Adc2,
+            3 => AdcChannel::Adc3,
+            4 => AdcChannel::TempSensor,
+            _ => return Err(eyre!("invalid ADC channel {channel}: expected 0–4")),
+        };
+        let pg = self.connect();
+        let raw = pg
+            .adc_read(adc_channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("adc read failed"))?;
+        let voltage_mv = (raw as u32) * 3300 / 4096;
+        println!("ADC channel {channel} ({adc_channel}): raw={raw}, ~{voltage_mv} mV");
+        Ok(())
+    }
+
+    async fn adc_read_temperature(&self) -> Result<()> {
+        let pg = self.connect();
+        let millidegrees = pg
+            .adc_read_temperature()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("adc read-temperature failed"))?;
+        let degrees = millidegrees as f64 / 1000.0;
+        println!("On-die temperature: {degrees:.1} °C ({millidegrees} m°C)");
+        Ok(())
+    }
+
+    async fn adc_get_info(&self) -> Result<()> {
+        let pg = self.connect();
+        let info = pg
+            .adc_get_config()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("adc get-config failed"))?;
+        println!("ADC configuration:");
+        println!("  Resolution:       {} bits", info.resolution_bits);
+        println!("  Nominal ref:      {} mV", info.nominal_reference_mv);
+        println!("  GPIO channels:    {}", info.num_gpio_channels);
+        println!("  Temp sensor:      {}", info.has_temp_sensor);
         Ok(())
     }
 }

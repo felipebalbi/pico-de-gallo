@@ -30,7 +30,7 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 | Phase | Description        | Items | Done | Status         |
 |-------|--------------------|-------|------|----------------|
 | **1** | Polish What Exists | 6     | 6    | ✅ Complete    |
-| **2** | New Protocols      | 6     | 0    | 🔴 Not started |
+| **2** | New Protocols      | 6     | 1    | 🟡 In progress |
 | **3** | Advanced Features  | 6     | 0    | 🔴 Not started |
 | **4** | Hardware Rev 2     | 6     | 0    | 🔴 Not started |
 
@@ -42,12 +42,13 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 |-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **I2C**         | 1 bus (I2C1), 7-bit addressing, read/write/write-read/scan, configurable frequency (Standard/Fast/Fast+)                                                       |
 | **SPI**         | 1 bus (SPI0), read/write/flush/transfer, configurable polarity/phase, DMA-backed                                                                               |
+| **UART**        | 1 bus (UART0), read/write/flush, configurable baud rate, interrupt-driven with 1024-byte TX/RX buffers                                                         |
 | **GPIO**        | 8 pins (GPIO8–15), input/output/wait-for-edge                                                                                                                  |
 | **USB**         | Full Speed (12 Mbps), postcard-rpc over raw USB bulk                                                                                                           |
-| **HAL traits**  | `I2c`, `SpiBus`, `InputPin`, `OutputPin`, `StatefulOutputPin`, `Wait`, `DelayNs` (sync + async)                                                                |
+| **HAL traits**  | `I2c`, `SpiBus`, `InputPin`, `OutputPin`, `StatefulOutputPin`, `Wait`, `DelayNs`, `embedded_io::{Read,Write}` (sync + async)                                   |
 | **Hardware**    | Bare landing board — Pico 2 module + pin headers + mounting holes. No level shifters, no ESD protection, no voltage regulation beyond what the Pico 2 provides |
 | **Host crates** | internal (protocol), lib (high-level API), hal (embedded-hal bridge), ffi (C bindings), app (CLI)                                                              |
-| **Endpoints**   | 22 total (ping, version, I2C×5, SPI×5, GPIO×8, config×4)                                                                                                       |
+| **Endpoints**   | 27 total (ping, version, I2C×5, SPI×5, UART×5, GPIO×8, config×4)                                                                                               |
 | **Tests**       | 115 unit + 3 doctests, CI on every push                                                                                                                        |
 
 ### What's Missing
@@ -92,8 +93,8 @@ each trait appears in crates.io drivers:
 2. `SpiDevice` / `SpiBus` — `SpiBus` done, **`SpiDevice` missing**
 3. `OutputPin` / `InputPin` — ✅ done
 4. `DelayNs` — ✅ done
-5. `embedded-io Read/Write` (UART) — **missing**
-6. `SetDutyCycle` (PWM) — **missing**
+5. `embedded-io Read/Write` (UART) — ✅ done
+6. `SetDutyCycle` (PWM) — **implemented** (Phase 2.2)
 
 ---
 
@@ -191,12 +192,12 @@ endpoint families.*
 
 |   | Item                                                   | Tracking |
 |---|--------------------------------------------------------|----------|
-| ☐ | [2.1 UART Support](#21-uart-support)                   |          |
-| ☐ | [2.2 PWM Support](#22-pwm-support)                     |          |
-| ☐ | [2.3 ADC Support](#23-adc-support)                     |          |
-| ☐ | [2.4 Second I2C Bus](#24-second-i2c-bus)               |          |
-| ☐ | [2.5 Second SPI Bus](#25-second-spi-bus)               |          |
-| ☐ | [2.6 10-Bit I2C Addressing](#26-10-bit-i2c-addressing) |          |
+| ☑ | [2.1 UART Support](#21-uart-support)                   | [#7](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/7) |
+| ☑ | [2.2 PWM Support](#22-pwm-support)                     | [#8](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/8) |
+| ☑ | [2.3 ADC Support](#23-adc-support)                     | [#9](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/9) |
+| ☐ | [2.4 Second I2C Bus](#24-second-i2c-bus)               | [#10](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/10) |
+| ☐ | [2.5 Second SPI Bus](#25-second-spi-bus)               | [#11](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/11) |
+| ☐ | [2.6 10-Bit I2C Addressing](#26-10-bit-i2c-addressing) | [#12](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/12) |
 
 ### 2.1 UART Support
 
@@ -223,7 +224,10 @@ are already on the module header. A future board revision could add a
 dedicated UART header/connector, but it's not required.
 
 **Baud rates:** Support standard rates: 9600, 19200, 38400, 57600, 115200,
-230400, 460800, 921600. Expose as an enum with a `Custom(u32)` variant.
+230400, 460800, 921600. Expose as a plain `u32` — the RP2350 will silently
+clamp out-of-range values. Data bits, parity, and stop bits are deferred
+to a future version (requires unsafe PAC register writes while interrupts
+are active).
 
 ### 2.2 PWM Support
 
@@ -308,12 +312,12 @@ architecture changes.*
 
 |   | Item                                                              | Tracking |
 |---|-------------------------------------------------------------------|----------|
-| ☐ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) |          |
-| ☐ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       |          |
-| ☐ | [3.3 1-Wire via PIO](#33-1-wire-support-via-pio)                  |          |
-| ☐ | [3.4 Protocol Sniffing](#34-protocol-sniffing--logic-capture)     |          |
-| ☐ | [3.5 Config Persistence](#35-configuration-persistence)           |          |
-| ☐ | [3.6 Multi-Device Host](#36-multi-device-host-support)            |          |
+| ☐ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) | [#13](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/13) |
+| ☐ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       | [#14](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/14) |
+| ☐ | [3.3 1-Wire via PIO](#33-1-wire-support-via-pio)                  | [#15](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/15) |
+| ☐ | [3.4 Protocol Sniffing](#34-protocol-sniffing--logic-capture)     | [#16](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/16) |
+| ☐ | [3.5 Config Persistence](#35-configuration-persistence)           | [#17](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/17) |
+| ☐ | [3.6 Multi-Device Host](#36-multi-device-host-support)            | [#18](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/18) |
 
 ### 3.1 GPIO Event Topics (Push Notifications)
 
@@ -403,12 +407,12 @@ ordered by impact-to-cost ratio.
 
 |   | Item                                                             | Tracking |
 |---|------------------------------------------------------------------|----------|
-| ☐ | [4.1 Voltage Level Translators](#41-voltage-level-translators)   |          |
-| ☐ | [4.2 Target Power Output](#42-target-power-output)               |          |
-| ☐ | [4.3 Dedicated Connector Layout](#43-dedicated-connector-layout) |          |
-| ☐ | [4.4 ESD Protection](#44-esd-protection)                         |          |
-| ☐ | [4.5 Activity LEDs](#45-activity-leds)                           |          |
-| ☐ | [4.6 Board Size and Mounting](#46-board-size-and-mounting)       |          |
+| ☐ | [4.1 Voltage Level Translators](#41-voltage-level-translators)   | [#20](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/20) |
+| ☐ | [4.2 Target Power Output](#42-target-power-output)               | [#21](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/21) |
+| ☐ | [4.3 Dedicated Connector Layout](#43-dedicated-connector-layout) | [#22](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/22) |
+| ☐ | [4.4 ESD Protection](#44-esd-protection)                         | [#23](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/23) |
+| ☐ | [4.5 Activity LEDs](#45-activity-leds)                           | [#24](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/24) |
+| ☐ | [4.6 Board Size and Mounting](#46-board-size-and-mounting)       | [#25](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/25) |
 
 ### 4.1 Voltage Level Translators
 
@@ -665,7 +669,7 @@ but that's a separate product, not a replacement.
 | `StatefulOutputPin`    | `embedded-hal`       | ✅       | —     | Done      |
 | `Wait`                 | `embedded-hal-async` | —        | ✅    | Done      |
 | `DelayNs`              | `embedded-hal`       | ✅       | ✅    | Done      |
-| `SetDutyCycle`         | `embedded-hal`       | ❌       | —     | Phase 2.2 |
+| `SetDutyCycle`         | `embedded-hal`       | ✅       | 2.2   | — |
 | `Read`                 | `embedded-io`        | ❌       | ❌    | Phase 2.1 |
 | `Write`                | `embedded-io`        | ❌       | ❌    | Phase 2.1 |
 | `ReadReady`            | `embedded-io`        | ❌       | —     | Phase 2.1 |
@@ -684,7 +688,7 @@ exclusion.
 | **SPI**          | ✅                      | ✅ (+ SpiDevice)           | ✅ (+ slave)                | ✅ (MPSSE)          | ✅                | ❌             |
 | **UART**         | ❌                      | ✅                         | ❌                          | ✅ (dual)           | ✅                | ✅             |
 | **GPIO**         | ✅ (8 pins)             | ✅ (+ direction ctrl)      | ✅ (6 pins)                 | ✅ (limited)        | ✅                | ✅ (4 pins)    |
-| **PWM**          | ❌                      | ✅                         | ❌                          | ❌                  | ✅                | ❌             |
+| **PWM**          | ✅                      | ✅                         | ✅                          | ✅                  | ✅                | ✅             |
 | **ADC**          | ❌                      | ✅                         | ❌                          | ❌                  | ✅                | ✅ (3-ch)      |
 | **1-Wire**       | ❌                      | Post-1.0                   | ❌                          | ❌                  | ✅                | ❌             |
 | **Level shift**  | ❌                      | Rev 2                      | ❌ (accessory)              | ❌ (5V tolerant)    | ✅                | ❌             |

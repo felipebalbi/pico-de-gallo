@@ -3,8 +3,8 @@
 //! backed by a Pico de Gallo USB bridge.
 //!
 //! This crate lets you run embedded Rust drivers on a host machine by
-//! forwarding I2C, SPI, GPIO, and delay operations to a Pico de Gallo device
-//! over USB.
+//! forwarding I2C, SPI, GPIO, PWM, ADC, and delay operations to a Pico de Gallo
+//! device over USB.
 //!
 //! # Quick Start
 //!
@@ -40,18 +40,21 @@
 //! | GPIO | [`OutputPin`](embedded_hal::digital::OutputPin), [`InputPin`](embedded_hal::digital::InputPin), [`StatefulOutputPin`](embedded_hal::digital::StatefulOutputPin) | [`Wait`](embedded_hal_async::digital::Wait) |
 //! | I2C | [`I2c`](embedded_hal::i2c::I2c) | [`I2c`](embedded_hal_async::i2c::I2c) |
 //! | SPI | [`SpiBus`](embedded_hal::spi::SpiBus), [`SpiDevice`](embedded_hal::spi::SpiDevice) | [`SpiBus`](embedded_hal_async::spi::SpiBus), [`SpiDevice`](embedded_hal_async::spi::SpiDevice) |
+//! | PWM | [`SetDutyCycle`](embedded_hal::pwm::SetDutyCycle) | — |
 //! | Delay | [`DelayNs`](embedded_hal::delay::DelayNs) | [`DelayNs`](embedded_hal_async::delay::DelayNs) |
 
 use pico_de_gallo_lib::{
-    GpioDirection, GpioError, GpioPull, GpioState, I2cError, PicoDeGallo, PicoDeGalloError,
-    SpiError,
+    AdcChannel, AdcConfigurationInfo, AdcError, GpioDirection, GpioError, GpioPull, GpioState,
+    I2cError, PicoDeGallo, PicoDeGalloError, PwmError, SpiError, UartError,
 };
 use std::sync::Arc;
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Mutex;
 use tokio::task::block_in_place;
 
-pub use pico_de_gallo_lib::{I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity};
+pub use pico_de_gallo_lib::{
+    I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo,
+};
 
 /// Top-level HAL context for a Pico de Gallo device.
 ///
@@ -226,6 +229,59 @@ impl Hal {
             })
     }
 
+    /// Set the PWM configuration for a channel's slice.
+    ///
+    /// Configures the output `frequency_hz` and `phase_correct` mode.
+    /// Existing duty-cycle values are scaled proportionally.
+    pub fn pwm_set_config(
+        &mut self,
+        channel: u8,
+        frequency_hz: u32,
+        phase_correct: bool,
+    ) -> Result<(), PwmHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.pwm_set_config_inner(channel, frequency_hz, phase_correct))
+        } else {
+            self.pwm_set_config_inner(channel, frequency_hz, phase_correct)
+        }
+    }
+
+    fn pwm_set_config_inner(
+        &self,
+        channel: u8,
+        frequency_hz: u32,
+        phase_correct: bool,
+    ) -> Result<(), PwmHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.pwm_set_config(channel, frequency_hz, phase_correct))
+            .map_err(PwmHalError::from)
+    }
+
+    /// Query the current PWM configuration for a channel's slice.
+    pub fn pwm_get_config(
+        &self,
+        channel: u8,
+    ) -> Result<pico_de_gallo_lib::PwmConfigurationInfo, PwmHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.pwm_get_config_inner(channel))
+        } else {
+            self.pwm_get_config_inner(channel)
+        }
+    }
+
+    fn pwm_get_config_inner(
+        &self,
+        channel: u8,
+    ) -> Result<pico_de_gallo_lib::PwmConfigurationInfo, PwmHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.pwm_get_config(channel))
+            .map_err(PwmHalError::from)
+    }
+
     /// Gpio
     pub fn gpio(&self, pin: u8) -> Gpio {
         let gallo = Arc::clone(&self.gallo);
@@ -245,6 +301,95 @@ impl Hal {
         let gallo = Arc::clone(&self.gallo);
         let handle = self.handle.clone();
         Spi { gallo, handle }
+    }
+
+    /// Uart
+    pub fn uart(&self) -> Uart {
+        let gallo = Arc::clone(&self.gallo);
+        let handle = self.handle.clone();
+        Uart {
+            gallo,
+            handle,
+            timeout_ms: 1000,
+        }
+    }
+
+    /// Obtain a [`PwmChannel`] handle for the given channel (0–3).
+    ///
+    /// Channels 0–1 are on PWM slice 6 (GPIO 12–13), channels 2–3 on
+    /// slice 7 (GPIO 14–15). The returned handle implements
+    /// [`SetDutyCycle`](embedded_hal::pwm::SetDutyCycle).
+    pub fn pwm_channel(&self, channel: u8) -> PwmChannel {
+        let gallo = Arc::clone(&self.gallo);
+        let handle = self.handle.clone();
+        PwmChannel {
+            channel,
+            gallo,
+            handle,
+        }
+    }
+
+    /// Perform a single-shot ADC read on the specified channel.
+    ///
+    /// Returns a raw 12-bit value (0–4095). Convert to approximate voltage
+    /// with `V ≈ raw × 3.3 / 4096`.
+    ///
+    /// There is no standard `embedded-hal` ADC trait in 1.0, so this is
+    /// exposed as a project-specific method.
+    pub fn adc_read(&self, channel: AdcChannel) -> Result<u16, AdcHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.adc_read_inner(channel))
+        } else {
+            self.adc_read_inner(channel)
+        }
+    }
+
+    fn adc_read_inner(&self, channel: AdcChannel) -> Result<u16, AdcHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.adc_read(channel))
+            .map_err(AdcHalError::from)
+    }
+
+    /// Read the on-die temperature sensor.
+    ///
+    /// Returns the temperature in **millidegrees Celsius**
+    /// (e.g., 27000 = 27.000 °C). Approximate — depends on ADC_AVDD.
+    pub fn adc_read_temperature(&self) -> Result<i32, AdcHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.adc_read_temperature_inner())
+        } else {
+            self.adc_read_temperature_inner()
+        }
+    }
+
+    fn adc_read_temperature_inner(&self) -> Result<i32, AdcHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.adc_read_temperature())
+            .map_err(AdcHalError::from)
+    }
+
+    /// Query the ADC configuration (resolution, reference, channel count).
+    pub fn adc_get_config(&self) -> Result<AdcConfigurationInfo, AdcHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.adc_get_config_inner())
+        } else {
+            self.adc_get_config_inner()
+        }
+    }
+
+    fn adc_get_config_inner(&self) -> Result<AdcConfigurationInfo, AdcHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.adc_get_config())
+            .map_err(|e| match e {
+                PicoDeGalloError::Comms(c) => AdcHalError::Comms(format!("{c:?}")),
+                PicoDeGalloError::Endpoint(never) => match never {},
+            })
     }
 
     /// Create an [`SpiDevice`] that manages chip-select on `cs_pin`.
@@ -402,12 +547,54 @@ impl embedded_hal::spi::Error for SpiHalError {
     }
 }
 
+/// Error type for UART HAL operations.
+#[derive(Debug)]
+pub enum UartHalError {
+    /// A UART-specific error from the device firmware.
+    Uart(UartError),
+    /// A USB communication error.
+    Comms(String),
+}
+
+impl core::fmt::Display for UartHalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Uart(e) => write!(f, "{e}"),
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for UartHalError {}
+
+impl From<PicoDeGalloError<UartError>> for UartHalError {
+    fn from(e: PicoDeGalloError<UartError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(e) => Self::Uart(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
+impl embedded_io::Error for UartHalError {
+    fn kind(&self) -> embedded_io::ErrorKind {
+        match self {
+            Self::Uart(UartError::Overrun) => embedded_io::ErrorKind::Other,
+            Self::Uart(UartError::Break) => embedded_io::ErrorKind::Other,
+            Self::Uart(UartError::Parity) => embedded_io::ErrorKind::Other,
+            Self::Uart(UartError::Framing) => embedded_io::ErrorKind::Other,
+            Self::Uart(UartError::InvalidBaudRate) => embedded_io::ErrorKind::InvalidInput,
+            _ => embedded_io::ErrorKind::Other,
+        }
+    }
+}
+
 // ----------------------------- Gpio -----------------------------
 
 /// GPIO pin handle implementing [`embedded-hal`] digital traits.
 ///
 /// Obtained from [`Hal::gpio`]. Each `Gpio` instance is bound to a specific
-/// pin number (0–7) and can be used as both an input and output.
+/// pin number (0–3) and can be used as both an input and output.
 pub struct Gpio {
     pin: u8,
     gallo: Arc<Mutex<PicoDeGallo>>,
@@ -1011,6 +1198,228 @@ impl embedded_hal_async::delay::DelayNs for Delay {
     }
 }
 
+// ----------------------------- Uart -----------------------------
+
+/// UART handle implementing [`embedded-io`] traits.
+///
+/// Obtained from [`Hal::uart`]. Supports blocking and async read/write.
+/// The baud rate can be changed at runtime with
+/// [`Hal::uart_set_config`].
+///
+/// **Read timeout**: UART reads use a configurable timeout (in
+/// milliseconds) to avoid blocking the USB bridge indefinitely. The
+/// default timeout is 1000 ms. Adjust with [`Uart::set_timeout_ms`].
+pub struct Uart {
+    gallo: Arc<Mutex<PicoDeGallo>>,
+    handle: Handle,
+    timeout_ms: u32,
+}
+
+impl Uart {
+    /// Set the read timeout in milliseconds.
+    ///
+    /// This controls how long [`embedded_io::Read::read`] waits for
+    /// data before returning an empty result.  A value of 0 means
+    /// non-blocking: return whatever is buffered immediately.
+    pub fn set_timeout_ms(&mut self, timeout_ms: u32) {
+        self.timeout_ms = timeout_ms;
+    }
+
+    fn read_inner(&mut self, buf: &mut [u8]) -> std::result::Result<usize, UartHalError> {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        let contents = handle
+            .block_on(gallo.uart_read(buf.len() as u16, self.timeout_ms))
+            .map_err(UartHalError::from)?;
+        let n = contents.len().min(buf.len());
+        buf[..n].copy_from_slice(&contents[..n]);
+        Ok(n)
+    }
+
+    fn write_inner(&mut self, buf: &[u8]) -> std::result::Result<usize, UartHalError> {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.uart_write(buf))
+            .map_err(UartHalError::from)?;
+        Ok(buf.len())
+    }
+
+    fn flush_inner(&mut self) -> std::result::Result<(), UartHalError> {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.uart_flush())
+            .map_err(UartHalError::from)
+    }
+}
+
+impl embedded_io::ErrorType for Uart {
+    type Error = UartHalError;
+}
+
+impl embedded_io::Read for Uart {
+    fn read(&mut self, buf: &mut [u8]) -> std::result::Result<usize, Self::Error> {
+        if Hal::in_async_context() {
+            block_in_place(|| self.read_inner(buf))
+        } else {
+            self.read_inner(buf)
+        }
+    }
+}
+
+impl embedded_io::Write for Uart {
+    fn write(&mut self, buf: &[u8]) -> std::result::Result<usize, Self::Error> {
+        if Hal::in_async_context() {
+            block_in_place(|| self.write_inner(buf))
+        } else {
+            self.write_inner(buf)
+        }
+    }
+
+    fn flush(&mut self) -> std::result::Result<(), Self::Error> {
+        if Hal::in_async_context() {
+            block_in_place(|| self.flush_inner())
+        } else {
+            self.flush_inner()
+        }
+    }
+}
+
+impl embedded_io_async::Read for Uart {
+    async fn read(&mut self, buf: &mut [u8]) -> std::result::Result<usize, Self::Error> {
+        let gallo = self.gallo.lock().await;
+        let contents = gallo
+            .uart_read(buf.len() as u16, self.timeout_ms)
+            .await
+            .map_err(UartHalError::from)?;
+        let n = contents.len().min(buf.len());
+        buf[..n].copy_from_slice(&contents[..n]);
+        Ok(n)
+    }
+}
+
+impl embedded_io_async::Write for Uart {
+    async fn write(&mut self, buf: &[u8]) -> std::result::Result<usize, Self::Error> {
+        let gallo = self.gallo.lock().await;
+        gallo.uart_write(buf).await.map_err(UartHalError::from)?;
+        Ok(buf.len())
+    }
+
+    async fn flush(&mut self) -> std::result::Result<(), Self::Error> {
+        let gallo = self.gallo.lock().await;
+        gallo.uart_flush().await.map_err(UartHalError::from)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PWM
+// ---------------------------------------------------------------------------
+
+/// Error type for PWM HAL operations.
+#[derive(Debug)]
+pub enum PwmHalError {
+    /// A PWM-specific error from the device firmware.
+    Pwm(PwmError),
+    /// A USB communication error.
+    Comms(String),
+}
+
+impl core::fmt::Display for PwmHalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Pwm(e) => write!(f, "{e}"),
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for PwmHalError {}
+
+impl From<PicoDeGalloError<PwmError>> for PwmHalError {
+    fn from(e: PicoDeGalloError<PwmError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(e) => Self::Pwm(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
+impl embedded_hal::pwm::Error for PwmHalError {
+    fn kind(&self) -> embedded_hal::pwm::ErrorKind {
+        embedded_hal::pwm::ErrorKind::Other
+    }
+}
+
+/// A single PWM channel on the Pico de Gallo board.
+///
+/// Obtained from [`Hal::pwm_channel`]. Implements the [`embedded_hal::pwm::SetDutyCycle`]
+/// trait.
+///
+/// Channels 0–1 share PWM slice 6, channels 2–3 share slice 7.
+/// Enable/disable and configuration changes affect the entire slice.
+pub struct PwmChannel {
+    channel: u8,
+    gallo: Arc<tokio::sync::Mutex<PicoDeGallo>>,
+    handle: Handle,
+}
+
+impl embedded_hal::pwm::ErrorType for PwmChannel {
+    type Error = PwmHalError;
+}
+
+impl embedded_hal::pwm::SetDutyCycle for PwmChannel {
+    fn max_duty_cycle(&self) -> u16 {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.pwm_get_duty_cycle(self.channel))
+            .map(|info| info.max_duty)
+            .unwrap_or(u16::MAX)
+    }
+
+    fn set_duty_cycle(&mut self, duty: u16) -> Result<(), Self::Error> {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.pwm_set_duty_cycle(self.channel, duty))
+            .map_err(PwmHalError::from)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ADC
+// ---------------------------------------------------------------------------
+
+/// Error type for ADC HAL operations.
+#[derive(Debug)]
+pub enum AdcHalError {
+    /// An ADC-specific error from the device firmware.
+    Adc(AdcError),
+    /// A USB communication error.
+    Comms(String),
+}
+
+impl core::fmt::Display for AdcHalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Adc(e) => write!(f, "{e}"),
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for AdcHalError {}
+
+impl From<PicoDeGalloError<AdcError>> for AdcHalError {
+    fn from(e: PicoDeGalloError<AdcError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(e) => Self::Adc(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1087,6 +1496,76 @@ mod tests {
         assert_eq!(err.kind(), embedded_hal::spi::ErrorKind::Other);
     }
 
+    #[test]
+    fn uart_error_kind_invalid_baud_rate() {
+        use embedded_io::Error as _;
+        let err = UartHalError::Uart(UartError::InvalidBaudRate);
+        assert_eq!(err.kind(), embedded_io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn uart_error_kind_overrun() {
+        use embedded_io::Error as _;
+        let err = UartHalError::Uart(UartError::Overrun);
+        assert_eq!(err.kind(), embedded_io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn uart_error_kind_comms() {
+        use embedded_io::Error as _;
+        let err = UartHalError::Comms("USB disconnected".into());
+        assert_eq!(err.kind(), embedded_io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn uart_hal_error_display() {
+        let err = UartHalError::Uart(UartError::Framing);
+        assert_eq!(format!("{err}"), "UART framing error");
+
+        let err = UartHalError::Comms("timeout".into());
+        assert_eq!(format!("{err}"), "communication error: timeout");
+    }
+
+    #[test]
+    fn uart_hal_error_from_endpoint() {
+        let e: UartHalError = PicoDeGalloError::Endpoint(UartError::Break).into();
+        assert!(matches!(e, UartHalError::Uart(UartError::Break)));
+    }
+
+    #[test]
+    fn uart_hal_error_from_comms() {
+        let e = UartHalError::Comms("USB disconnected".into());
+        assert!(matches!(e, UartHalError::Comms(_)));
+    }
+
+    // --- PWM error tests ---
+
+    #[test]
+    fn pwm_error_kind_is_other() {
+        use embedded_hal::pwm::Error as _;
+        let err = PwmHalError::Pwm(PwmError::InvalidChannel);
+        assert_eq!(err.kind(), embedded_hal::pwm::ErrorKind::Other);
+    }
+
+    #[test]
+    fn pwm_comms_error_kind_is_other() {
+        use embedded_hal::pwm::Error as _;
+        let err = PwmHalError::Comms("timeout".into());
+        assert_eq!(err.kind(), embedded_hal::pwm::ErrorKind::Other);
+    }
+
+    #[test]
+    fn pwm_hal_error_display_endpoint() {
+        let err = PwmHalError::Pwm(PwmError::InvalidChannel);
+        assert_eq!(format!("{err}"), "invalid PWM channel");
+    }
+
+    #[test]
+    fn pwm_hal_error_display_comms() {
+        let err = PwmHalError::Comms("USB gone".into());
+        assert_eq!(format!("{err}"), "communication error: USB gone");
+    }
+
     // --- Runtime detection tests ---
 
     #[test]
@@ -1122,5 +1601,29 @@ mod tests {
         use embedded_hal_async::delay::DelayNs;
         let mut delay = Delay;
         delay.delay_ns(1).await;
+    }
+
+    // --- ADC error tests ---
+
+    #[test]
+    fn adc_hal_error_display_conversion_failed() {
+        let err = AdcHalError::Adc(AdcError::ConversionFailed);
+        assert_eq!(format!("{err}"), "ADC conversion failed");
+    }
+
+    #[test]
+    fn adc_hal_error_display_comms() {
+        let err = AdcHalError::Comms("timeout".into());
+        assert_eq!(format!("{err}"), "communication error: timeout");
+    }
+
+    #[test]
+    fn adc_hal_error_from_endpoint() {
+        let e: PicoDeGalloError<AdcError> = PicoDeGalloError::Endpoint(AdcError::Other);
+        let hal_err = AdcHalError::from(e);
+        match hal_err {
+            AdcHalError::Adc(AdcError::Other) => {}
+            other => panic!("expected Adc(Other), got {other:?}"),
+        }
     }
 }

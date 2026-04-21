@@ -36,7 +36,10 @@
 //! negative values indicate errors. See [`Status`] for the full list.
 
 use futures::executor::block_on;
-use pico_de_gallo_lib::{self as lib, GpioError, I2cError, PicoDeGalloError, SpiError};
+use pico_de_gallo_lib::{
+    self as lib, AdcChannel, AdcError, GpioError, I2cError, PicoDeGalloError, PwmError, SpiError,
+    UartError,
+};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -127,6 +130,52 @@ pub enum Status {
     I2cGetConfigFailed = -29,
     /// SPI get-config query failed
     SpiGetConfigFailed = -30,
+    /// UART read failed
+    UartReadFailed = -31,
+    /// UART write failed
+    UartWriteFailed = -32,
+    /// UART flush failed
+    UartFlushFailed = -33,
+    /// UART receiver overrun
+    UartOverrun = -34,
+    /// UART break condition detected
+    UartBreak = -35,
+    /// UART parity error
+    UartParity = -36,
+    /// UART framing error
+    UartFraming = -37,
+    /// Invalid baud rate
+    UartInvalidBaudRate = -38,
+    /// UART set-config failed
+    UartSetConfigFailed = -39,
+    /// UART get-config query failed
+    UartGetConfigFailed = -40,
+    /// PWM set-duty-cycle failed
+    PwmSetDutyCycleFailed = -41,
+    /// PWM get-duty-cycle query failed
+    PwmGetDutyCycleFailed = -42,
+    /// PWM enable failed
+    PwmEnableFailed = -43,
+    /// PWM disable failed
+    PwmDisableFailed = -44,
+    /// PWM set-config failed
+    PwmSetConfigFailed = -45,
+    /// PWM get-config query failed
+    PwmGetConfigFailed = -46,
+    /// Invalid PWM channel
+    PwmInvalidChannel = -47,
+    /// Invalid PWM duty cycle
+    PwmInvalidDutyCycle = -48,
+    /// Invalid PWM configuration
+    PwmInvalidConfiguration = -49,
+    /// ADC read failed
+    AdcReadFailed = -50,
+    /// ADC read-temperature failed
+    AdcReadTemperatureFailed = -51,
+    /// ADC get-config query failed
+    AdcGetConfigFailed = -52,
+    /// ADC conversion error
+    AdcConversionFailed = -53,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -157,6 +206,39 @@ fn gpio_error_to_status(e: PicoDeGalloError<GpioError>) -> Status {
         PicoDeGalloError::Endpoint(GpioError::InvalidPin) => Status::GpioInvalidPin,
         PicoDeGalloError::Endpoint(GpioError::WrongDirection) => Status::GpioWrongDirection,
         PicoDeGalloError::Endpoint(GpioError::Other) => Status::GpioGetFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn uart_error_to_status(e: PicoDeGalloError<UartError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(UartError::BufferTooLong) => Status::BufferTooLong,
+        PicoDeGalloError::Endpoint(UartError::Overrun) => Status::UartOverrun,
+        PicoDeGalloError::Endpoint(UartError::Break) => Status::UartBreak,
+        PicoDeGalloError::Endpoint(UartError::Parity) => Status::UartParity,
+        PicoDeGalloError::Endpoint(UartError::Framing) => Status::UartFraming,
+        PicoDeGalloError::Endpoint(UartError::InvalidBaudRate) => Status::UartInvalidBaudRate,
+        PicoDeGalloError::Endpoint(UartError::Other) => Status::UartReadFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn pwm_error_to_status(e: PicoDeGalloError<PwmError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(PwmError::InvalidChannel) => Status::PwmInvalidChannel,
+        PicoDeGalloError::Endpoint(PwmError::InvalidDutyCycle) => Status::PwmInvalidDutyCycle,
+        PicoDeGalloError::Endpoint(PwmError::InvalidConfiguration) => {
+            Status::PwmInvalidConfiguration
+        }
+        PicoDeGalloError::Endpoint(PwmError::Other) => Status::PwmSetDutyCycleFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn adc_error_to_status(e: PicoDeGalloError<AdcError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(AdcError::ConversionFailed) => Status::AdcConversionFailed,
+        PicoDeGalloError::Endpoint(AdcError::Other) => Status::AdcReadFailed,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
 }
@@ -1078,6 +1160,537 @@ pub unsafe extern "C" fn gallo_spi_get_config(
     }
 }
 
+// ----------------------------- UART Read endpoint -----------------------------
+
+/// gallo_uart_read - Read bytes from the UART bus.
+///
+/// Reads up to `count` bytes into `buf`. On success, writes the actual
+/// number of bytes read to `*out_len`. If no data arrives within
+/// `timeout_ms` milliseconds, sets `*out_len = 0` and returns
+/// `Status::Ok`.
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, that `buf` points to at
+/// least `count` bytes, and `out_len` is a valid pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_uart_read(
+    gallo: *mut PicoDeGallo,
+    buf: *mut u8,
+    count: u16,
+    timeout_ms: u32,
+    out_len: *mut u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if buf.is_null() || out_len.is_null() {
+        eprintln!("Unexpected NULL pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.uart_read(count, timeout_ms));
+
+    match result {
+        Ok(data) => {
+            let len = data.len().min(count as usize);
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), buf, len);
+                *out_len = len as u16;
+            }
+            Status::Ok
+        }
+        Err(e) => uart_error_to_status(e),
+    }
+}
+
+// ----------------------------- UART Write endpoint -----------------------------
+
+/// gallo_uart_write - Write bytes to the UART bus.
+///
+/// Queues `len` bytes from `buf` to the UART transmit buffer. Returns
+/// once all bytes have been accepted. Use [`gallo_uart_flush`] to wait
+/// for transmission to complete on the wire.
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that `buf` points to
+/// at least `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_uart_write(
+    gallo: *mut PicoDeGallo,
+    buf: *const u8,
+    len: u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if buf.is_null() {
+        eprintln!("Unexpected NULL buf pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let data = unsafe { std::slice::from_raw_parts(buf, len as usize) };
+
+    let result = block_on(gallo.0.uart_write(data));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => uart_error_to_status(e),
+    }
+}
+
+// ----------------------------- UART Flush endpoint -----------------------------
+
+/// gallo_uart_flush - Flush the UART transmit buffer.
+///
+/// Blocks until all pending bytes have been transmitted on the wire.
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_uart_flush(gallo: *mut PicoDeGallo) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.uart_flush());
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => uart_error_to_status(e),
+    }
+}
+
+// ----------------------------- UART Set config endpoint -----------------------------
+
+/// gallo_uart_set_config - Set the UART baud rate.
+///
+/// `baud_rate` must be greater than 0. Returns `Status::InvalidArgument`
+/// for a zero baud rate.
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_uart_set_config(gallo: *mut PicoDeGallo, baud_rate: u32) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if baud_rate == 0 {
+        eprintln!("Invalid baud rate: 0");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.uart_set_config(baud_rate));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => uart_error_to_status(e),
+    }
+}
+
+// ----------------------------- UART Get config endpoint -----------------------------
+
+/// gallo_uart_get_config - Query the current UART configuration.
+///
+/// On success, writes the current baud rate to `*out_baud_rate`.
+///
+/// Returns `Status::Ok` in case of success or various error codes.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that `out_baud_rate`
+/// is a valid pointer to a `u32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_uart_get_config(
+    gallo: *mut PicoDeGallo,
+    out_baud_rate: *mut u32,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_baud_rate.is_null() {
+        eprintln!("Unexpected NULL out_baud_rate pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.uart_get_config());
+
+    match result {
+        Ok(info) => {
+            unsafe {
+                *out_baud_rate = info.baud_rate;
+            }
+            Status::Ok
+        }
+        Err(_) => Status::UartGetConfigFailed,
+    }
+}
+
+// ----------------------------- PWM endpoints -----------------------------
+
+/// gallo_pwm_set_duty_cycle - Set the raw duty cycle of a PWM channel.
+///
+/// `channel` is 0–3. `duty` is the raw compare value (0 to the current
+/// `top` register). Use `gallo_pwm_get_duty_cycle` to discover the max.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_pwm_set_duty_cycle(
+    gallo: *mut PicoDeGallo,
+    channel: u8,
+    duty: u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.pwm_set_duty_cycle(channel, duty)) {
+        Ok(()) => Status::Ok,
+        Err(e) => pwm_error_to_status(e),
+    }
+}
+
+/// gallo_pwm_get_duty_cycle - Query the current duty cycle of a PWM channel.
+///
+/// On success, writes the current raw compare value to `*out_duty` and
+/// the maximum duty (top + 1) to `*out_max_duty`.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that `out_duty` and
+/// `out_max_duty` are valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_pwm_get_duty_cycle(
+    gallo: *mut PicoDeGallo,
+    channel: u8,
+    out_duty: *mut u16,
+    out_max_duty: *mut u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_duty.is_null() || out_max_duty.is_null() {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.pwm_get_duty_cycle(channel)) {
+        Ok(info) => {
+            unsafe {
+                *out_duty = info.current_duty;
+                *out_max_duty = info.max_duty;
+            }
+            Status::Ok
+        }
+        Err(e) => pwm_error_to_status(e),
+    }
+}
+
+/// gallo_pwm_enable - Enable the PWM slice that owns the given channel.
+///
+/// Channels 0–1 share a slice, channels 2–3 share another.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_pwm_enable(gallo: *mut PicoDeGallo, channel: u8) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.pwm_enable(channel)) {
+        Ok(()) => Status::Ok,
+        Err(e) => pwm_error_to_status(e),
+    }
+}
+
+/// gallo_pwm_disable - Disable the PWM slice that owns the given channel.
+///
+/// Channels 0–1 share a slice, channels 2–3 share another.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_pwm_disable(gallo: *mut PicoDeGallo, channel: u8) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.pwm_disable(channel)) {
+        Ok(()) => Status::Ok,
+        Err(e) => pwm_error_to_status(e),
+    }
+}
+
+/// gallo_pwm_set_config - Configure the PWM slice behind a channel.
+///
+/// Sets `frequency_hz` and `phase_correct` mode. The firmware computes
+/// the `top` and `divider` registers automatically.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_pwm_set_config(
+    gallo: *mut PicoDeGallo,
+    channel: u8,
+    frequency_hz: u32,
+    phase_correct: bool,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.pwm_set_config(channel, frequency_hz, phase_correct)) {
+        Ok(()) => Status::Ok,
+        Err(e) => pwm_error_to_status(e),
+    }
+}
+
+/// gallo_pwm_get_config - Query the current PWM configuration.
+///
+/// On success, writes the effective frequency to `*out_frequency_hz`,
+/// the phase-correct flag to `*out_phase_correct`, and the enabled
+/// flag to `*out_enabled`.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that all output
+/// pointers are valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_pwm_get_config(
+    gallo: *mut PicoDeGallo,
+    channel: u8,
+    out_frequency_hz: *mut u32,
+    out_phase_correct: *mut bool,
+    out_enabled: *mut bool,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_frequency_hz.is_null() || out_phase_correct.is_null() || out_enabled.is_null() {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.pwm_get_config(channel)) {
+        Ok(info) => {
+            unsafe {
+                *out_frequency_hz = info.frequency_hz;
+                *out_phase_correct = info.phase_correct;
+                *out_enabled = info.enabled;
+            }
+            Status::Ok
+        }
+        Err(e) => pwm_error_to_status(e),
+    }
+}
+
+// ----------------------------- ADC endpoints -----------------------------
+
+/// gallo_adc_read - Perform a single-shot ADC read.
+///
+/// On success, writes the raw 12-bit value (0–4095) to `*out_value`.
+/// `channel` selects the input: 0–3 for GPIO26–29, 4 for the internal
+/// temperature sensor.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that `out_value` is a
+/// valid pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_adc_read(
+    gallo: *mut PicoDeGallo,
+    channel: u8,
+    out_value: *mut u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_value.is_null() {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    let adc_channel = match channel {
+        0 => AdcChannel::Adc0,
+        1 => AdcChannel::Adc1,
+        2 => AdcChannel::Adc2,
+        3 => AdcChannel::Adc3,
+        4 => AdcChannel::TempSensor,
+        _ => {
+            eprintln!("Invalid ADC channel: {channel}");
+            return Status::InvalidArgument;
+        }
+    };
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.adc_read(adc_channel)) {
+        Ok(raw) => {
+            unsafe { *out_value = raw };
+            Status::Ok
+        }
+        Err(e) => adc_error_to_status(e),
+    }
+}
+
+/// gallo_adc_read_temperature - Read the on-die temperature sensor.
+///
+/// On success, writes the temperature in millidegrees Celsius to
+/// `*out_millidegrees` (e.g., 27000 = 27.000 °C). The value is approximate.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that `out_millidegrees`
+/// is a valid pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_adc_read_temperature(
+    gallo: *mut PicoDeGallo,
+    out_millidegrees: *mut i32,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_millidegrees.is_null() {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.adc_read_temperature()) {
+        Ok(temp) => {
+            unsafe { *out_millidegrees = temp };
+            Status::Ok
+        }
+        Err(e) => adc_error_to_status(e),
+    }
+}
+
+/// gallo_adc_get_config - Query the ADC configuration.
+///
+/// On success, writes resolution (bits), nominal reference voltage (mV),
+/// number of GPIO channels, and temperature sensor availability.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, and that all output pointers
+/// are valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_adc_get_config(
+    gallo: *mut PicoDeGallo,
+    out_resolution_bits: *mut u8,
+    out_nominal_reference_mv: *mut u16,
+    out_num_gpio_channels: *mut u8,
+    out_has_temp_sensor: *mut bool,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_resolution_bits.is_null()
+        || out_nominal_reference_mv.is_null()
+        || out_num_gpio_channels.is_null()
+        || out_has_temp_sensor.is_null()
+    {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.adc_get_config()) {
+        Ok(info) => {
+            unsafe {
+                *out_resolution_bits = info.resolution_bits;
+                *out_nominal_reference_mv = info.nominal_reference_mv;
+                *out_num_gpio_channels = info.num_gpio_channels;
+                *out_has_temp_sensor = info.has_temp_sensor;
+            }
+            Status::Ok
+        }
+        Err(e) => match e {
+            PicoDeGalloError::Comms(_) => Status::CommsFailed,
+            PicoDeGalloError::Endpoint(never) => match never {},
+        },
+    }
+}
+
 // ----------------------------- Version endpoint -----------------------------
 
 #[unsafe(no_mangle)]
@@ -1174,6 +1787,29 @@ mod tests {
             Status::GpioWrongDirection as i32,
             Status::I2cGetConfigFailed as i32,
             Status::SpiGetConfigFailed as i32,
+            Status::UartReadFailed as i32,
+            Status::UartWriteFailed as i32,
+            Status::UartFlushFailed as i32,
+            Status::UartOverrun as i32,
+            Status::UartBreak as i32,
+            Status::UartParity as i32,
+            Status::UartFraming as i32,
+            Status::UartInvalidBaudRate as i32,
+            Status::UartSetConfigFailed as i32,
+            Status::UartGetConfigFailed as i32,
+            Status::PwmSetDutyCycleFailed as i32,
+            Status::PwmGetDutyCycleFailed as i32,
+            Status::PwmEnableFailed as i32,
+            Status::PwmDisableFailed as i32,
+            Status::PwmSetConfigFailed as i32,
+            Status::PwmGetConfigFailed as i32,
+            Status::PwmInvalidChannel as i32,
+            Status::PwmInvalidDutyCycle as i32,
+            Status::PwmInvalidConfiguration as i32,
+            Status::AdcReadFailed as i32,
+            Status::AdcReadTemperatureFailed as i32,
+            Status::AdcGetConfigFailed as i32,
+            Status::AdcConversionFailed as i32,
         ];
         for code in error_codes {
             assert!(code < 0, "error code {code} should be negative");
@@ -1214,6 +1850,29 @@ mod tests {
             Status::GpioWrongDirection as i32,
             Status::I2cGetConfigFailed as i32,
             Status::SpiGetConfigFailed as i32,
+            Status::UartReadFailed as i32,
+            Status::UartWriteFailed as i32,
+            Status::UartFlushFailed as i32,
+            Status::UartOverrun as i32,
+            Status::UartBreak as i32,
+            Status::UartParity as i32,
+            Status::UartFraming as i32,
+            Status::UartInvalidBaudRate as i32,
+            Status::UartSetConfigFailed as i32,
+            Status::UartGetConfigFailed as i32,
+            Status::PwmSetDutyCycleFailed as i32,
+            Status::PwmGetDutyCycleFailed as i32,
+            Status::PwmEnableFailed as i32,
+            Status::PwmDisableFailed as i32,
+            Status::PwmSetConfigFailed as i32,
+            Status::PwmGetConfigFailed as i32,
+            Status::PwmInvalidChannel as i32,
+            Status::PwmInvalidDutyCycle as i32,
+            Status::PwmInvalidConfiguration as i32,
+            Status::AdcReadFailed as i32,
+            Status::AdcReadTemperatureFailed as i32,
+            Status::AdcGetConfigFailed as i32,
+            Status::AdcConversionFailed as i32,
         ];
         let unique: HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len(), "duplicate status codes found");
@@ -1423,6 +2082,86 @@ mod tests {
         assert_eq!(status, Status::Uninitialized);
     }
 
+    // ----------------------------- PWM null pointer checks -----------------------------
+
+    #[test]
+    fn pwm_set_duty_cycle_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_pwm_set_duty_cycle(std::ptr::null_mut(), 0, 100) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn pwm_get_duty_cycle_null_device_returns_uninitialized() {
+        let status = unsafe {
+            gallo_pwm_get_duty_cycle(
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn pwm_enable_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_pwm_enable(std::ptr::null_mut(), 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn pwm_disable_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_pwm_disable(std::ptr::null_mut(), 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn pwm_set_config_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_pwm_set_config(std::ptr::null_mut(), 0, 1000, false) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn pwm_get_config_null_device_returns_uninitialized() {
+        let status = unsafe {
+            gallo_pwm_get_config(
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn adc_read_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_adc_read(std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn adc_read_temperature_null_device_returns_uninitialized() {
+        let status =
+            unsafe { gallo_adc_read_temperature(std::ptr::null_mut(), std::ptr::null_mut()) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn adc_get_config_null_device_returns_uninitialized() {
+        let status = unsafe {
+            gallo_adc_get_config(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
     // ----------------------------- Null buffer checks -----------------------------
 
     #[test]
@@ -1450,5 +2189,120 @@ mod tests {
     fn init_with_null_serial_returns_null() {
         let ptr = unsafe { gallo_init_with_serial_number(std::ptr::null()) };
         assert!(ptr.is_null());
+    }
+
+    // ----------------------------- UART null pointer checks -----------------------------
+
+    #[test]
+    fn uart_read_null_device_returns_uninitialized() {
+        let mut buf = [0u8; 4];
+        let mut out_len = 0u16;
+        let status = unsafe {
+            gallo_uart_read(
+                std::ptr::null_mut(),
+                buf.as_mut_ptr(),
+                4,
+                1000,
+                &mut out_len as *mut u16,
+            )
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn uart_read_null_buf_returns_uninitialized() {
+        let status = unsafe {
+            gallo_uart_read(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                4,
+                1000,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn uart_write_null_device_returns_uninitialized() {
+        let data = [0x48, 0x65, 0x6c, 0x6c, 0x6f];
+        let status = unsafe { gallo_uart_write(std::ptr::null_mut(), data.as_ptr(), 5) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn uart_write_null_buf_returns_uninitialized() {
+        let status = unsafe { gallo_uart_write(std::ptr::null_mut(), std::ptr::null(), 5) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn uart_flush_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_uart_flush(std::ptr::null_mut()) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn uart_set_config_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_uart_set_config(std::ptr::null_mut(), 115200) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn uart_set_config_zero_baud_returns_uninitialized() {
+        // null check fires first
+        let status = unsafe { gallo_uart_set_config(std::ptr::null_mut(), 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn uart_get_config_null_device_returns_uninitialized() {
+        let mut baud = 0u32;
+        let status = unsafe { gallo_uart_get_config(std::ptr::null_mut(), &mut baud as *mut u32) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn uart_error_to_status_maps_all_variants() {
+        assert_eq!(
+            uart_error_to_status(PicoDeGalloError::Endpoint(UartError::BufferTooLong)),
+            Status::BufferTooLong
+        );
+        assert_eq!(
+            uart_error_to_status(PicoDeGalloError::Endpoint(UartError::Overrun)),
+            Status::UartOverrun
+        );
+        assert_eq!(
+            uart_error_to_status(PicoDeGalloError::Endpoint(UartError::Break)),
+            Status::UartBreak
+        );
+        assert_eq!(
+            uart_error_to_status(PicoDeGalloError::Endpoint(UartError::Parity)),
+            Status::UartParity
+        );
+        assert_eq!(
+            uart_error_to_status(PicoDeGalloError::Endpoint(UartError::Framing)),
+            Status::UartFraming
+        );
+        assert_eq!(
+            uart_error_to_status(PicoDeGalloError::Endpoint(UartError::InvalidBaudRate)),
+            Status::UartInvalidBaudRate
+        );
+        assert_eq!(
+            uart_error_to_status(PicoDeGalloError::Endpoint(UartError::Other)),
+            Status::UartReadFailed
+        );
+    }
+
+    #[test]
+    fn adc_error_mapping() {
+        assert_eq!(
+            adc_error_to_status(PicoDeGalloError::Endpoint(AdcError::ConversionFailed)),
+            Status::AdcConversionFailed
+        );
+        assert_eq!(
+            adc_error_to_status(PicoDeGalloError::Endpoint(AdcError::Other)),
+            Status::AdcReadFailed
+        );
     }
 }

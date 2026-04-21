@@ -29,9 +29,21 @@
 //! - **GPIO types**: [`GpioGetRequest`], [`GpioPutRequest`], [`GpioWaitRequest`],
 //!   [`GpioState`], [`GpioDirection`], [`GpioPull`], [`GpioSetConfigurationRequest`],
 //!   and their shared error type [`GpioError`].
+//! - **UART types**: [`UartReadRequest`], [`UartWriteRequest`],
+//!   [`UartSetConfigurationRequest`], [`UartConfigurationInfo`],
+//!   and their shared error type [`UartError`].
+//! - **PWM types**: [`PwmSetDutyCycleRequest`], [`PwmGetDutyCycleRequest`],
+//!   [`PwmEnableRequest`], [`PwmDisableRequest`], [`PwmSetConfigurationRequest`],
+//!   [`PwmGetConfigurationRequest`], [`PwmDutyCycleInfo`], [`PwmConfigurationInfo`],
+//!   and their shared error type [`PwmError`].
+//! - **ADC types**: [`AdcReadRequest`], [`AdcChannel`], [`AdcConfigurationInfo`],
+//!   and their shared error type [`AdcError`].
 //! - **Configuration**: [`I2cSetConfigurationRequest`], [`SpiSetConfigurationRequest`],
-//!   [`GpioSetConfigurationRequest`], [`I2cFrequency`], [`SpiPhase`], [`SpiPolarity`],
-//!   [`GpioDirection`], [`GpioPull`], [`SpiConfigurationInfo`].
+//!   [`GpioSetConfigurationRequest`], [`UartSetConfigurationRequest`],
+//!   [`PwmSetConfigurationRequest`],
+//!   [`I2cFrequency`], [`SpiPhase`], [`SpiPolarity`],
+//!   [`GpioDirection`], [`GpioPull`], [`SpiConfigurationInfo`],
+//!   [`UartConfigurationInfo`].
 //! - **Version**: [`VersionInfo`].
 
 #![cfg_attr(not(feature = "use-std"), no_std)]
@@ -131,6 +143,49 @@ pub type I2cGetConfigurationResponse = I2cFrequency;
 /// Returns the currently active SPI bus parameters.
 pub type SpiGetConfigurationResponse = SpiConfigurationInfo;
 
+/// Response type for UART write operations.
+pub type UartWriteResponse = Result<(), UartError>;
+
+/// Response type for UART read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
+#[cfg(feature = "use-std")]
+pub type UartReadResponse<'a> = Result<Vec<u8>, UartError>;
+/// Response type for UART read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
+#[cfg(not(feature = "use-std"))]
+pub type UartReadResponse<'a> = Result<&'a [u8], UartError>;
+
+/// Response type for UART flush operations.
+pub type UartFlushResponse = Result<(), UartError>;
+
+/// Response type for UART bus configuration operations.
+pub type UartSetConfigurationResponse = Result<(), UartConfigError>;
+
+/// Response type for UART get-configuration queries.
+///
+/// Returns the currently active UART parameters.
+pub type UartGetConfigurationResponse = UartConfigurationInfo;
+
+/// Response type for PWM set-duty-cycle operations.
+pub type PwmSetDutyCycleResponse = Result<(), PwmError>;
+/// Response type for PWM get-duty-cycle queries.
+pub type PwmGetDutyCycleResponse = Result<PwmDutyCycleInfo, PwmError>;
+/// Response type for PWM enable operations.
+pub type PwmEnableResponse = Result<(), PwmError>;
+/// Response type for PWM disable operations.
+pub type PwmDisableResponse = Result<(), PwmError>;
+/// Response type for PWM set-configuration operations.
+pub type PwmSetConfigurationResponse = Result<(), PwmConfigError>;
+/// Response type for PWM get-configuration queries.
+pub type PwmGetConfigurationResponse = Result<PwmConfigurationInfo, PwmError>;
+
+/// Response type for ADC read operations.
+pub type AdcReadResponse = Result<u16, AdcError>;
+/// Response type for ADC read-temperature operations (millidegrees Celsius).
+pub type AdcReadTemperatureResponse = Result<i32, AdcError>;
+/// Response type for ADC get-configuration queries.
+pub type AdcGetConfigurationResponse = AdcConfigurationInfo;
+
 endpoints! {
     list = ENDPOINT_LIST;
     | EndpointTy          | RequestTy                  | ResponseTy                  | Path                |
@@ -156,7 +211,21 @@ endpoints! {
     | GpioSetConfiguration | GpioSetConfigurationRequest | GpioSetConfigurationResponse | "gpio/set-config"   |
     | I2cGetConfiguration  | ()                          | I2cGetConfigurationResponse  | "i2c/get-config"    |
     | SpiGetConfiguration  | ()                          | SpiGetConfigurationResponse  | "spi/get-config"    |
-    | Version              | ()                          | VersionInfo                  | "version"           |
+    | UartRead             | UartReadRequest             | UartReadResponse<'a>         | "uart/read"         |
+    | UartWrite            | UartWriteRequest<'a>        | UartWriteResponse            | "uart/write"        |
+    | UartFlush            | ()                          | UartFlushResponse            | "uart/flush"        |
+    | UartSetConfiguration | UartSetConfigurationRequest | UartSetConfigurationResponse | "uart/set-config"   |
+    | UartGetConfiguration  | ()                            | UartGetConfigurationResponse  | "uart/get-config"    |
+    | PwmSetDutyCycle       | PwmSetDutyCycleRequest        | PwmSetDutyCycleResponse       | "pwm/set-duty-cycle" |
+    | PwmGetDutyCycle       | PwmGetDutyCycleRequest        | PwmGetDutyCycleResponse       | "pwm/get-duty-cycle" |
+    | PwmEnable             | PwmEnableRequest              | PwmEnableResponse             | "pwm/enable"         |
+    | PwmDisable            | PwmDisableRequest             | PwmDisableResponse            | "pwm/disable"        |
+    | PwmSetConfiguration   | PwmSetConfigurationRequest    | PwmSetConfigurationResponse   | "pwm/set-config"     |
+    | PwmGetConfiguration   | PwmGetConfigurationRequest    | PwmGetConfigurationResponse   | "pwm/get-config"     |
+    | AdcRead               | AdcReadRequest                | AdcReadResponse               | "adc/read"           |
+    | AdcReadTemperature    | ()                            | AdcReadTemperatureResponse    | "adc/read-temperature" |
+    | AdcGetConfiguration   | ()                            | AdcGetConfigurationResponse   | "adc/get-config"     |
+    | Version               | ()                            | VersionInfo                   | "version"            |
 }
 
 topics! {
@@ -516,6 +585,100 @@ pub enum SpiPolarity {
 /// type as other SPI operations.
 pub type SpiConfigError = SpiError;
 
+// --- UART
+
+/// Error from UART operations, propagated from firmware.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index**. Do **not** reorder or insert
+/// variants in the middle — only append at the end.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UartError {
+    /// Request exceeds the firmware buffer limit ([`MAX_TRANSFER_SIZE`]).
+    BufferTooLong,
+    /// UART receiver FIFO overrun — data arrived faster than the firmware
+    /// could process it.
+    Overrun,
+    /// A break condition was detected on the UART RX line.
+    Break,
+    /// Parity mismatch between received data and configured parity setting.
+    Parity,
+    /// The received character did not have a valid stop bit.
+    Framing,
+    /// The requested baud rate is invalid (zero or unsupported by hardware).
+    InvalidBaudRate,
+    /// An unspecified error occurred in the firmware.
+    Other,
+}
+
+impl core::fmt::Display for UartError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::BufferTooLong => write!(f, "buffer exceeds firmware limit"),
+            Self::Overrun => write!(f, "UART receiver overrun"),
+            Self::Break => write!(f, "UART break condition"),
+            Self::Parity => write!(f, "UART parity error"),
+            Self::Framing => write!(f, "UART framing error"),
+            Self::InvalidBaudRate => write!(f, "invalid baud rate"),
+            Self::Other => write!(f, "UART error"),
+        }
+    }
+}
+
+/// Request to read bytes from the UART bus.
+///
+/// The firmware reads up to `count` bytes from the UART receive buffer.
+/// If no data is immediately available, the firmware waits up to
+/// `timeout_ms` milliseconds for at least one byte. Returns whatever
+/// bytes are available (1 to `count`), or an empty result on timeout.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct UartReadRequest {
+    /// Maximum number of bytes to read (max [`MAX_TRANSFER_SIZE`]).
+    pub count: u16,
+    /// Maximum time to wait for data, in milliseconds.
+    /// Use 0 for a non-blocking poll (return only already-buffered data).
+    pub timeout_ms: u32,
+}
+
+/// Request to write bytes to the UART bus.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct UartWriteRequest<'a> {
+    /// Bytes to write.
+    pub contents: &'a [u8],
+}
+
+/// Request to reconfigure UART bus parameters.
+///
+/// Takes effect immediately. The firmware applies the new baud rate before
+/// processing the next UART operation.
+///
+/// **Note:** In v1, only `baud_rate` is configurable at runtime. Data bits,
+/// parity, and stop bits are set to 8N1 at boot and cannot be changed
+/// dynamically. These fields are reserved for future use and must be set
+/// to their default values (`Eight`, `None`, `One`).
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct UartSetConfigurationRequest {
+    /// UART baud rate in bits per second.
+    pub baud_rate: u32,
+}
+
+/// Error returned when UART configuration fails.
+///
+/// This is a convenience alias — UART configuration shares the same error
+/// type as other UART operations.
+pub type UartConfigError = UartError;
+
+/// Current UART bus configuration as reported by the firmware.
+///
+/// Returned by `uart/get-config`. Reflects the last successfully applied
+/// configuration.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct UartConfigurationInfo {
+    /// UART baud rate in bits per second.
+    pub baud_rate: u32,
+}
+
 /// Current SPI bus configuration as reported by the firmware.
 ///
 /// Returned by `spi/get-config`. The field names mirror
@@ -528,6 +691,263 @@ pub struct SpiConfigurationInfo {
     pub spi_phase: SpiPhase,
     /// SPI clock polarity.
     pub spi_polarity: SpiPolarity,
+}
+
+// --- PWM
+
+/// Number of PWM output channels exposed by the firmware.
+///
+/// Channels 0–3 map to physical pins GPIO12–GPIO15 on the Pico 2 header.
+/// Channels 0–1 share PWM slice 6; channels 2–3 share PWM slice 7.
+pub const NUM_PWM_CHANNELS: usize = 4;
+
+/// Error from PWM operations, propagated from firmware.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index**. Do **not** reorder or insert
+/// variants in the middle — only append at the end.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PwmError {
+    /// The requested channel index exceeds the available PWM channels
+    /// ([`NUM_PWM_CHANNELS`]).
+    InvalidChannel,
+    /// The requested duty cycle exceeds the maximum for the current
+    /// configuration (i.e., `duty > top`).
+    InvalidDutyCycle,
+    /// The requested configuration is invalid (e.g., zero frequency or
+    /// unsupported divider value).
+    InvalidConfiguration,
+    /// An unspecified error occurred in the firmware.
+    Other,
+}
+
+impl core::fmt::Display for PwmError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidChannel => write!(f, "invalid PWM channel"),
+            Self::InvalidDutyCycle => write!(f, "duty cycle exceeds maximum"),
+            Self::InvalidConfiguration => write!(f, "invalid PWM configuration"),
+            Self::Other => write!(f, "PWM error"),
+        }
+    }
+}
+
+/// Request to set the duty cycle of a PWM channel.
+///
+/// The `duty` value is a raw compare value (0 to `top`). Use
+/// [`PwmGetDutyCycle`] to query the current `max_duty` (top) before
+/// computing a duty cycle from a percentage.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmSetDutyCycleRequest {
+    /// PWM channel index (0–3).
+    pub channel: u8,
+    /// Raw duty cycle value (0 to top).
+    pub duty: u16,
+}
+
+/// Request to query the current duty cycle of a PWM channel.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmGetDutyCycleRequest {
+    /// PWM channel index (0–3).
+    pub channel: u8,
+}
+
+/// Information about a PWM channel's current duty cycle.
+///
+/// The `max_duty` field corresponds to the slice's `top` register value.
+/// The `current_duty` field is the raw compare value for the channel.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct PwmDutyCycleInfo {
+    /// Maximum duty cycle value (the `top` value of the PWM slice).
+    pub max_duty: u16,
+    /// Current duty cycle value (raw compare register).
+    pub current_duty: u16,
+}
+
+/// Request to enable a PWM channel's slice.
+///
+/// **Note:** Channels 0–1 share a slice and channels 2–3 share a slice.
+/// Enabling one channel enables the entire slice (both channels).
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmEnableRequest {
+    /// PWM channel index (0–3). The parent slice is enabled.
+    pub channel: u8,
+}
+
+/// Request to disable a PWM channel's slice.
+///
+/// **Note:** Channels 0–1 share a slice and channels 2–3 share a slice.
+/// Disabling one channel disables the entire slice (both channels).
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmDisableRequest {
+    /// PWM channel index (0–3). The parent slice is disabled.
+    pub channel: u8,
+}
+
+/// Request to reconfigure the PWM slice behind a channel.
+///
+/// Sets the output frequency and phase-correct mode. The firmware
+/// computes `top` and `divider` from the requested `frequency_hz`.
+///
+/// **Note:** Channels 0–1 share a slice and channels 2–3 share a slice.
+/// Configuring one channel reconfigures the entire slice.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmSetConfigurationRequest {
+    /// PWM channel index (0–3). Identifies the target slice.
+    pub channel: u8,
+    /// Desired PWM output frequency in Hz.
+    pub frequency_hz: u32,
+    /// Enable phase-correct mode. When `true`, the output frequency is
+    /// halved and the pulse is centered.
+    pub phase_correct: bool,
+}
+
+/// Request to query the current configuration of a PWM channel's slice.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmGetConfigurationRequest {
+    /// PWM channel index (0–3).
+    pub channel: u8,
+}
+
+/// Error returned when PWM configuration fails.
+///
+/// This is a convenience alias — PWM configuration shares the same error
+/// type as other PWM operations.
+pub type PwmConfigError = PwmError;
+
+/// Current PWM slice configuration as reported by the firmware.
+///
+/// Returned by `pwm/get-config`. Reflects the last successfully applied
+/// configuration.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct PwmConfigurationInfo {
+    /// Actual PWM output frequency in Hz (may differ slightly from
+    /// the requested value due to divider/top quantization).
+    pub frequency_hz: u32,
+    /// Whether phase-correct mode is active.
+    pub phase_correct: bool,
+    /// Whether the slice is currently enabled.
+    pub enabled: bool,
+}
+
+// --- ADC (Analog-to-Digital Converter)
+
+/// Number of external (GPIO-based) ADC channels exposed by the firmware.
+///
+/// Channels [`AdcChannel::Adc0`] through [`AdcChannel::Adc3`] map to physical
+/// pins GPIO26–GPIO29 on the Pico 2 header.
+pub const NUM_ADC_GPIO_CHANNELS: usize = 4;
+
+/// ADC resolution in bits.
+///
+/// The RP2350 has a 12-bit SAR ADC; raw readings are in the range 0–4095.
+pub const ADC_RESOLUTION_BITS: u8 = 12;
+
+/// Nominal ADC reference voltage in millivolts.
+///
+/// On RP2350, ADC readings are referenced to ADC_AVDD (nominally 3.3 V).
+/// This is **not** a precision reference — actual voltage may vary with
+/// supply quality.
+pub const ADC_NOMINAL_REFERENCE_MV: u16 = 3300;
+
+/// ADC channel selector.
+///
+/// Identifies which ADC input to sample. GPIO-based channels (`Adc0`–`Adc3`)
+/// read external analog voltages on GPIO26–GPIO29. The [`TempSensor`](AdcChannel::TempSensor)
+/// variant reads the RP2350's on-die temperature sensor.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized as discriminant integers (0–4). **Do not**
+/// reorder or insert variants before existing ones — that changes the
+/// wire encoding and breaks backward compatibility.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdcChannel {
+    /// ADC channel 0 — GPIO26.
+    Adc0 = 0,
+    /// ADC channel 1 — GPIO27.
+    Adc1 = 1,
+    /// ADC channel 2 — GPIO28.
+    Adc2 = 2,
+    /// ADC channel 3 — GPIO29.
+    Adc3 = 3,
+    /// Internal temperature sensor (RP2350 on-die).
+    TempSensor = 4,
+}
+
+impl core::fmt::Display for AdcChannel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Adc0 => write!(f, "ADC0 (GPIO26)"),
+            Self::Adc1 => write!(f, "ADC1 (GPIO27)"),
+            Self::Adc2 => write!(f, "ADC2 (GPIO28)"),
+            Self::Adc3 => write!(f, "ADC3 (GPIO29)"),
+            Self::TempSensor => write!(f, "temperature sensor"),
+        }
+    }
+}
+
+/// Error from ADC operations, propagated from firmware.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized as discriminant integers. **Do not** reorder or
+/// insert variants before existing ones — that changes the wire encoding
+/// and breaks backward compatibility.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdcError {
+    /// The ADC hardware signaled a conversion error.
+    ConversionFailed,
+    /// Catch-all for unexpected ADC errors.
+    Other,
+}
+
+impl core::fmt::Display for AdcError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ConversionFailed => write!(f, "ADC conversion failed"),
+            Self::Other => write!(f, "ADC error"),
+        }
+    }
+}
+
+/// Error returned when ADC configuration fails.
+///
+/// This is a convenience alias — ADC configuration shares the same error
+/// type as other ADC operations.
+pub type AdcConfigError = AdcError;
+
+/// Request to perform a single-shot ADC read on a specific channel.
+///
+/// Returns a raw 12-bit value (0–4095). The host can convert to voltage
+/// using `V = raw * nominal_reference_mv / 4096`.
+///
+/// For temperature readings, prefer the dedicated
+/// [`AdcReadTemperature`] endpoint which returns millidegrees Celsius.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct AdcReadRequest {
+    /// Which ADC channel to sample.
+    pub channel: AdcChannel,
+}
+
+/// Current ADC configuration as reported by the firmware.
+///
+/// Returned by `adc/get-config`. Values are fixed for the RP2350 ADC
+/// but exposed for host discovery and consistency with other peripherals.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct AdcConfigurationInfo {
+    /// ADC resolution in bits (always 12 for RP2350).
+    pub resolution_bits: u8,
+    /// Nominal ADC reference voltage in millivolts (typically 3300).
+    ///
+    /// **Note:** This is the nominal ADC_AVDD voltage, not a precision
+    /// reference. Actual voltage may vary.
+    pub nominal_reference_mv: u16,
+    /// Number of external (GPIO-based) ADC channels.
+    pub num_gpio_channels: u8,
+    /// Whether the internal temperature sensor is available.
+    pub has_temp_sensor: bool,
 }
 
 // --- Version
@@ -1251,5 +1671,444 @@ mod tests {
             let decoded: I2cFrequency = from_bytes(&bytes).unwrap();
             assert_eq!(freq, decoded);
         }
+    }
+
+    // --- UART round-trip tests ---
+
+    #[test]
+    fn uart_read_request_round_trip() {
+        let req = UartReadRequest {
+            count: 64,
+            timeout_ms: 1000,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: UartReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn uart_read_request_zero_timeout() {
+        let req = UartReadRequest {
+            count: 10,
+            timeout_ms: 0,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: UartReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn uart_read_request_max_count() {
+        let req = UartReadRequest {
+            count: u16::MAX,
+            timeout_ms: 5000,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: UartReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn uart_write_request_round_trip() {
+        let data = [0x48, 0x65, 0x6c, 0x6c, 0x6f];
+        let req = UartWriteRequest { contents: &data };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: UartWriteRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn uart_write_request_empty_contents() {
+        let req = UartWriteRequest { contents: &[] };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: UartWriteRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn uart_set_configuration_request_round_trip() {
+        let req = UartSetConfigurationRequest { baud_rate: 115_200 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: UartSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn uart_set_configuration_request_common_baud_rates() {
+        for baud in [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] {
+            let req = UartSetConfigurationRequest { baud_rate: baud };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: UartSetConfigurationRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn uart_configuration_info_round_trip() {
+        let info = UartConfigurationInfo { baud_rate: 115_200 };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: UartConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn uart_error_variants_round_trip() {
+        for err in [
+            UartError::BufferTooLong,
+            UartError::Overrun,
+            UartError::Break,
+            UartError::Parity,
+            UartError::Framing,
+            UartError::InvalidBaudRate,
+            UartError::Other,
+        ] {
+            let bytes = to_allocvec(&err).unwrap();
+            let decoded: UartError = from_bytes(&bytes).unwrap();
+            assert_eq!(err, decoded);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn uart_error_display() {
+        assert_eq!(
+            format!("{}", UartError::BufferTooLong),
+            "buffer exceeds firmware limit"
+        );
+        assert_eq!(format!("{}", UartError::Overrun), "UART receiver overrun");
+        assert_eq!(format!("{}", UartError::Break), "UART break condition");
+        assert_eq!(format!("{}", UartError::Parity), "UART parity error");
+        assert_eq!(format!("{}", UartError::Framing), "UART framing error");
+        assert_eq!(
+            format!("{}", UartError::InvalidBaudRate),
+            "invalid baud rate"
+        );
+        assert_eq!(format!("{}", UartError::Other), "UART error");
+    }
+
+    #[test]
+    fn uart_read_request_wire_stability() {
+        let req = UartReadRequest {
+            count: 64,
+            timeout_ms: 1000,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: UartReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn uart_set_configuration_request_wire_stability() {
+        let req = UartSetConfigurationRequest { baud_rate: 115_200 };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: UartSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn uart_configuration_info_wire_stability() {
+        let info = UartConfigurationInfo { baud_rate: 115_200 };
+        let bytes = to_allocvec(&info).unwrap();
+        let canonical = bytes.clone();
+        let decoded: UartConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, info);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    // --- PWM round-trip tests ---
+
+    #[test]
+    fn pwm_set_duty_cycle_request_round_trip() {
+        let req = PwmSetDutyCycleRequest {
+            channel: 2,
+            duty: 32768,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_duty_cycle_request_zero_duty() {
+        let req = PwmSetDutyCycleRequest {
+            channel: 0,
+            duty: 0,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_duty_cycle_request_max_duty() {
+        let req = PwmSetDutyCycleRequest {
+            channel: 3,
+            duty: u16::MAX,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_get_duty_cycle_request_round_trip() {
+        let req = PwmGetDutyCycleRequest { channel: 1 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmGetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_duty_cycle_info_round_trip() {
+        let info = PwmDutyCycleInfo {
+            max_duty: 65535,
+            current_duty: 32768,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: PwmDutyCycleInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn pwm_enable_request_round_trip() {
+        let req = PwmEnableRequest { channel: 0 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmEnableRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_disable_request_round_trip() {
+        let req = PwmDisableRequest { channel: 3 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmDisableRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_configuration_request_round_trip() {
+        let req = PwmSetConfigurationRequest {
+            channel: 1,
+            frequency_hz: 1_000,
+            phase_correct: false,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_configuration_request_phase_correct() {
+        let req = PwmSetConfigurationRequest {
+            channel: 2,
+            frequency_hz: 50,
+            phase_correct: true,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_configuration_request_common_frequencies() {
+        for freq in [50, 100, 1_000, 10_000, 50_000, 100_000, 1_000_000] {
+            let req = PwmSetConfigurationRequest {
+                channel: 0,
+                frequency_hz: freq,
+                phase_correct: false,
+            };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: PwmSetConfigurationRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn pwm_get_configuration_request_round_trip() {
+        let req = PwmGetConfigurationRequest { channel: 3 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmGetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_configuration_info_round_trip() {
+        let info = PwmConfigurationInfo {
+            frequency_hz: 1_000,
+            phase_correct: false,
+            enabled: true,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: PwmConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn pwm_error_variants_round_trip() {
+        for err in [
+            PwmError::InvalidChannel,
+            PwmError::InvalidDutyCycle,
+            PwmError::InvalidConfiguration,
+            PwmError::Other,
+        ] {
+            let bytes = to_allocvec(&err).unwrap();
+            let decoded: PwmError = from_bytes(&bytes).unwrap();
+            assert_eq!(err, decoded);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn pwm_error_display() {
+        assert_eq!(
+            format!("{}", PwmError::InvalidChannel),
+            "invalid PWM channel"
+        );
+        assert_eq!(
+            format!("{}", PwmError::InvalidDutyCycle),
+            "duty cycle exceeds maximum"
+        );
+        assert_eq!(
+            format!("{}", PwmError::InvalidConfiguration),
+            "invalid PWM configuration"
+        );
+        assert_eq!(format!("{}", PwmError::Other), "PWM error");
+    }
+
+    #[test]
+    fn pwm_set_duty_cycle_request_wire_stability() {
+        let req = PwmSetDutyCycleRequest {
+            channel: 1,
+            duty: 1000,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: PwmSetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn pwm_set_configuration_request_wire_stability() {
+        let req = PwmSetConfigurationRequest {
+            channel: 0,
+            frequency_hz: 1_000,
+            phase_correct: false,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: PwmSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn pwm_configuration_info_wire_stability() {
+        let info = PwmConfigurationInfo {
+            frequency_hz: 50_000,
+            phase_correct: true,
+            enabled: true,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let canonical = bytes.clone();
+        let decoded: PwmConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, info);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    // --- ADC tests ---
+
+    #[test]
+    fn adc_read_request_round_trip() {
+        let req = AdcReadRequest {
+            channel: AdcChannel::Adc2,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: AdcReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn adc_read_request_temp_sensor_round_trip() {
+        let req = AdcReadRequest {
+            channel: AdcChannel::TempSensor,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: AdcReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn adc_channel_display() {
+        assert_eq!(format!("{}", AdcChannel::Adc0), "ADC0 (GPIO26)");
+        assert_eq!(format!("{}", AdcChannel::Adc1), "ADC1 (GPIO27)");
+        assert_eq!(format!("{}", AdcChannel::Adc2), "ADC2 (GPIO28)");
+        assert_eq!(format!("{}", AdcChannel::Adc3), "ADC3 (GPIO29)");
+        assert_eq!(format!("{}", AdcChannel::TempSensor), "temperature sensor");
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn adc_error_display() {
+        assert_eq!(
+            format!("{}", AdcError::ConversionFailed),
+            "ADC conversion failed"
+        );
+        assert_eq!(format!("{}", AdcError::Other), "ADC error");
+    }
+
+    #[test]
+    fn adc_configuration_info_round_trip() {
+        let info = AdcConfigurationInfo {
+            resolution_bits: 12,
+            nominal_reference_mv: 3300,
+            num_gpio_channels: 4,
+            has_temp_sensor: true,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: AdcConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn adc_read_request_wire_stability() {
+        let req = AdcReadRequest {
+            channel: AdcChannel::Adc1,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: AdcReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn adc_configuration_info_wire_stability() {
+        let info = AdcConfigurationInfo {
+            resolution_bits: 12,
+            nominal_reference_mv: 3300,
+            num_gpio_channels: 4,
+            has_temp_sensor: true,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let canonical = bytes.clone();
+        let decoded: AdcConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, info);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn adc_channel_discriminants_are_stable() {
+        // Verify enum discriminants match expected wire values
+        assert_eq!(to_allocvec(&AdcChannel::Adc0).unwrap(), [0]);
+        assert_eq!(to_allocvec(&AdcChannel::Adc1).unwrap(), [1]);
+        assert_eq!(to_allocvec(&AdcChannel::Adc2).unwrap(), [2]);
+        assert_eq!(to_allocvec(&AdcChannel::Adc3).unwrap(), [3]);
+        assert_eq!(to_allocvec(&AdcChannel::TempSensor).unwrap(), [4]);
     }
 }
