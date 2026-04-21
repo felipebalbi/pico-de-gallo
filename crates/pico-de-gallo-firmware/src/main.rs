@@ -47,13 +47,13 @@ use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
     ENDPOINT_LIST, GpioError, GpioGet, GpioGetRequest, GpioGetResponse, GpioPut, GpioPutRequest, GpioPutResponse,
     GpioState, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest,
-    GpioWaitResponse, I2cError, I2cFrequency, I2cRead, I2cReadRequest, I2cReadResponse, I2cSetConfiguration,
-    I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest,
-    I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID, PICO_DE_GALLO_PID,
-    PingEndpoint, SpiError, SpiFlush, SpiFlushResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest,
-    SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer,
-    SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST,
-    TOPICS_OUT_LIST, Version, VersionInfo,
+    GpioWaitResponse, I2cError, I2cFrequency, I2cRead, I2cReadRequest, I2cReadResponse, I2cScan, I2cScanRequest,
+    I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite,
+    I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE,
+    MICROSOFT_VID, PICO_DE_GALLO_PID, PingEndpoint, SpiError, SpiFlush, SpiFlushResponse, SpiPhase, SpiPolarity,
+    SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest,
+    SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest,
+    SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, Version, VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
@@ -239,6 +239,7 @@ define_dispatch! {
         | GpioWaitForFalling  | async    | gpio_wait_for_falling_handler |
         | GpioWaitForAny      | async    | gpio_wait_for_any_handler     |
         | I2cSetConfiguration | async    | i2c_set_config_handler        |
+        | I2cScan             | async    | i2c_scan_handler              |
         | SpiSetConfiguration | async    | spi_set_config_handler        |
         | Version             | async    | version_handler               |
     };
@@ -377,6 +378,43 @@ async fn i2c_write_read_handler<'a>(
         .await
         .map_err(map_i2c_error)?;
     Ok(&context.buf[..count])
+}
+
+/// First standard (non-reserved) 7-bit I2C address.
+const I2C_ADDR_FIRST: u8 = 0x08;
+/// Last standard (non-reserved) 7-bit I2C address.
+const I2C_ADDR_LAST: u8 = 0x77;
+
+/// Handler for `i2c/scan` — probes I2C addresses and returns those that ACK.
+async fn i2c_scan_handler<'a>(
+    context: &'a mut Context,
+    _header: VarHeader,
+    req: I2cScanRequest,
+) -> I2cScanResponse<'a> {
+    let (start, end) = if req.include_reserved {
+        (0x00u8, 0x7Fu8)
+    } else {
+        (I2C_ADDR_FIRST, I2C_ADDR_LAST)
+    };
+
+    debug!("i2c scan: range={=u8:#x}..={=u8:#x}", start, end);
+
+    let mut found = 0usize;
+
+    for addr in start..=end {
+        // Probe by attempting a 1-byte read. ACK means a device is present.
+        let mut probe_buf = [0u8];
+        if context.i2c.read_async(addr, &mut probe_buf).await.is_ok() {
+            if found >= MAX_TRANSFER_SIZE {
+                break;
+            }
+            context.buf[found] = addr;
+            found += 1;
+        }
+    }
+
+    debug!("i2c scan: found {=usize} device(s)", found);
+    Ok(&context.buf[..found])
 }
 
 /// Handler for `spi/read` — reads bytes from the SPI bus.

@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **internal**: `I2cScan` endpoint and `I2cScanRequest` type for firmware-side bus
+  scanning. Returns a `Vec<u8>` of responding addresses — a single USB
+  round-trip replaces 112 individual reads.
+- **firmware**: `i2c_scan_handler` — probes addresses by 1-byte read, collects
+  responding addresses. Supports `include_reserved` flag.
+- **lib**: `PicoDeGallo::i2c_scan(include_reserved)` method returning `Vec<u8>`.
+- **hal**: `Hal::i2c_scan(include_reserved)` method returning `Vec<u8>`.
+- **ffi**: `gallo_i2c_scan()` function (writes responding addresses to caller
+  buffer) and `I2cScanFailed` status code.
+- **app**: `gallo i2c scan` now uses the dedicated scan endpoint (single round-trip)
+  instead of 112 individual reads.
 - **hal**: `SpiDev` type implementing both `embedded_hal::spi::SpiDevice` and
   `embedded_hal_async::spi::SpiDevice`. Manages chip-select (CS) via a GPIO pin,
   asserting CS low before operations and deasserting high afterward with

@@ -22,8 +22,8 @@
 //! - **Constants**: [`MICROSOFT_VID`], [`PICO_DE_GALLO_PID`], [`MAX_TRANSFER_SIZE`]
 //! - **Endpoints**: Defined via the [`postcard_rpc::endpoints!`] macro — see
 //!   [`ENDPOINT_LIST`] for the full table.
-//! - **I2C types**: [`I2cReadRequest`], [`I2cWriteRequest`], [`I2cWriteReadRequest`]
-//!   and their shared error type [`I2cError`].
+//! - **I2C types**: [`I2cReadRequest`], [`I2cWriteRequest`], [`I2cWriteReadRequest`],
+//!   [`I2cScanRequest`], and their shared error type [`I2cError`].
 //! - **SPI types**: [`SpiReadRequest`], [`SpiWriteRequest`], [`SpiTransferRequest`]
 //!   and their shared error type [`SpiError`].
 //! - **GPIO types**: [`GpioGetRequest`], [`GpioPutRequest`], [`GpioWaitRequest`],
@@ -104,6 +104,16 @@ pub type GpioPutResponse = Result<(), GpioError>;
 pub type GpioWaitResponse = Result<(), GpioError>;
 /// Response type for I2C bus configuration operations.
 pub type I2cSetConfigurationResponse = Result<(), I2cConfigError>;
+/// Response type for I2C bus scan operations.
+/// On the host (`use-std`), returns `Vec<u8>` of responding addresses;
+/// on firmware, returns `&[u8]`.
+#[cfg(feature = "use-std")]
+pub type I2cScanResponse<'a> = Result<Vec<u8>, I2cError>;
+/// Response type for I2C bus scan operations.
+/// On the host (`use-std`), returns `Vec<u8>` of responding addresses;
+/// on firmware, returns `&[u8]`.
+#[cfg(not(feature = "use-std"))]
+pub type I2cScanResponse<'a> = Result<&'a [u8], I2cError>;
 /// Response type for SPI bus configuration operations.
 pub type SpiSetConfigurationResponse = Result<(), SpiConfigError>;
 
@@ -127,6 +137,7 @@ endpoints! {
     | GpioWaitForFalling  | GpioWaitRequest            | GpioWaitResponse            | "gpio/wait-falling" |
     | GpioWaitForAny      | GpioWaitRequest            | GpioWaitResponse            | "gpio/wait-any"     |
     | I2cSetConfiguration | I2cSetConfigurationRequest | I2cSetConfigurationResponse | "i2c/set-config"    |
+    | I2cScan             | I2cScanRequest             | I2cScanResponse<'a>         | "i2c/scan"          |
     | SpiSetConfiguration | SpiSetConfigurationRequest | SpiSetConfigurationResponse | "spi/set-config"    |
     | Version             | ()                         | VersionInfo                 | "version"           |
 }
@@ -219,6 +230,17 @@ pub struct I2cWriteRequest<'a> {
     pub address: u8,
     /// Bytes to write.
     pub contents: &'a [u8],
+}
+
+/// Request to scan the I2C bus for responding devices.
+///
+/// The firmware probes addresses by attempting a 1-byte read at each
+/// 7-bit address. Addresses that ACK are included in the response.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct I2cScanRequest {
+    /// When `true`, also probe reserved addresses (0x00–0x07 and 0x78–0x7F).
+    /// When `false`, only probe the standard range 0x08–0x77.
+    pub include_reserved: bool,
 }
 
 // --- SPI

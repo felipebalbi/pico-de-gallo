@@ -117,6 +117,8 @@ pub enum Status {
     GpioInvalidPin = -24,
     /// USB communication failure
     CommsFailed = -25,
+    /// I2C bus scan failed
+    I2cScanFailed = -26,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -412,6 +414,61 @@ pub unsafe extern "C" fn gallo_i2c_write_read(
                 return Status::InvalidResponse;
             }
             rxbuf.copy_from_slice(&data);
+            Status::Ok
+        }
+        Err(e) => i2c_error_to_status(e),
+    }
+}
+
+/// gallo_i2c_scan - Scan the I2C bus for responding devices.
+///
+/// The firmware probes each 7-bit address. Addresses that ACK are written
+/// into `buf`. The actual number of devices found is written to `*found`.
+///
+/// When `include_reserved` is `false`, only the standard range (0x08–0x77)
+/// is probed; when `true`, the full range (0x00–0x7F) is scanned.
+///
+/// Returns `Status::Ok` in case of success or various error codes. If
+/// `buf_len` is smaller than the number of responding devices the buffer is
+/// filled to capacity and `*found` reflects the total count.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`, `buf` must be valid for
+/// `buf_len` bytes, and `found` must point to a valid `usize`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_i2c_scan(
+    gallo: *mut PicoDeGallo,
+    include_reserved: bool,
+    buf: *mut u8,
+    buf_len: usize,
+    found: *mut usize,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if buf.is_null() || found.is_null() {
+        eprintln!("Unexpected NULL pointer");
+        return Status::InvalidArgument;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    // Safety: caller must ensure buf is valid for buf_len bytes.
+    let buf = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+
+    let result = block_on(gallo.0.i2c_scan(include_reserved));
+
+    match result {
+        Ok(addresses) => {
+            let copy_len = addresses.len().min(buf.len());
+            buf[..copy_len].copy_from_slice(&addresses[..copy_len]);
+            unsafe { *found = addresses.len() };
             Status::Ok
         }
         Err(e) => i2c_error_to_status(e),

@@ -129,6 +129,27 @@ impl Hal {
             .map_err(I2cHalError::from)
     }
 
+    /// Scan the I2C bus and return the addresses of all responding devices.
+    ///
+    /// The firmware probes each 7-bit address by attempting a 1-byte read.
+    /// When `include_reserved` is `false`, only the standard range (0x08–0x77)
+    /// is probed; when `true`, the full range (0x00–0x7F) is scanned.
+    pub fn i2c_scan(&self, include_reserved: bool) -> Result<Vec<u8>, I2cHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.i2c_scan_inner(include_reserved))
+        } else {
+            self.i2c_scan_inner(include_reserved)
+        }
+    }
+
+    fn i2c_scan_inner(&self, include_reserved: bool) -> Result<Vec<u8>, I2cHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.i2c_scan(include_reserved))
+            .map_err(I2cHalError::from)
+    }
+
     /// Set SPI bus configuration parameters.
     pub fn spi_set_config(
         &mut self,

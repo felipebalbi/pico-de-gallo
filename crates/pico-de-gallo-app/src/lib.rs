@@ -324,6 +324,11 @@ impl Cli {
     async fn i2c_scan(&self, reserved: bool) -> Result<()> {
         let pg = self.connect();
 
+        let addresses = pg
+            .i2c_scan(reserved)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("i2c_scan failed"))?;
+
         let mut builder = Builder::with_capacity(17, 8);
         builder.push_record(
             (0..=16)
@@ -331,26 +336,20 @@ impl Cli {
                 .collect::<Vec<_>>(),
         );
 
-        for hi in 0..=7 {
+        for hi in 0u8..=7 {
             let mut row = vec![format!("{:x} ", hi)];
 
-            for lo in 0..=15 {
+            for lo in 0u8..=15 {
                 let address = hi << 4 | lo;
                 let stat = match address {
-                    0x00..=0x07 | 0x78..=0x7f => {
-                        if reserved {
-                            match pg.i2c_read(address, 1).await {
-                                Ok(_) => format!("{:02x}", address),
-                                Err(_) => "--".to_string(),
-                            }
+                    0x00..=0x07 | 0x78..=0x7f if !reserved => "RR".to_string(),
+                    _ => {
+                        if addresses.contains(&address) {
+                            format!("{:02x}", address)
                         } else {
-                            "RR".to_string()
+                            "--".to_string()
                         }
                     }
-                    _ => match pg.i2c_read(address, 1).await {
-                        Ok(_) => format!("{:02x}", address),
-                        Err(_) => "--".to_string(),
-                    },
                 };
 
                 row.push(stat);

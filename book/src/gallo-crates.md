@@ -70,7 +70,8 @@ Options:
 
 The `i2c` subcommand groups all I<sup>2</sup>C functionality. We
 support a regular `read`, `write`, and `write-read`
-operation. Additionally, a minimal `scan` facility is implemented.
+operation. Additionally, a dedicated `scan` endpoint probes all
+addresses in a single USB round-trip.
 
 #### Scanning
 
@@ -253,6 +254,7 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `ping`                       | `id`                                                          | Sends the `id` to *Pico de Gallo* and waits for a response.                |
 | `i2c_read`                   | `address`, `count`                                            | Attempts to read `count` bytes from the I<sup>2</sup>C device at `address` |
 | `i2c_write`                  | `address`, `contents`                                         | Attempts to write `contents` to the  I<sup>2</sup>C device at `address`    |
+| `i2c_scan`                   | `include_reserved`                                            | Scans the I<sup>2</sup>C bus and returns responding addresses              |
 | `spi_read`                   | `count`                                                       | Attempts to read `count` bytes via SPI                                     |
 | `spi_write`                  | `contents`                                                    | Attempts to write `contents` via SPI                                       |
 | `spi_transfer`               | `contents`                                                    | Full-duplex SPI transfer (simultaneous TX and RX)                          |

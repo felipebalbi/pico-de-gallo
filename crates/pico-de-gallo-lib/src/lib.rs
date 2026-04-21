@@ -46,10 +46,10 @@
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
     GpioGet, GpioGetRequest, GpioPut, GpioPutRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh,
-    GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cRead, I2cReadRequest, I2cSetConfiguration,
-    I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID,
-    PICO_DE_GALLO_PID, SpiFlush, SpiRead, SpiReadRequest, SpiSetConfiguration, SpiSetConfigurationRequest, SpiTransfer,
-    SpiTransferRequest, SpiWrite, SpiWriteRequest, Version,
+    GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest,
+    I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest,
+    MICROSOFT_VID, PICO_DE_GALLO_PID, SpiFlush, SpiRead, SpiReadRequest, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, Version,
 };
 
 pub use pico_de_gallo_internal::{GpioError, I2cError, SpiError};
@@ -221,6 +221,19 @@ impl PicoDeGallo {
                 contents,
                 count,
             })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Scan the I2C bus and return the addresses of all responding devices.
+    ///
+    /// The firmware probes each 7-bit address by attempting a 1-byte read.
+    /// Addresses that ACK are returned in ascending order. When
+    /// `include_reserved` is `false`, only the standard range (0x08–0x77) is
+    /// probed; when `true`, the full range (0x00–0x7F) is scanned.
+    pub async fn i2c_scan(&self, include_reserved: bool) -> Result<Vec<u8>, PicoDeGalloError<I2cError>> {
+        self.client
+            .send_resp::<I2cScan>(&I2cScanRequest { include_reserved })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
