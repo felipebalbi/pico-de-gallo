@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **lib**: Corrected `MAX_TRANSFER_SIZE` references in rustdoc for `i2c_read`,
+  `i2c_write_read`, and `spi_read` (was 512, actual value is 4096)
+
 ## [0.7.0] — 2025-04-20
 
 ### Breaking Changes

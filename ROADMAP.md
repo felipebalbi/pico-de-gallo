@@ -29,7 +29,7 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 
 | Phase | Description        | Items | Done | Status         |
 |-------|--------------------|-------|------|----------------|
-| **1** | Polish What Exists | 6     | 0    | 🔴 Not started |
+| **1** | Polish What Exists | 6     | 1    | 🟡 In progress |
 | **2** | New Protocols      | 6     | 0    | 🔴 Not started |
 | **3** | Advanced Features  | 6     | 0    | 🔴 Not started |
 | **4** | Hardware Rev 2     | 6     | 0    | 🔴 Not started |
@@ -104,14 +104,14 @@ each trait appears in crates.io drivers:
 These are quality improvements that make the existing feature set more
 reliable and complete before adding new capabilities.
 
-|   | Item                                                            | Tracking |
-|---|-----------------------------------------------------------------|----------|
-| ☐ | [1.1 Rich Error Types](#11-rich-error-types)                    |          |
-| ☐ | [1.2 SpiDevice Trait](#12-spidevice-trait-implementation)       |          |
-| ☐ | [1.3 I2C Bus Scan](#13-i2c-bus-scan-endpoint)                   |          |
-| ☐ | [1.4 GPIO Direction Control](#14-gpio-direction-control)        |          |
-| ☐ | [1.5 Config Query Endpoints](#15-configuration-query-endpoints) |          |
-| ☐ | [1.6 MAX_TRANSFER_SIZE Audit](#16-max_transfer_size-audit)      |          |
+|   | Item                                                            | Tracking                                                              |
+|---|-----------------------------------------------------------------|-----------------------------------------------------------------------|
+| ☐ | [1.1 Rich Error Types](#11-rich-error-types)                    | [#1](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/1) |
+| ☐ | [1.2 SpiDevice Trait](#12-spidevice-trait-implementation)       | [#2](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/2) |
+| ☐ | [1.3 I2C Bus Scan](#13-i2c-bus-scan-endpoint)                   | [#3](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/3) |
+| ☐ | [1.4 GPIO Direction Control](#14-gpio-direction-control)        | [#4](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/4) |
+| ☐ | [1.5 Config Query Endpoints](#15-configuration-query-endpoints) | [#5](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/5) |
+| ☑ | [1.6 MAX_TRANSFER_SIZE Audit](#16-max_transfer_size-audit)      | [#6](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/6) |
 
 ### 1.1 Rich Error Types
 
