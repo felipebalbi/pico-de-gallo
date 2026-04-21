@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **firmware/internal**: Reduced GPIO count from 8 (GPIO 8–15) to 4
+  (GPIO 8–11). GPIO 12–15 are now reserved for PWM output. All GPIO
+  indices are now 0–3 instead of 0–7.
 - **internal**: Replaced 12 unit-struct error types (`I2cReadFail`, `SpiWriteFail`,
   etc.) with 3 rich error enums: `I2cError` (7 variants), `SpiError` (2 variants),
   `GpioError` (2 variants). Wire protocol is **not** backward compatible —
@@ -29,6 +32,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **internal**: 6 PWM endpoints (`pwm/set-duty-cycle`, `pwm/get-duty-cycle`,
+  `pwm/enable`, `pwm/disable`, `pwm/set-config`, `pwm/get-config`), `PwmError`
+  enum (4 variants), request/response types, `PwmDutyCycleInfo` and
+  `PwmConfigurationInfo` structs, `NUM_PWM_CHANNELS` constant.
+- **firmware**: PWM output on GPIO 12–15 (PWM slices 6–7, 4 channels).
+  Frequency/phase-correct configuration with automatic top/divider computation.
+  Duty-cycle compare values scaled proportionally when frequency changes.
+- **lib**: `pwm_set_duty_cycle`, `pwm_get_duty_cycle`, `pwm_enable`,
+  `pwm_disable`, `pwm_set_config`, `pwm_get_config` async methods.
+  Re-exported `PwmError`, `PwmDutyCycleInfo`, `PwmConfigurationInfo`.
+- **hal**: `PwmChannel` wrapper implementing `embedded_hal::pwm::SetDutyCycle`.
+  `PwmHalError` type. `Hal::pwm_channel(n)` accessor. `pwm_set_config` and
+  `pwm_get_config` convenience methods on `Hal`.
+- **ffi**: 6 PWM FFI functions (`gallo_pwm_set_duty_cycle`,
+  `gallo_pwm_get_duty_cycle`, `gallo_pwm_enable`, `gallo_pwm_disable`,
+  `gallo_pwm_set_config`, `gallo_pwm_get_config`) and 9 status codes (-41 to -49).
+- **app**: `gallo pwm` subcommand group with `set-duty`, `get-duty`, `enable`,
+  `disable`, `set-config`, and `get-config` commands.
 - **internal**: 5 UART endpoints (`uart/read`, `uart/write`, `uart/flush`,
   `uart/set-config`, `uart/get-config`), `UartError` enum (7 variants),
   `UartReadRequest`, `UartWriteRequest`, `UartSetConfigurationRequest`, and

@@ -1,12 +1,13 @@
 //! Command-line interface for the Pico de Gallo USB bridge.
 //!
-//! The `gallo` CLI provides direct access to I2C, SPI, UART, and GPIO peripherals
+//! The `gallo` CLI provides direct access to I2C, SPI, UART, GPIO, and PWM peripherals
 //! connected through a Pico de Gallo device. It is built with
 //! [clap](https://docs.rs/clap) and supports:
 //!
 //! - **I2C**: bus scanning, read, write, and write-then-read operations
 //! - **SPI**: read, write, full-duplex transfer, and write-then-read
 //! - **UART**: read, write, flush, and baud rate configuration
+//! - **PWM**: duty cycle control, enable/disable, frequency/phase configuration
 //! - **Configuration**: set I2C/SPI/UART bus frequencies and SPI mode
 //! - **Device management**: list connected devices, query firmware version
 //!
@@ -167,6 +168,13 @@ enum Commands {
         /// UART commands
         #[command(subcommand)]
         command: UartCommands,
+    },
+
+    /// PWM control methods
+    Pwm {
+        /// PWM commands
+        #[command(subcommand)]
+        command: PwmCommands,
     },
 }
 
@@ -350,6 +358,63 @@ enum UartCommands {
     GetConfig,
 }
 
+#[derive(Subcommand, Debug)]
+enum PwmCommands {
+    /// Set the duty cycle of a PWM channel (raw value)
+    SetDuty {
+        /// PWM channel (0–3)
+        #[arg(short, long)]
+        channel: u8,
+
+        /// Raw duty cycle value (0 to top)
+        #[arg(short, long)]
+        duty: u16,
+    },
+
+    /// Query the current duty cycle of a PWM channel
+    GetDuty {
+        /// PWM channel (0–3)
+        #[arg(short, long)]
+        channel: u8,
+    },
+
+    /// Enable a PWM slice (both channels on the slice)
+    Enable {
+        /// PWM channel (0–3). The parent slice is enabled.
+        #[arg(short, long)]
+        channel: u8,
+    },
+
+    /// Disable a PWM slice (both channels on the slice)
+    Disable {
+        /// PWM channel (0–3). The parent slice is disabled.
+        #[arg(short, long)]
+        channel: u8,
+    },
+
+    /// Configure PWM frequency and phase-correct mode
+    SetConfig {
+        /// PWM channel (0–3). The parent slice is configured.
+        #[arg(short, long)]
+        channel: u8,
+
+        /// Desired output frequency in Hz
+        #[arg(short, long)]
+        frequency: u32,
+
+        /// Enable phase-correct mode
+        #[arg(short, long, default_value_t = false)]
+        phase_correct: bool,
+    },
+
+    /// Query the current PWM configuration
+    GetConfig {
+        /// PWM channel (0–3)
+        #[arg(short, long)]
+        channel: u8,
+    },
+}
+
 fn print_data(data: &[u8], format: &OutputFormat) {
     match format {
         OutputFormat::Hex => {
@@ -432,6 +497,18 @@ impl Cli {
                 UartCommands::Flush => self.uart_flush().await,
                 UartCommands::SetConfig { baud_rate } => self.uart_set_config(*baud_rate).await,
                 UartCommands::GetConfig => self.uart_get_config().await,
+            },
+            Commands::Pwm { command } => match command {
+                PwmCommands::SetDuty { channel, duty } => self.pwm_set_duty(*channel, *duty).await,
+                PwmCommands::GetDuty { channel } => self.pwm_get_duty(*channel).await,
+                PwmCommands::Enable { channel } => self.pwm_enable(*channel).await,
+                PwmCommands::Disable { channel } => self.pwm_disable(*channel).await,
+                PwmCommands::SetConfig {
+                    channel,
+                    frequency,
+                    phase_correct,
+                } => self.pwm_set_config(*channel, *frequency, *phase_correct).await,
+                PwmCommands::GetConfig { channel } => self.pwm_get_config(*channel).await,
             },
         }
     }
@@ -749,6 +826,72 @@ impl Cli {
             .map_err(|e| eyre!("{:?}", e).wrap_err("uart get-config failed"))?;
 
         println!("UART baud rate: {} bps", info.baud_rate);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // PWM
+    // -----------------------------------------------------------------------
+
+    async fn pwm_set_duty(&self, channel: u8, duty: u16) -> Result<()> {
+        let pg = self.connect();
+        pg.pwm_set_duty_cycle(channel, duty)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm set-duty failed"))?;
+        println!("PWM channel {channel}: duty set to {duty}");
+        Ok(())
+    }
+
+    async fn pwm_get_duty(&self, channel: u8) -> Result<()> {
+        let pg = self.connect();
+        let info = pg
+            .pwm_get_duty_cycle(channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm get-duty failed"))?;
+        println!(
+            "PWM channel {channel}: duty={} / max={}",
+            info.current_duty, info.max_duty
+        );
+        Ok(())
+    }
+
+    async fn pwm_enable(&self, channel: u8) -> Result<()> {
+        let pg = self.connect();
+        pg.pwm_enable(channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm enable failed"))?;
+        println!("PWM channel {channel}: slice enabled");
+        Ok(())
+    }
+
+    async fn pwm_disable(&self, channel: u8) -> Result<()> {
+        let pg = self.connect();
+        pg.pwm_disable(channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm disable failed"))?;
+        println!("PWM channel {channel}: slice disabled");
+        Ok(())
+    }
+
+    async fn pwm_set_config(&self, channel: u8, frequency_hz: u32, phase_correct: bool) -> Result<()> {
+        let pg = self.connect();
+        pg.pwm_set_config(channel, frequency_hz, phase_correct)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm set-config failed"))?;
+        println!("PWM channel {channel}: frequency={frequency_hz} Hz, phase_correct={phase_correct}");
+        Ok(())
+    }
+
+    async fn pwm_get_config(&self, channel: u8) -> Result<()> {
+        let pg = self.connect();
+        let info = pg
+            .pwm_get_config(channel)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("pwm get-config failed"))?;
+        println!(
+            "PWM channel {channel}: frequency={} Hz, phase_correct={}, enabled={}",
+            info.frequency_hz, info.phase_correct, info.enabled
+        );
         Ok(())
     }
 }

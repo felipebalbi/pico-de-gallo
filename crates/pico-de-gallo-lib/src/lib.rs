@@ -3,7 +3,7 @@
 //! This crate provides [`PicoDeGallo`], an async client for interacting with
 //! the Pico de Gallo firmware over USB. It supports I2C reads/writes, SPI
 //! operations (including full-duplex transfers), UART reads/writes, GPIO
-//! control, and device configuration — all via
+//! control, PWM output, and device configuration — all via
 //! [postcard-rpc](https://docs.rs/postcard-rpc) endpoints.
 //!
 //! # Quick Start
@@ -50,17 +50,19 @@ use pico_de_gallo_internal::{
     GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest,
     I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest, I2cSetConfiguration,
     I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID,
-    PICO_DE_GALLO_PID, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
-    SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, UartFlush,
-    UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration, UartSetConfigurationRequest, UartWrite,
-    UartWriteRequest, Version,
+    PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable, PwmEnableRequest, PwmGetConfiguration,
+    PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmSetConfiguration,
+    PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SpiFlush, SpiGetConfiguration, SpiRead,
+    SpiReadRequest, SpiSetConfiguration, SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite,
+    SpiWriteRequest, UartFlush, UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration,
+    UartSetConfigurationRequest, UartWrite, UartWriteRequest, Version,
 };
 
 pub use pico_de_gallo_internal::{
-    GpioDirection, GpioPull, GpioState, I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity,
-    UartConfigurationInfo, VersionInfo,
+    GpioDirection, GpioPull, GpioState, I2cFrequency, PwmConfigurationInfo, PwmDutyCycleInfo, SpiConfigurationInfo,
+    SpiPhase, SpiPolarity, UartConfigurationInfo, VersionInfo,
 };
-pub use pico_de_gallo_internal::{GpioError, I2cError, SpiError, UartError};
+pub use pico_de_gallo_internal::{GpioError, I2cError, PwmError, SpiError, UartError};
 
 use postcard_rpc::{
     header::VarSeqKind,
@@ -325,7 +327,7 @@ impl PicoDeGallo {
 
     /// Get the current state of GPIO numbered by `pin`.
     ///
-    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
     pub async fn gpio_get(&self, pin: u8) -> Result<GpioState, PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioGet>(&GpioGetRequest { pin })
@@ -335,7 +337,7 @@ impl PicoDeGallo {
 
     /// Set the GPIO numbered by `pin` to state `state`.
     ///
-    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
     pub async fn gpio_put(&self, pin: u8, state: GpioState) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioPut>(&GpioPutRequest { pin, state })
@@ -345,7 +347,7 @@ impl PicoDeGallo {
 
     /// Wait for GPIO numbered by `pin` to reach `High` state.
     ///
-    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
     pub async fn gpio_wait_for_high(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForHigh>(&GpioWaitRequest { pin })
@@ -355,7 +357,7 @@ impl PicoDeGallo {
 
     /// Wait for GPIO numbered by `pin` to reach `Low` state.
     ///
-    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
     pub async fn gpio_wait_for_low(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForLow>(&GpioWaitRequest { pin })
@@ -365,7 +367,7 @@ impl PicoDeGallo {
 
     /// Wait for a rising edge on the GPIO numbered by `pin`.
     ///
-    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
     pub async fn gpio_wait_for_rising_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForRising>(&GpioWaitRequest { pin })
@@ -375,7 +377,7 @@ impl PicoDeGallo {
 
     /// Wait for a falling edge on the GPIO numbered by `pin`.
     ///
-    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
     pub async fn gpio_wait_for_falling_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForFalling>(&GpioWaitRequest { pin })
@@ -386,7 +388,7 @@ impl PicoDeGallo {
     /// Wait for either a rising edge or a falling edge on the GPIO
     /// numbered by `pin`.
     ///
-    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
     pub async fn gpio_wait_for_any_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
             .send_resp::<GpioWaitForAny>(&GpioWaitRequest { pin })
@@ -401,7 +403,7 @@ impl PicoDeGallo {
     /// on an input pin (or `gpio_get`/wait on an output pin) will return
     /// [`GpioError::WrongDirection`].
     ///
-    /// Pico de Gallo offers 8 total GPIOs, numbered 0 through 7.
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
     pub async fn gpio_set_config(
         &self,
         pin: u8,
@@ -484,6 +486,93 @@ impl PicoDeGallo {
     /// The default is 115200.
     pub async fn uart_get_config(&self) -> Result<UartConfigurationInfo, PicoDeGalloError<Infallible>> {
         Ok(self.client.send_resp::<UartGetConfiguration>(&()).await?)
+    }
+
+    // -----------------------------------------------------------------------
+    // PWM
+    // -----------------------------------------------------------------------
+
+    /// Set the raw duty cycle of a PWM channel (0–3).
+    ///
+    /// `duty` is a raw compare value in the range `0..=top`. Use
+    /// [`pwm_get_duty_cycle`](Self::pwm_get_duty_cycle) to discover `max_duty`
+    /// (which equals the current `top` value).
+    ///
+    /// Channels 0–1 share PWM slice 6, channels 2–3 share PWM slice 7.
+    pub async fn pwm_set_duty_cycle(&self, channel: u8, duty: u16) -> Result<(), PicoDeGalloError<PwmError>> {
+        self.client
+            .send_resp::<PwmSetDutyCycle>(&PwmSetDutyCycleRequest { channel, duty })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Query the current duty cycle of a PWM channel (0–3).
+    ///
+    /// Returns a [`PwmDutyCycleInfo`] with `current_duty` (the raw compare
+    /// value) and `max_duty` (the `top` register + 1, i.e., the full-scale
+    /// value).
+    pub async fn pwm_get_duty_cycle(&self, channel: u8) -> Result<PwmDutyCycleInfo, PicoDeGalloError<PwmError>> {
+        self.client
+            .send_resp::<PwmGetDutyCycle>(&PwmGetDutyCycleRequest { channel })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Enable the PWM slice that owns `channel` (0–3).
+    ///
+    /// Because PWM slices drive two channels, enabling channel 0 also
+    /// enables channel 1 (and vice versa). Same for channels 2/3.
+    pub async fn pwm_enable(&self, channel: u8) -> Result<(), PicoDeGalloError<PwmError>> {
+        self.client
+            .send_resp::<PwmEnable>(&PwmEnableRequest { channel })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Disable the PWM slice that owns `channel` (0–3).
+    ///
+    /// Because PWM slices drive two channels, disabling channel 0 also
+    /// disables channel 1 (and vice versa). Same for channels 2/3.
+    pub async fn pwm_disable(&self, channel: u8) -> Result<(), PicoDeGalloError<PwmError>> {
+        self.client
+            .send_resp::<PwmDisable>(&PwmDisableRequest { channel })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Configure the PWM slice behind `channel` (0–3).
+    ///
+    /// Sets the output frequency and phase-correct mode. The firmware
+    /// computes `top` and `divider` automatically. Existing duty-cycle
+    /// compare values are scaled proportionally to the new `top`.
+    ///
+    /// Channels 0–1 share a slice, so configuring channel 0 also affects
+    /// channel 1 (and vice versa). Same for channels 2/3.
+    pub async fn pwm_set_config(
+        &self,
+        channel: u8,
+        frequency_hz: u32,
+        phase_correct: bool,
+    ) -> Result<(), PicoDeGalloError<PwmError>> {
+        self.client
+            .send_resp::<PwmSetConfiguration>(&PwmSetConfigurationRequest {
+                channel,
+                frequency_hz,
+                phase_correct,
+            })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Query the current configuration of the PWM slice behind `channel` (0–3).
+    ///
+    /// Returns a [`PwmConfigurationInfo`] with the effective frequency,
+    /// phase-correct flag, and enabled state.
+    pub async fn pwm_get_config(&self, channel: u8) -> Result<PwmConfigurationInfo, PicoDeGalloError<PwmError>> {
+        self.client
+            .send_resp::<PwmGetConfiguration>(&PwmGetConfigurationRequest { channel })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
     }
 }
 

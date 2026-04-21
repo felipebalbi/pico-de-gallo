@@ -32,8 +32,13 @@
 //! - **UART types**: [`UartReadRequest`], [`UartWriteRequest`],
 //!   [`UartSetConfigurationRequest`], [`UartConfigurationInfo`],
 //!   and their shared error type [`UartError`].
+//! - **PWM types**: [`PwmSetDutyCycleRequest`], [`PwmGetDutyCycleRequest`],
+//!   [`PwmEnableRequest`], [`PwmDisableRequest`], [`PwmSetConfigurationRequest`],
+//!   [`PwmGetConfigurationRequest`], [`PwmDutyCycleInfo`], [`PwmConfigurationInfo`],
+//!   and their shared error type [`PwmError`].
 //! - **Configuration**: [`I2cSetConfigurationRequest`], [`SpiSetConfigurationRequest`],
 //!   [`GpioSetConfigurationRequest`], [`UartSetConfigurationRequest`],
+//!   [`PwmSetConfigurationRequest`],
 //!   [`I2cFrequency`], [`SpiPhase`], [`SpiPolarity`],
 //!   [`GpioDirection`], [`GpioPull`], [`SpiConfigurationInfo`],
 //!   [`UartConfigurationInfo`].
@@ -159,6 +164,19 @@ pub type UartSetConfigurationResponse = Result<(), UartConfigError>;
 /// Returns the currently active UART parameters.
 pub type UartGetConfigurationResponse = UartConfigurationInfo;
 
+/// Response type for PWM set-duty-cycle operations.
+pub type PwmSetDutyCycleResponse = Result<(), PwmError>;
+/// Response type for PWM get-duty-cycle queries.
+pub type PwmGetDutyCycleResponse = Result<PwmDutyCycleInfo, PwmError>;
+/// Response type for PWM enable operations.
+pub type PwmEnableResponse = Result<(), PwmError>;
+/// Response type for PWM disable operations.
+pub type PwmDisableResponse = Result<(), PwmError>;
+/// Response type for PWM set-configuration operations.
+pub type PwmSetConfigurationResponse = Result<(), PwmConfigError>;
+/// Response type for PWM get-configuration queries.
+pub type PwmGetConfigurationResponse = Result<PwmConfigurationInfo, PwmError>;
+
 endpoints! {
     list = ENDPOINT_LIST;
     | EndpointTy          | RequestTy                  | ResponseTy                  | Path                |
@@ -188,8 +206,14 @@ endpoints! {
     | UartWrite            | UartWriteRequest<'a>        | UartWriteResponse            | "uart/write"        |
     | UartFlush            | ()                          | UartFlushResponse            | "uart/flush"        |
     | UartSetConfiguration | UartSetConfigurationRequest | UartSetConfigurationResponse | "uart/set-config"   |
-    | UartGetConfiguration | ()                          | UartGetConfigurationResponse | "uart/get-config"   |
-    | Version              | ()                          | VersionInfo                  | "version"           |
+    | UartGetConfiguration  | ()                            | UartGetConfigurationResponse  | "uart/get-config"    |
+    | PwmSetDutyCycle       | PwmSetDutyCycleRequest        | PwmSetDutyCycleResponse       | "pwm/set-duty-cycle" |
+    | PwmGetDutyCycle       | PwmGetDutyCycleRequest        | PwmGetDutyCycleResponse       | "pwm/get-duty-cycle" |
+    | PwmEnable             | PwmEnableRequest              | PwmEnableResponse             | "pwm/enable"         |
+    | PwmDisable            | PwmDisableRequest             | PwmDisableResponse            | "pwm/disable"        |
+    | PwmSetConfiguration   | PwmSetConfigurationRequest    | PwmSetConfigurationResponse   | "pwm/set-config"     |
+    | PwmGetConfiguration   | PwmGetConfigurationRequest    | PwmGetConfigurationResponse   | "pwm/get-config"     |
+    | Version               | ()                            | VersionInfo                   | "version"            |
 }
 
 topics! {
@@ -655,6 +679,144 @@ pub struct SpiConfigurationInfo {
     pub spi_phase: SpiPhase,
     /// SPI clock polarity.
     pub spi_polarity: SpiPolarity,
+}
+
+// --- PWM
+
+/// Number of PWM output channels exposed by the firmware.
+///
+/// Channels 0–3 map to physical pins GPIO12–GPIO15 on the Pico 2 header.
+/// Channels 0–1 share PWM slice 6; channels 2–3 share PWM slice 7.
+pub const NUM_PWM_CHANNELS: usize = 4;
+
+/// Error from PWM operations, propagated from firmware.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index**. Do **not** reorder or insert
+/// variants in the middle — only append at the end.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PwmError {
+    /// The requested channel index exceeds the available PWM channels
+    /// ([`NUM_PWM_CHANNELS`]).
+    InvalidChannel,
+    /// The requested duty cycle exceeds the maximum for the current
+    /// configuration (i.e., `duty > top`).
+    InvalidDutyCycle,
+    /// The requested configuration is invalid (e.g., zero frequency or
+    /// unsupported divider value).
+    InvalidConfiguration,
+    /// An unspecified error occurred in the firmware.
+    Other,
+}
+
+impl core::fmt::Display for PwmError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidChannel => write!(f, "invalid PWM channel"),
+            Self::InvalidDutyCycle => write!(f, "duty cycle exceeds maximum"),
+            Self::InvalidConfiguration => write!(f, "invalid PWM configuration"),
+            Self::Other => write!(f, "PWM error"),
+        }
+    }
+}
+
+/// Request to set the duty cycle of a PWM channel.
+///
+/// The `duty` value is a raw compare value (0 to `top`). Use
+/// [`PwmGetDutyCycle`] to query the current `max_duty` (top) before
+/// computing a duty cycle from a percentage.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmSetDutyCycleRequest {
+    /// PWM channel index (0–3).
+    pub channel: u8,
+    /// Raw duty cycle value (0 to top).
+    pub duty: u16,
+}
+
+/// Request to query the current duty cycle of a PWM channel.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmGetDutyCycleRequest {
+    /// PWM channel index (0–3).
+    pub channel: u8,
+}
+
+/// Information about a PWM channel's current duty cycle.
+///
+/// The `max_duty` field corresponds to the slice's `top` register value.
+/// The `current_duty` field is the raw compare value for the channel.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct PwmDutyCycleInfo {
+    /// Maximum duty cycle value (the `top` value of the PWM slice).
+    pub max_duty: u16,
+    /// Current duty cycle value (raw compare register).
+    pub current_duty: u16,
+}
+
+/// Request to enable a PWM channel's slice.
+///
+/// **Note:** Channels 0–1 share a slice and channels 2–3 share a slice.
+/// Enabling one channel enables the entire slice (both channels).
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmEnableRequest {
+    /// PWM channel index (0–3). The parent slice is enabled.
+    pub channel: u8,
+}
+
+/// Request to disable a PWM channel's slice.
+///
+/// **Note:** Channels 0–1 share a slice and channels 2–3 share a slice.
+/// Disabling one channel disables the entire slice (both channels).
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmDisableRequest {
+    /// PWM channel index (0–3). The parent slice is disabled.
+    pub channel: u8,
+}
+
+/// Request to reconfigure the PWM slice behind a channel.
+///
+/// Sets the output frequency and phase-correct mode. The firmware
+/// computes `top` and `divider` from the requested `frequency_hz`.
+///
+/// **Note:** Channels 0–1 share a slice and channels 2–3 share a slice.
+/// Configuring one channel reconfigures the entire slice.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmSetConfigurationRequest {
+    /// PWM channel index (0–3). Identifies the target slice.
+    pub channel: u8,
+    /// Desired PWM output frequency in Hz.
+    pub frequency_hz: u32,
+    /// Enable phase-correct mode. When `true`, the output frequency is
+    /// halved and the pulse is centered.
+    pub phase_correct: bool,
+}
+
+/// Request to query the current configuration of a PWM channel's slice.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct PwmGetConfigurationRequest {
+    /// PWM channel index (0–3).
+    pub channel: u8,
+}
+
+/// Error returned when PWM configuration fails.
+///
+/// This is a convenience alias — PWM configuration shares the same error
+/// type as other PWM operations.
+pub type PwmConfigError = PwmError;
+
+/// Current PWM slice configuration as reported by the firmware.
+///
+/// Returned by `pwm/get-config`. Reflects the last successfully applied
+/// configuration.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct PwmConfigurationInfo {
+    /// Actual PWM output frequency in Hz (may differ slightly from
+    /// the requested value due to divider/top quantization).
+    pub frequency_hz: u32,
+    /// Whether phase-correct mode is active.
+    pub phase_correct: bool,
+    /// Whether the slice is currently enabled.
+    pub enabled: bool,
 }
 
 // --- Version
@@ -1522,6 +1684,207 @@ mod tests {
         let bytes = to_allocvec(&info).unwrap();
         let canonical = bytes.clone();
         let decoded: UartConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, info);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    // --- PWM round-trip tests ---
+
+    #[test]
+    fn pwm_set_duty_cycle_request_round_trip() {
+        let req = PwmSetDutyCycleRequest {
+            channel: 2,
+            duty: 32768,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_duty_cycle_request_zero_duty() {
+        let req = PwmSetDutyCycleRequest {
+            channel: 0,
+            duty: 0,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_duty_cycle_request_max_duty() {
+        let req = PwmSetDutyCycleRequest {
+            channel: 3,
+            duty: u16::MAX,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_get_duty_cycle_request_round_trip() {
+        let req = PwmGetDutyCycleRequest { channel: 1 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmGetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_duty_cycle_info_round_trip() {
+        let info = PwmDutyCycleInfo {
+            max_duty: 65535,
+            current_duty: 32768,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: PwmDutyCycleInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn pwm_enable_request_round_trip() {
+        let req = PwmEnableRequest { channel: 0 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmEnableRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_disable_request_round_trip() {
+        let req = PwmDisableRequest { channel: 3 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmDisableRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_configuration_request_round_trip() {
+        let req = PwmSetConfigurationRequest {
+            channel: 1,
+            frequency_hz: 1_000,
+            phase_correct: false,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_configuration_request_phase_correct() {
+        let req = PwmSetConfigurationRequest {
+            channel: 2,
+            frequency_hz: 50,
+            phase_correct: true,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_set_configuration_request_common_frequencies() {
+        for freq in [50, 100, 1_000, 10_000, 50_000, 100_000, 1_000_000] {
+            let req = PwmSetConfigurationRequest {
+                channel: 0,
+                frequency_hz: freq,
+                phase_correct: false,
+            };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: PwmSetConfigurationRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn pwm_get_configuration_request_round_trip() {
+        let req = PwmGetConfigurationRequest { channel: 3 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: PwmGetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pwm_configuration_info_round_trip() {
+        let info = PwmConfigurationInfo {
+            frequency_hz: 1_000,
+            phase_correct: false,
+            enabled: true,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let decoded: PwmConfigurationInfo = from_bytes(&bytes).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn pwm_error_variants_round_trip() {
+        for err in [
+            PwmError::InvalidChannel,
+            PwmError::InvalidDutyCycle,
+            PwmError::InvalidConfiguration,
+            PwmError::Other,
+        ] {
+            let bytes = to_allocvec(&err).unwrap();
+            let decoded: PwmError = from_bytes(&bytes).unwrap();
+            assert_eq!(err, decoded);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn pwm_error_display() {
+        assert_eq!(
+            format!("{}", PwmError::InvalidChannel),
+            "invalid PWM channel"
+        );
+        assert_eq!(
+            format!("{}", PwmError::InvalidDutyCycle),
+            "duty cycle exceeds maximum"
+        );
+        assert_eq!(
+            format!("{}", PwmError::InvalidConfiguration),
+            "invalid PWM configuration"
+        );
+        assert_eq!(format!("{}", PwmError::Other), "PWM error");
+    }
+
+    #[test]
+    fn pwm_set_duty_cycle_request_wire_stability() {
+        let req = PwmSetDutyCycleRequest {
+            channel: 1,
+            duty: 1000,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: PwmSetDutyCycleRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn pwm_set_configuration_request_wire_stability() {
+        let req = PwmSetConfigurationRequest {
+            channel: 0,
+            frequency_hz: 1_000,
+            phase_correct: false,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: PwmSetConfigurationRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn pwm_configuration_info_wire_stability() {
+        let info = PwmConfigurationInfo {
+            frequency_hz: 50_000,
+            phase_correct: true,
+            enabled: true,
+        };
+        let bytes = to_allocvec(&info).unwrap();
+        let canonical = bytes.clone();
+        let decoded: PwmConfigurationInfo = from_bytes(&bytes).unwrap();
         assert_eq!(decoded, info);
         assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
     }

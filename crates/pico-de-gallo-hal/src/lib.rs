@@ -3,8 +3,8 @@
 //! backed by a Pico de Gallo USB bridge.
 //!
 //! This crate lets you run embedded Rust drivers on a host machine by
-//! forwarding I2C, SPI, GPIO, and delay operations to a Pico de Gallo device
-//! over USB.
+//! forwarding I2C, SPI, GPIO, PWM, and delay operations to a Pico de Gallo
+//! device over USB.
 //!
 //! # Quick Start
 //!
@@ -40,11 +40,12 @@
 //! | GPIO | [`OutputPin`](embedded_hal::digital::OutputPin), [`InputPin`](embedded_hal::digital::InputPin), [`StatefulOutputPin`](embedded_hal::digital::StatefulOutputPin) | [`Wait`](embedded_hal_async::digital::Wait) |
 //! | I2C | [`I2c`](embedded_hal::i2c::I2c) | [`I2c`](embedded_hal_async::i2c::I2c) |
 //! | SPI | [`SpiBus`](embedded_hal::spi::SpiBus), [`SpiDevice`](embedded_hal::spi::SpiDevice) | [`SpiBus`](embedded_hal_async::spi::SpiBus), [`SpiDevice`](embedded_hal_async::spi::SpiDevice) |
+//! | PWM | [`SetDutyCycle`](embedded_hal::pwm::SetDutyCycle) | — |
 //! | Delay | [`DelayNs`](embedded_hal::delay::DelayNs) | [`DelayNs`](embedded_hal_async::delay::DelayNs) |
 
 use pico_de_gallo_lib::{
     GpioDirection, GpioError, GpioPull, GpioState, I2cError, PicoDeGallo, PicoDeGalloError,
-    SpiError, UartError,
+    PwmError, SpiError, UartError,
 };
 use std::sync::Arc;
 use tokio::runtime::{Handle, Runtime};
@@ -228,6 +229,59 @@ impl Hal {
             })
     }
 
+    /// Set the PWM configuration for a channel's slice.
+    ///
+    /// Configures the output `frequency_hz` and `phase_correct` mode.
+    /// Existing duty-cycle values are scaled proportionally.
+    pub fn pwm_set_config(
+        &mut self,
+        channel: u8,
+        frequency_hz: u32,
+        phase_correct: bool,
+    ) -> Result<(), PwmHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.pwm_set_config_inner(channel, frequency_hz, phase_correct))
+        } else {
+            self.pwm_set_config_inner(channel, frequency_hz, phase_correct)
+        }
+    }
+
+    fn pwm_set_config_inner(
+        &self,
+        channel: u8,
+        frequency_hz: u32,
+        phase_correct: bool,
+    ) -> Result<(), PwmHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.pwm_set_config(channel, frequency_hz, phase_correct))
+            .map_err(PwmHalError::from)
+    }
+
+    /// Query the current PWM configuration for a channel's slice.
+    pub fn pwm_get_config(
+        &self,
+        channel: u8,
+    ) -> Result<pico_de_gallo_lib::PwmConfigurationInfo, PwmHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.pwm_get_config_inner(channel))
+        } else {
+            self.pwm_get_config_inner(channel)
+        }
+    }
+
+    fn pwm_get_config_inner(
+        &self,
+        channel: u8,
+    ) -> Result<pico_de_gallo_lib::PwmConfigurationInfo, PwmHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.pwm_get_config(channel))
+            .map_err(PwmHalError::from)
+    }
+
     /// Gpio
     pub fn gpio(&self, pin: u8) -> Gpio {
         let gallo = Arc::clone(&self.gallo);
@@ -257,6 +311,21 @@ impl Hal {
             gallo,
             handle,
             timeout_ms: 1000,
+        }
+    }
+
+    /// Obtain a [`PwmChannel`] handle for the given channel (0–3).
+    ///
+    /// Channels 0–1 are on PWM slice 6 (GPIO 12–13), channels 2–3 on
+    /// slice 7 (GPIO 14–15). The returned handle implements
+    /// [`SetDutyCycle`](embedded_hal::pwm::SetDutyCycle).
+    pub fn pwm_channel(&self, channel: u8) -> PwmChannel {
+        let gallo = Arc::clone(&self.gallo);
+        let handle = self.handle.clone();
+        PwmChannel {
+            channel,
+            gallo,
+            handle,
         }
     }
 
@@ -462,7 +531,7 @@ impl embedded_io::Error for UartHalError {
 /// GPIO pin handle implementing [`embedded-hal`] digital traits.
 ///
 /// Obtained from [`Hal::gpio`]. Each `Gpio` instance is bound to a specific
-/// pin number (0–7) and can be used as both an input and output.
+/// pin number (0–3) and can be used as both an input and output.
 pub struct Gpio {
     pin: u8,
     gallo: Arc<Mutex<PicoDeGallo>>,
@@ -1180,6 +1249,81 @@ impl embedded_io_async::Write for Uart {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PWM
+// ---------------------------------------------------------------------------
+
+/// Error type for PWM HAL operations.
+#[derive(Debug)]
+pub enum PwmHalError {
+    /// A PWM-specific error from the device firmware.
+    Pwm(PwmError),
+    /// A USB communication error.
+    Comms(String),
+}
+
+impl core::fmt::Display for PwmHalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Pwm(e) => write!(f, "{e}"),
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for PwmHalError {}
+
+impl From<PicoDeGalloError<PwmError>> for PwmHalError {
+    fn from(e: PicoDeGalloError<PwmError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(e) => Self::Pwm(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
+impl embedded_hal::pwm::Error for PwmHalError {
+    fn kind(&self) -> embedded_hal::pwm::ErrorKind {
+        embedded_hal::pwm::ErrorKind::Other
+    }
+}
+
+/// A single PWM channel on the Pico de Gallo board.
+///
+/// Obtained from [`Hal::pwm_channel`]. Implements the [`embedded_hal::pwm::SetDutyCycle`]
+/// trait.
+///
+/// Channels 0–1 share PWM slice 6, channels 2–3 share slice 7.
+/// Enable/disable and configuration changes affect the entire slice.
+pub struct PwmChannel {
+    channel: u8,
+    gallo: Arc<tokio::sync::Mutex<PicoDeGallo>>,
+    handle: Handle,
+}
+
+impl embedded_hal::pwm::ErrorType for PwmChannel {
+    type Error = PwmHalError;
+}
+
+impl embedded_hal::pwm::SetDutyCycle for PwmChannel {
+    fn max_duty_cycle(&self) -> u16 {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.pwm_get_duty_cycle(self.channel))
+            .map(|info| info.max_duty)
+            .unwrap_or(u16::MAX)
+    }
+
+    fn set_duty_cycle(&mut self, duty: u16) -> Result<(), Self::Error> {
+        let handle = &self.handle;
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.pwm_set_duty_cycle(self.channel, duty))
+            .map_err(PwmHalError::from)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1296,6 +1440,34 @@ mod tests {
     fn uart_hal_error_from_comms() {
         let e = UartHalError::Comms("USB disconnected".into());
         assert!(matches!(e, UartHalError::Comms(_)));
+    }
+
+    // --- PWM error tests ---
+
+    #[test]
+    fn pwm_error_kind_is_other() {
+        use embedded_hal::pwm::Error as _;
+        let err = PwmHalError::Pwm(PwmError::InvalidChannel);
+        assert_eq!(err.kind(), embedded_hal::pwm::ErrorKind::Other);
+    }
+
+    #[test]
+    fn pwm_comms_error_kind_is_other() {
+        use embedded_hal::pwm::Error as _;
+        let err = PwmHalError::Comms("timeout".into());
+        assert_eq!(err.kind(), embedded_hal::pwm::ErrorKind::Other);
+    }
+
+    #[test]
+    fn pwm_hal_error_display_endpoint() {
+        let err = PwmHalError::Pwm(PwmError::InvalidChannel);
+        assert_eq!(format!("{err}"), "invalid PWM channel");
+    }
+
+    #[test]
+    fn pwm_hal_error_display_comms() {
+        let err = PwmHalError::Comms("USB gone".into());
+        assert_eq!(format!("{err}"), "communication error: USB gone");
     }
 
     // --- Runtime detection tests ---

@@ -7,7 +7,7 @@ crates are discussed below.
 ## Gallo App
 
 The `gallo` app's main purpose is that of one-off, or batch-mode
-communication with *Pico de Gallo*'s I<sup>2</sup>C, SPI, UART, and GPIO buses. The
+communication with *Pico de Gallo*'s I<sup>2</sup>C, SPI, UART, GPIO, and PWM buses. The
 built-in help text gives us a little more information.
 
 ```console
@@ -23,6 +23,7 @@ Commands:
   spi      SPI access methods
   gpio     GPIO access methods
   uart     UART access methods
+  pwm      PWM control methods
   help     Print this message or the help of the given subcommand(s)
 
 Options:

@@ -94,7 +94,7 @@ each trait appears in crates.io drivers:
 3. `OutputPin` / `InputPin` — ✅ done
 4. `DelayNs` — ✅ done
 5. `embedded-io Read/Write` (UART) — ✅ done
-6. `SetDutyCycle` (PWM) — **missing**
+6. `SetDutyCycle` (PWM) — **implemented** (Phase 2.2)
 
 ---
 
@@ -193,7 +193,7 @@ endpoint families.*
 |   | Item                                                   | Tracking |
 |---|--------------------------------------------------------|----------|
 | ☑ | [2.1 UART Support](#21-uart-support)                   | [#7](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/7) |
-| ☐ | [2.2 PWM Support](#22-pwm-support)                     | [#8](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/8) |
+| ☑ | [2.2 PWM Support](#22-pwm-support)                     | [#8](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/8) |
 | ☐ | [2.3 ADC Support](#23-adc-support)                     | [#9](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/9) |
 | ☐ | [2.4 Second I2C Bus](#24-second-i2c-bus)               | [#10](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/10) |
 | ☐ | [2.5 Second SPI Bus](#25-second-spi-bus)               | [#11](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/11) |
@@ -669,7 +669,7 @@ but that's a separate product, not a replacement.
 | `StatefulOutputPin`    | `embedded-hal`       | ✅       | —     | Done      |
 | `Wait`                 | `embedded-hal-async` | —        | ✅    | Done      |
 | `DelayNs`              | `embedded-hal`       | ✅       | ✅    | Done      |
-| `SetDutyCycle`         | `embedded-hal`       | ❌       | —     | Phase 2.2 |
+| `SetDutyCycle`         | `embedded-hal`       | ✅       | 2.2   | — |
 | `Read`                 | `embedded-io`        | ❌       | ❌    | Phase 2.1 |
 | `Write`                | `embedded-io`        | ❌       | ❌    | Phase 2.1 |
 | `ReadReady`            | `embedded-io`        | ❌       | —     | Phase 2.1 |
@@ -688,7 +688,7 @@ exclusion.
 | **SPI**          | ✅                      | ✅ (+ SpiDevice)           | ✅ (+ slave)                | ✅ (MPSSE)          | ✅                | ❌             |
 | **UART**         | ❌                      | ✅                         | ❌                          | ✅ (dual)           | ✅                | ✅             |
 | **GPIO**         | ✅ (8 pins)             | ✅ (+ direction ctrl)      | ✅ (6 pins)                 | ✅ (limited)        | ✅                | ✅ (4 pins)    |
-| **PWM**          | ❌                      | ✅                         | ❌                          | ❌                  | ✅                | ❌             |
+| **PWM**          | ✅                      | ✅                         | ✅                          | ✅                  | ✅                | ✅             |
 | **ADC**          | ❌                      | ✅                         | ❌                          | ❌                  | ✅                | ✅ (3-ch)      |
 | **1-Wire**       | ❌                      | Post-1.0                   | ❌                          | ❌                  | ✅                | ❌             |
 | **Level shift**  | ❌                      | Rev 2                      | ❌ (accessory)              | ❌ (5V tolerant)    | ✅                | ❌             |

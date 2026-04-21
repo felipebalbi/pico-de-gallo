@@ -5,7 +5,7 @@
 # Pico de Gallo
 
 A USB bridge that turns a [Raspberry Pi Pico 2](https://www.raspberrypi.com/products/raspberry-pi-pico-2/)
-into a host-accessible I²C, SPI, UART, and GPIO interface. Write and test
+into a host-accessible I²C, SPI, UART, GPIO, and PWM interface. Write and test
 embedded Rust drivers on your development machine without cross-compiling
 or flashing firmware to a target board.
 
@@ -17,7 +17,8 @@ Pico de Gallo provides:
 - **SPI**: read, write, full-duplex transfer, and write-then-read
 - **UART**: read, write, flush, and baud rate configuration
 - **GPIO**: digital input/output and edge detection
-- **Configuration**: runtime I²C/SPI/UART frequency and SPI mode changes
+- **PWM**: 4-channel PWM output with configurable frequency and duty cycle
+- **Configuration**: runtime I²C/SPI/UART/PWM frequency and SPI mode changes
 
 All communication uses [postcard-rpc](https://docs.rs/postcard-rpc) over
 USB — a compact, typed, binary RPC protocol.
