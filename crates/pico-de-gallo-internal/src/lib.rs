@@ -2043,6 +2043,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "use-std")]
     fn adc_channel_display() {
         assert_eq!(format!("{}", AdcChannel::Adc0), "ADC0 (GPIO26)");
         assert_eq!(format!("{}", AdcChannel::Adc1), "ADC1 (GPIO27)");
@@ -2052,6 +2053,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "use-std")]
     fn adc_error_display() {
         assert_eq!(
             format!("{}", AdcError::ConversionFailed),
