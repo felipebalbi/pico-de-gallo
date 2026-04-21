@@ -191,12 +191,12 @@ endpoint families.*
 
 |   | Item                                                   | Tracking |
 |---|--------------------------------------------------------|----------|
-| ☐ | [2.1 UART Support](#21-uart-support)                   |          |
-| ☐ | [2.2 PWM Support](#22-pwm-support)                     |          |
-| ☐ | [2.3 ADC Support](#23-adc-support)                     |          |
-| ☐ | [2.4 Second I2C Bus](#24-second-i2c-bus)               |          |
-| ☐ | [2.5 Second SPI Bus](#25-second-spi-bus)               |          |
-| ☐ | [2.6 10-Bit I2C Addressing](#26-10-bit-i2c-addressing) |          |
+| ☐ | [2.1 UART Support](#21-uart-support)                   | [#7](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/7) |
+| ☐ | [2.2 PWM Support](#22-pwm-support)                     | [#8](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/8) |
+| ☐ | [2.3 ADC Support](#23-adc-support)                     | [#9](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/9) |
+| ☐ | [2.4 Second I2C Bus](#24-second-i2c-bus)               | [#10](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/10) |
+| ☐ | [2.5 Second SPI Bus](#25-second-spi-bus)               | [#11](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/11) |
+| ☐ | [2.6 10-Bit I2C Addressing](#26-10-bit-i2c-addressing) | [#12](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/12) |
 
 ### 2.1 UART Support
 
@@ -308,12 +308,12 @@ architecture changes.*
 
 |   | Item                                                              | Tracking |
 |---|-------------------------------------------------------------------|----------|
-| ☐ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) |          |
-| ☐ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       |          |
-| ☐ | [3.3 1-Wire via PIO](#33-1-wire-support-via-pio)                  |          |
-| ☐ | [3.4 Protocol Sniffing](#34-protocol-sniffing--logic-capture)     |          |
-| ☐ | [3.5 Config Persistence](#35-configuration-persistence)           |          |
-| ☐ | [3.6 Multi-Device Host](#36-multi-device-host-support)            |          |
+| ☐ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) | [#13](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/13) |
+| ☐ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       | [#14](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/14) |
+| ☐ | [3.3 1-Wire via PIO](#33-1-wire-support-via-pio)                  | [#15](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/15) |
+| ☐ | [3.4 Protocol Sniffing](#34-protocol-sniffing--logic-capture)     | [#16](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/16) |
+| ☐ | [3.5 Config Persistence](#35-configuration-persistence)           | [#17](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/17) |
+| ☐ | [3.6 Multi-Device Host](#36-multi-device-host-support)            | [#18](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/18) |
 
 ### 3.1 GPIO Event Topics (Push Notifications)
 
@@ -403,12 +403,12 @@ ordered by impact-to-cost ratio.
 
 |   | Item                                                             | Tracking |
 |---|------------------------------------------------------------------|----------|
-| ☐ | [4.1 Voltage Level Translators](#41-voltage-level-translators)   |          |
-| ☐ | [4.2 Target Power Output](#42-target-power-output)               |          |
-| ☐ | [4.3 Dedicated Connector Layout](#43-dedicated-connector-layout) |          |
-| ☐ | [4.4 ESD Protection](#44-esd-protection)                         |          |
-| ☐ | [4.5 Activity LEDs](#45-activity-leds)                           |          |
-| ☐ | [4.6 Board Size and Mounting](#46-board-size-and-mounting)       |          |
+| ☐ | [4.1 Voltage Level Translators](#41-voltage-level-translators)   | [#20](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/20) |
+| ☐ | [4.2 Target Power Output](#42-target-power-output)               | [#21](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/21) |
+| ☐ | [4.3 Dedicated Connector Layout](#43-dedicated-connector-layout) | [#22](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/22) |
+| ☐ | [4.4 ESD Protection](#44-esd-protection)                         | [#23](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/23) |
+| ☐ | [4.5 Activity LEDs](#45-activity-leds)                           | [#24](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/24) |
+| ☐ | [4.6 Board Size and Mounting](#46-board-size-and-mounting)       | [#25](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/25) |
 
 ### 4.1 Voltage Level Translators
 
