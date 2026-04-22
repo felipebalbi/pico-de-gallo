@@ -25,6 +25,7 @@ Commands:
   uart     UART access methods
   pwm      PWM control methods
   adc      ADC access methods
+  onewire  1-Wire bus access methods
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -63,7 +64,10 @@ Commands:
   scan        Scan I2C bus for existing devices
   read        Read bytes through the I2C bus from device at given address
   write       Write bytes through I2C bus to device at given address
-  write-read  Write bytes follwed by read bytes
+  write-read  Write bytes followed by read bytes
+  set-config  Set I2C bus configuration (frequency)
+  get-config  Get current I2C bus configuration
+  batch       Execute multiple I2C operations in a single transfer
   help        Print this message or the help of the given subcommand(s)
 
 Options:
@@ -164,14 +168,6 @@ $ gallo i2c write-read --address 0x68 --bytes 0x00 -c 10
 Exactly the same as I<sup>2</sup>C but without the extra `address`
 option.
 
-> [!NOTE]
->
-> At the time of this writing, the app does not **yet** support
-> controlling GPIOs, meaning that if you have a SPI device attached to
-> *Pico de Gallo* that only responds when a *CS* pin is pulled low,
-> then you must use either *pico-de-gallo-hal* or *pico-de-gallo-lib*,
-> both of which will be discussed later.
-
 ```console
 $ gallo spi help
 SPI access methods
@@ -183,6 +179,9 @@ Commands:
   write       Write bytes through SPI bus
   transfer    Full-duplex SPI transfer
   write-read  Write bytes followed by read bytes
+  set-config  Set SPI bus configuration (frequency, phase, polarity)
+  get-config  Get current SPI bus configuration
+  batch       Execute multiple SPI operations atomically under chip-select
   help        Print this message or the help of the given subcommand(s)
 
 Options:
@@ -271,6 +270,9 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `gpio_wait_for_falling_edge` | `pin`                                                         | Waits until a falling edge is seen on GPIO #`pin`                          |
 | `gpio_wait_for_any_edge`     | `pin`                                                         | Waits until any edge is seen on GPIO #`pin`                                |
 | `gpio_set_config`            | `pin`, `direction` (Input/Output), `pull` (None/Up/Down)      | Configures GPIO #`pin` direction and pull resistor. Enters explicit mode.  |
+| `gpio_subscribe`             | `pin`, `edge` (Rising/Falling/Any)                            | Subscribes to edge events on GPIO #`pin`. Pin becomes monitored.           |
+| `gpio_unsubscribe`           | `pin`                                                         | Unsubscribes from edge events on GPIO #`pin`. Pin returns to normal.       |
+| `subscribe_gpio_events`      | `depth`                                                       | Opens a topic subscription for `GpioEvent` messages from the device.       |
 | `i2c_set_config`             | `frequency` (Standard/Fast/FastPlus)                          | Sets I<sup>2</sup>C bus clock frequency                                     |
 | `spi_set_config`             | `spi_frequency`, `spi_phase`, `spi_polarity`                  | Sets SPI bus clock frequency, phase, and polarity                            |
 | `i2c_get_config`             |                                                               | Returns the active I<sup>2</sup>C bus configuration (frequency)              |
@@ -282,8 +284,24 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `uart_set_config`            | `baud_rate`                                                   | Sets the UART baud rate (must be > 0)                                      |
 | `uart_get_config`            |                                                               | Returns the active UART configuration (baud rate)                          |
 | `adc_read`                   | `channel` (AdcChannel enum)                                   | Reads a single 12-bit sample from the given ADC channel                    |
-| `adc_read_temperature`       |                                                               | Reads the on-die temperature sensor (returns millidegrees Celsius)         |
 | `adc_get_config`             |                                                               | Returns the ADC configuration (resolution, reference, channels)            |
+| `i2c_batch`                  | `address`, `ops` (encoded byte stream)                        | Executes multiple I<sup>2</sup>C operations in a single USB transfer       |
+| `spi_batch`                  | `cs_pin`, `ops` (encoded byte stream)                         | Executes multiple SPI operations atomically under chip-select              |
+| `onewire_reset`              |                                                               | Resets the 1-Wire bus and detects device presence                          |
+| `onewire_read`               | `len`                                                         | Reads N bytes from the 1-Wire bus                                          |
+| `onewire_write`              | `data`                                                        | Writes raw bytes to the 1-Wire bus                                         |
+| `onewire_write_pullup`       | `data`, `pullup_duration_ms`                                  | Writes bytes then applies strong pullup for parasitic-power devices        |
+| `onewire_search`             |                                                               | Starts a new ROM search and returns the first device                       |
+| `onewire_search_next`        |                                                               | Continues the current ROM search                                           |
+| `pwm_set_duty_cycle`         | `channel`, `duty`                                             | Sets the duty cycle for PWM channel                                        |
+| `pwm_get_duty_cycle`         | `channel`                                                     | Returns the current and maximum duty cycle                                 |
+| `pwm_enable`                 | `channel`                                                     | Enables a PWM channel                                                      |
+| `pwm_disable`                | `channel`                                                     | Disables a PWM channel                                                     |
+| `pwm_set_config`             | `channel`, `frequency_hz`, `phase_correct`                    | Configures PWM frequency and phase-correct mode                            |
+| `pwm_get_config`             | `channel`                                                     | Returns the active PWM configuration                                       |
+| `i2c_write_read`             | `address`, `contents`, `count`                                | Writes bytes then reads from the same I²C address (repeated start)         |
+| `list_devices`               |                                                               | Lists all connected Pico de Gallo devices (static method)                  |
+| `wait_closed`                |                                                               | Waits until the USB connection is closed                                   |
 
 ## Gallo Hal
 
@@ -306,7 +324,15 @@ examples.
 | I2C        | `I2c`                                        | `I2c`                 |
 | SPI        | `SpiBus`, `SpiDevice`                        | `SpiBus`, `SpiDevice` |
 | UART       | `embedded_io::Read`, `embedded_io::Write`    | `embedded_io_async::Read`, `embedded_io_async::Write` |
+| PWM        | `SetDutyCycle`                               | —                     |
 | Delay      | `DelayNs`                                    | `DelayNs`             |
+
+Additional handle types that don't map to standard traits:
+
+| Type         | Description |
+|--------------|-------------|
+| `OneWire`    | 1-Wire bus operations (reset, read, write, ROM search) |
+| `Adc`        | ADC reads and configuration (via `Hal::adc_read()`, `Hal::adc_get_config()`) |
 
 > **Note:** `SpiDevice` manages chip-select (CS) automatically via a
 > GPIO pin. Use `hal.spi_device(cs_pin)` to create an `SpiDevice`
@@ -324,7 +350,7 @@ struct Driver<I2C: I2c>;
 fn main() {
     let hal = Hal::new();
     let i2c = hal.i2c();
-    let delay = hal.Delay();
+    let delay = hal.delay();
 
     let mut drv = Driver::new(i2c, delay);
 

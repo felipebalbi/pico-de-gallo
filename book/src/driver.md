@@ -416,7 +416,7 @@ a lot of the work for us. Time to generate some code:
 > `device-driver-cli` generates for us.
 
 ```console
-$ device-driver-cli -m tm102.toml -d Inner -o src\inner.rs
+$ device-driver-cli -m tmp102.toml -d Inner -o src\inner.rs
 ```
 
 If everything ran without any errors, we should have a fairly

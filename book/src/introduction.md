@@ -2,17 +2,29 @@
 
 *Pico de Gallo* is an open hardware design built around the [Raspberry
 Pi Pico2](https://www.raspberrypi.com/products/raspberry-pi-pico-2/)
-board that simplifies the process of validating Embedded Rust drivers
-for I<sup>2</sup>C and SPI discrete devices.
+board that turns a Pico 2 into a versatile USB bridge for embedded
+development. It exposes the following interfaces to a host PC:
 
-With *Pico de Gallo*, one can focus on writing the standalone driver
-polymorphic on either [embedded-hal](https://docs.rs/embedded-hal) or
-[embedded-hal-async](https://docs.rs/embedded-hal-async) traits
-because `pico-de-gallo-hal` implements those traits directly.
+- **I²C** — read, write, write-read, bus scan, runtime frequency
+  configuration, transaction batching
+- **SPI** — read, write, transfer, flush, runtime mode/frequency
+  configuration, transaction batching
+- **UART** — read, write, flush, runtime baud/config changes
+- **GPIO** — get, put, direction control, edge/level event subscription
+- **PWM** — duty cycle control, enable/disable, frequency/config changes
+- **ADC** — single-shot analog reads on 4 GPIO-based channels (12-bit)
+- **1-Wire** — bus reset, read, write, ROM search (PIO hardware)
+The `pico-de-gallo-hal` crate implements standard
+[embedded-hal](https://docs.rs/embedded-hal) and
+[embedded-hal-async](https://docs.rs/embedded-hal-async) traits, so
+existing device drivers work out of the box — no code changes needed.
 
-In the following chapters we will look at the process of writing a
-small temperature sensor driver and how *Pico de Gallo* can help
-with testing and examples.
+A companion **CLI application** (`gallo`) provides interactive access to
+every interface.
+
+In the following chapters we will look at the *Pico de Gallo* ecosystem
+in detail: hardware assembly, the crate architecture, each supported
+interface, writing device drivers, and the FFI/C bindings.
 
 ## The Hardware
 

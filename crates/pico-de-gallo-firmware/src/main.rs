@@ -3,7 +3,7 @@
 //! Pico de Gallo firmware for the Raspberry Pi Pico 2 (RP2350).
 //!
 //! This firmware implements a USB bridge that exposes I2C, SPI, UART, GPIO,
-//! and PWM peripherals to a host computer via [postcard-rpc](https://docs.rs/postcard-rpc)
+//! PWM, ADC, and 1-Wire peripherals to a host computer via [postcard-rpc](https://docs.rs/postcard-rpc)
 //! endpoints. It runs on the [Embassy](https://embassy.dev) async runtime.
 //!
 //! # Peripheral Mapping
@@ -22,11 +22,11 @@
 //! | PWM 1    | GPIO 13 | Slice 6 channel B |
 //! | PWM 2    | GPIO 14 | Slice 7 channel A |
 //! | PWM 3    | GPIO 15 | Slice 7 channel B |
+//! | 1-Wire   | GPIO 16 | PIO0/SM0, open-drain |
 //! | ADC 0    | GPIO 26 | 12-bit, 0–3.3 V nominal |
 //! | ADC 1    | GPIO 27 | 12-bit, 0–3.3 V nominal |
 //! | ADC 2    | GPIO 28 | 12-bit, 0–3.3 V nominal |
 //! | ADC 3    | GPIO 29 | 12-bit, 0–3.3 V nominal |
-//! | Temp     | Internal | On-die temperature sensor |
 //! | USB      | Native USB | postcard-rpc transport |
 //!
 //! # Endpoints
@@ -40,6 +40,7 @@
 //! (4096) bytes for I2C and SPI data. Requests exceeding this limit are
 //! rejected with an error.
 
+use core::sync::atomic::{AtomicU16, Ordering};
 use defmt::{debug, info, warn};
 use embassy_embedded_hal::SetConfig;
 use embassy_executor::Spawner;
@@ -47,9 +48,68 @@ use embassy_rp::adc::{self, Adc};
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio::{Flex, Level, Pull};
+use embassy_rp::i2c::{self, I2c};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, PIO0, SPI0, UART0, USB};
+use embassy_rp::pio;
+use embassy_rp::pio_programs::onewire::{PioOneWire, PioOneWireProgram, PioOneWireSearch};
 use embassy_rp::pwm::{self, Pwm};
-use embassy_time::{Duration, with_timeout};
+use embassy_rp::spi::{self, Phase, Polarity, Spi};
+use embassy_rp::uart::{self, BufferedUart};
+use embassy_rp::usb::Driver;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Instant, with_timeout};
+use embedded_io_async::{Read as AsyncRead, Write as AsyncWrite};
 use fixed::traits::ToFixed;
+// Direct embassy-sync dep required: postcard-rpc's WireStorage is generic over
+// embassy_sync_0_7::blocking_mutex::raw::RawMutex, which is the same type as
+// embassy-sync 0.7's RawMutex (they share the same crate version).
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_usb::{Config, UsbDevice};
+use pico_de_gallo_internal::{
+    ADC_NOMINAL_REFERENCE_MV, ADC_RESOLUTION_BITS, AdcChannel, AdcConfigurationInfo, AdcError, AdcGetConfiguration,
+    AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse, ENDPOINT_LIST, GpioDirection, GpioEdge,
+    GpioError, GpioEvent, GpioEventTopic, GpioGet, GpioGetRequest, GpioGetResponse, GpioPull, GpioPut, GpioPutRequest,
+    GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSetConfigurationResponse, GpioState,
+    GpioSubscribe, GpioSubscribeRequest, GpioSubscribeResponse, GpioUnsubscribe, GpioUnsubscribeRequest,
+    GpioUnsubscribeResponse, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising,
+    GpioWaitRequest, GpioWaitResponse, I2cBatch, I2cBatchError, I2cBatchOp, I2cBatchRequest, I2cBatchResponse,
+    I2cError, I2cFrequency, I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse,
+    I2cScan, I2cScanRequest, I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest,
+    I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest,
+    I2cWriteResponse, MAX_BATCH_OPS, MAX_TRANSFER_SIZE, MICROSOFT_VID, NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS,
+    OneWireError, OneWireRead, OneWireReadRequest, OneWireReadResponse, OneWireReset, OneWireResetResponse,
+    OneWireSearch, OneWireSearchNext, OneWireSearchResponse, OneWireWrite, OneWireWritePullup,
+    OneWireWritePullupRequest, OneWireWritePullupResponse, OneWireWriteRequest, OneWireWriteResponse,
+    PICO_DE_GALLO_PID, PingEndpoint, PwmConfigurationInfo, PwmDisable, PwmDisableRequest, PwmDisableResponse,
+    PwmDutyCycleInfo, PwmEnable, PwmEnableRequest, PwmEnableResponse, PwmError, PwmGetConfiguration,
+    PwmGetConfigurationRequest, PwmGetConfigurationResponse, PwmGetDutyCycle, PwmGetDutyCycleRequest,
+    PwmGetDutyCycleResponse, PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetConfigurationResponse,
+    PwmSetDutyCycle, PwmSetDutyCycleRequest, PwmSetDutyCycleResponse, SpiBatch, SpiBatchError, SpiBatchOp,
+    SpiBatchRequest, SpiBatchResponse, SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration,
+    SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse,
+    SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, UartConfigurationInfo, UartError,
+    UartFlush, UartFlushResponse, UartGetConfiguration, UartGetConfigurationResponse, UartRead, UartReadRequest,
+    UartReadResponse, UartSetConfiguration, UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite,
+    UartWriteRequest, UartWriteResponse, Version, VersionInfo,
+};
+use postcard_rpc::{
+    define_dispatch,
+    header::VarHeader,
+    header::VarKeyKind,
+    server::{
+        Dispatch, Sender, Server,
+        impls::embassy_usb_v0_5::{
+            PacketBuffers,
+            dispatch_impl::{WireRxBuf, WireRxImpl, WireSpawnImpl, WireStorage, WireTxImpl},
+        },
+    },
+};
+use static_cell::ConstStaticCell;
+use static_cell::StaticCell;
+use {defmt_rtt as _, panic_probe as _};
 
 /// Per-pin direction mode tracked by firmware.
 ///
@@ -66,54 +126,6 @@ enum PinMode {
     /// Explicitly configured as output via `gpio/set-config`.
     ExplicitOutput,
 }
-use embassy_rp::i2c::{self, I2c};
-use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, SPI0, UART0, USB};
-use embassy_rp::spi::{self, Phase, Polarity, Spi};
-use embassy_rp::uart::{self, BufferedUart};
-use embassy_rp::usb::Driver;
-use embedded_io_async::{Read as AsyncRead, Write as AsyncWrite};
-// Direct embassy-sync dep required: postcard-rpc's WireStorage is generic over
-// embassy_sync_0_7::blocking_mutex::raw::RawMutex, which is the same type as
-// embassy-sync 0.7's RawMutex (they share the same crate version).
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_usb::{Config, UsbDevice};
-use pico_de_gallo_internal::{
-    ADC_NOMINAL_REFERENCE_MV, ADC_RESOLUTION_BITS, AdcChannel, AdcConfigurationInfo, AdcError, AdcGetConfiguration,
-    AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse, AdcReadTemperature,
-    AdcReadTemperatureResponse, ENDPOINT_LIST, GpioDirection, GpioError, GpioGet, GpioGetRequest, GpioGetResponse,
-    GpioPull, GpioPut, GpioPutRequest, GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest,
-    GpioSetConfigurationResponse, GpioState, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
-    GpioWaitForRising, GpioWaitRequest, GpioWaitResponse, I2cError, I2cFrequency, I2cGetConfiguration,
-    I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse, I2cScan, I2cScanRequest, I2cScanResponse,
-    I2cSetConfiguration, I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite, I2cWriteRead,
-    I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_TRANSFER_SIZE, MICROSOFT_VID,
-    NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS, PICO_DE_GALLO_PID, PingEndpoint, PwmConfigurationInfo, PwmDisable,
-    PwmDisableRequest, PwmDisableResponse, PwmDutyCycleInfo, PwmEnable, PwmEnableRequest, PwmEnableResponse, PwmError,
-    PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetConfigurationResponse, PwmGetDutyCycle,
-    PwmGetDutyCycleRequest, PwmGetDutyCycleResponse, PwmSetConfiguration, PwmSetConfigurationRequest,
-    PwmSetConfigurationResponse, PwmSetDutyCycle, PwmSetDutyCycleRequest, PwmSetDutyCycleResponse,
-    SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration, SpiGetConfigurationResponse,
-    SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest,
-    SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest,
-    SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, UartConfigurationInfo, UartError, UartFlush, UartFlushResponse,
-    UartGetConfiguration, UartGetConfigurationResponse, UartRead, UartReadRequest, UartReadResponse,
-    UartSetConfiguration, UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite, UartWriteRequest,
-    UartWriteResponse, Version, VersionInfo,
-};
-use postcard_rpc::{
-    define_dispatch,
-    header::VarHeader,
-    server::{
-        Dispatch, Server,
-        impls::embassy_usb_v0_5::{
-            PacketBuffers,
-            dispatch_impl::{WireRxBuf, WireRxImpl, WireSpawnImpl, WireStorage, WireTxImpl},
-        },
-    },
-};
-use static_cell::ConstStaticCell;
-use static_cell::StaticCell;
-use {defmt_rtt as _, panic_probe as _};
 
 /// Binary info entries for `picotool info` identification.
 ///
@@ -137,6 +149,7 @@ bind_interrupts!(struct Irqs {
     I2C1_IRQ => embassy_rp::i2c::InterruptHandler<I2C1>;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>, embassy_rp::dma::InterruptHandler<DMA_CH1>;
     UART0_IRQ => embassy_rp::uart::BufferedInterruptHandler<UART0>;
+    PIO0_IRQ_0 => embassy_rp::pio::InterruptHandler<PIO0>;
 });
 
 const NUM_GPIOS: usize = 4;
@@ -147,8 +160,8 @@ const NUM_PWM_SLICES: usize = 2;
 /// Must match the `ClockConfig::system_freq()` value passed to `embassy_rp::init`.
 const SYS_CLK_HZ: u32 = 150_000_000;
 
-/// Number of ADC channels stored in Context (4 GPIO + 1 temp sensor).
-const NUM_ADC_CHANNELS: usize = NUM_ADC_GPIO_CHANNELS + 1;
+/// Number of ADC channels stored in Context (4 GPIO channels).
+const NUM_ADC_CHANNELS: usize = NUM_ADC_GPIO_CHANNELS;
 
 /// Firmware application context holding all peripheral handles.
 ///
@@ -159,7 +172,7 @@ pub struct Context {
     i2c: I2c<'static, I2C1, i2c::Async>,
     spi: Spi<'static, SPI0, spi::Async>,
     uart: BufferedUart,
-    gpios: [Flex<'static>; NUM_GPIOS],
+    gpios: [Option<Flex<'static>>; NUM_GPIOS],
     pin_modes: [PinMode; NUM_GPIOS],
     pwm_slices: [Pwm<'static>; NUM_PWM_SLICES],
     pwm_configs: [pwm::Config; NUM_PWM_SLICES],
@@ -170,10 +183,13 @@ pub struct Context {
     spi_phase: SpiPhase,
     spi_polarity: SpiPolarity,
     uart_baud_rate: u32,
+    onewire: PioOneWire<'static, PIO0, 0>,
+    onewire_search: PioOneWireSearch,
     buf: [u8; MAX_TRANSFER_SIZE],
 }
 
 impl Context {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         i2c: I2c<'static, I2C1, i2c::Async>,
         spi: Spi<'static, SPI0, spi::Async>,
@@ -183,13 +199,15 @@ impl Context {
         pwm_configs: [pwm::Config; NUM_PWM_SLICES],
         adc: Adc<'static, adc::Blocking>,
         adc_channels: [adc::Channel<'static>; NUM_ADC_CHANNELS],
+        onewire: PioOneWire<'static, PIO0, 0>,
     ) -> Self {
+        let [g0, g1, g2, g3] = gpios;
         // Defaults match embassy-rp Config::default()
         Self {
             i2c,
             spi,
             uart,
-            gpios,
+            gpios: [Some(g0), Some(g1), Some(g2), Some(g3)],
             pin_modes: [PinMode::LegacyAuto; NUM_GPIOS],
             pwm_slices,
             pwm_configs,
@@ -200,6 +218,8 @@ impl Context {
             spi_phase: SpiPhase::CaptureOnFirstTransition,
             spi_polarity: SpiPolarity::IdleLow,
             uart_baud_rate: 115_200,
+            onewire,
+            onewire_search: PioOneWireSearch::new(),
             buf: [0; MAX_TRANSFER_SIZE],
         }
     }
@@ -208,11 +228,17 @@ impl Context {
 /// Helper macro to get a GPIO pin by index for input operations.
 /// In `LegacyAuto` mode, auto-switches to input. In `ExplicitInput` mode,
 /// uses the pin as-is. In `ExplicitOutput` mode, returns `WrongDirection`.
+/// Returns `PinMonitored` if the pin is currently subscribed for event monitoring.
 macro_rules! gpio_for_input {
     ($context:expr, $pin:expr) => {{
         let idx = usize::from($pin);
         let mode = *$context.pin_modes.get(idx).ok_or(GpioError::InvalidPin)?;
-        let gpio = $context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+        let gpio = $context
+            .gpios
+            .get_mut(idx)
+            .ok_or(GpioError::InvalidPin)?
+            .as_mut()
+            .ok_or(GpioError::PinMonitored)?;
         match mode {
             PinMode::LegacyAuto => gpio.set_as_input(),
             PinMode::ExplicitInput => {}
@@ -252,6 +278,97 @@ type AppServer = Server<AppTx, AppRx, WireRxBuf, PicoDeGallo>;
 
 static PBUFS: ConstStaticCell<BufStorage> = ConstStaticCell::new(BufStorage::new());
 static STORAGE: AppStorage = AppStorage::new();
+
+// --- GPIO event monitoring infrastructure ---
+
+/// Channel for sending a (Flex, GpioEdge) pair to start monitoring pin `n`.
+static GPIO_MONITOR_START: [Channel<CriticalSectionRawMutex, (Flex<'static>, GpioEdge), 1>; NUM_GPIOS] =
+    [Channel::new(), Channel::new(), Channel::new(), Channel::new()];
+
+/// Signal to stop monitoring pin `n`.
+static GPIO_MONITOR_STOP: [Signal<CriticalSectionRawMutex, ()>; NUM_GPIOS] =
+    [Signal::new(), Signal::new(), Signal::new(), Signal::new()];
+
+/// Channel for returning the Flex pin after monitoring stops.
+static GPIO_MONITOR_RETURN: [Channel<CriticalSectionRawMutex, Flex<'static>, 1>; NUM_GPIOS] =
+    [Channel::new(), Channel::new(), Channel::new(), Channel::new()];
+
+/// Ack channel: monitor task signals it is armed and listening.
+static GPIO_MONITOR_ARMED: [Channel<CriticalSectionRawMutex, (), 1>; NUM_GPIOS] =
+    [Channel::new(), Channel::new(), Channel::new(), Channel::new()];
+
+/// Monotonic sequence counter for published GPIO events.
+static GPIO_EVENT_SEQ: AtomicU16 = AtomicU16::new(0);
+
+/// Background task that monitors GPIO pin `N` for edge events.
+///
+/// The task waits for a `(Flex, GpioEdge)` on `GPIO_MONITOR_START[N]`,
+/// sends an armed ack, then loops detecting edges and publishing
+/// `GpioEvent` topics until `GPIO_MONITOR_STOP[N]` is signalled.
+/// After stopping, the `Flex` pin is returned via `GPIO_MONITOR_RETURN[N]`.
+///
+/// Edge detection is best-effort: if the pin changes faster than the
+/// monitor loop cadence, intermediate transitions may be missed.
+#[embassy_executor::task(pool_size = 4)]
+async fn gpio_monitor_task(slot: usize, tx: AppTx, vkk: VarKeyKind) {
+    let sender = Sender::new(tx, vkk);
+
+    loop {
+        // Wait for a subscribe request to hand us a pin
+        let (mut flex, edge) = GPIO_MONITOR_START[slot].receive().await;
+
+        // Configure as input for edge detection
+        flex.set_as_input();
+
+        // Signal that we are armed and listening
+        GPIO_MONITOR_ARMED[slot].send(()).await;
+
+        debug!("gpio monitor[{}]: armed, edge={=u8}", slot, edge as u8);
+
+        // Monitor loop: wait for edge or stop signal
+        loop {
+            use embassy_futures::select::{Either, select};
+
+            let edge_future = async {
+                match edge {
+                    GpioEdge::Rising => flex.wait_for_rising_edge().await,
+                    GpioEdge::Falling => flex.wait_for_falling_edge().await,
+                    GpioEdge::Any => flex.wait_for_any_edge().await,
+                }
+            };
+
+            match select(edge_future, GPIO_MONITOR_STOP[slot].wait()).await {
+                Either::First(()) => {
+                    let state = match flex.get_level() {
+                        Level::Low => GpioState::Low,
+                        Level::High => GpioState::High,
+                    };
+                    let timestamp_us = Instant::now().as_micros();
+                    let seq = GPIO_EVENT_SEQ.fetch_add(1, Ordering::Relaxed);
+
+                    let event = GpioEvent {
+                        pin: slot as u8,
+                        edge,
+                        state,
+                        timestamp_us,
+                    };
+
+                    debug!(
+                        "gpio monitor[{}]: edge detected, state={=u8}, ts={=u64}",
+                        slot, state as u8, timestamp_us
+                    );
+
+                    let _ = sender.publish::<GpioEventTopic>(seq.into(), &event).await;
+                }
+                Either::Second(()) => {
+                    debug!("gpio monitor[{}]: stop requested", slot);
+                    GPIO_MONITOR_RETURN[slot].send(flex).await;
+                    break;
+                }
+            }
+        }
+    }
+}
 
 /// Build the USB device configuration.
 ///
@@ -311,29 +428,33 @@ define_dispatch! {
     endpoints: {
         list: ENDPOINT_LIST;
 
-        | EndpointTy          | kind     | handler                       |
-        | ----------          | ----     | -------                       |
-        | PingEndpoint        | blocking | ping_handler                  |
-        | I2cRead             | async    | i2c_read_handler              |
-        | I2cWrite            | async    | i2c_write_handler             |
-        | I2cWriteRead        | async    | i2c_write_read_handler        |
-        | SpiRead             | async    | spi_read_handler              |
-        | SpiWrite            | async    | spi_write_handler             |
-        | SpiFlush            | async    | spi_flush_handler             |
-        | SpiTransfer         | async    | spi_transfer_handler          |
-        | GpioGet             | async    | gpio_get_handler              |
-        | GpioPut             | async    | gpio_put_handler              |
-        | GpioWaitForHigh     | async    | gpio_wait_for_high_handler    |
-        | GpioWaitForLow      | async    | gpio_wait_for_low_handler     |
-        | GpioWaitForRising   | async    | gpio_wait_for_rising_handler  |
-        | GpioWaitForFalling  | async    | gpio_wait_for_falling_handler |
-        | GpioWaitForAny      | async    | gpio_wait_for_any_handler     |
+        | EndpointTy           | kind     | handler                       |
+        | ----------           | ----     | -------                       |
+        | PingEndpoint         | blocking | ping_handler                  |
+        | I2cRead              | async    | i2c_read_handler              |
+        | I2cWrite             | async    | i2c_write_handler             |
+        | I2cWriteRead         | async    | i2c_write_read_handler        |
+        | SpiRead              | async    | spi_read_handler              |
+        | SpiWrite             | async    | spi_write_handler             |
+        | SpiFlush             | async    | spi_flush_handler             |
+        | SpiTransfer          | async    | spi_transfer_handler          |
+        | GpioGet              | async    | gpio_get_handler              |
+        | GpioPut              | async    | gpio_put_handler              |
+        | GpioWaitForHigh      | async    | gpio_wait_for_high_handler    |
+        | GpioWaitForLow       | async    | gpio_wait_for_low_handler     |
+        | GpioWaitForRising    | async    | gpio_wait_for_rising_handler  |
+        | GpioWaitForFalling   | async    | gpio_wait_for_falling_handler |
+        | GpioWaitForAny       | async    | gpio_wait_for_any_handler     |
         | GpioSetConfiguration | async    | gpio_set_config_handler       |
+        | GpioSubscribe        | async    | gpio_subscribe_handler        |
+        | GpioUnsubscribe      | async    | gpio_unsubscribe_handler      |
         | I2cSetConfiguration  | async    | i2c_set_config_handler        |
-        | I2cScan             | async    | i2c_scan_handler              |
+        | I2cScan              | async    | i2c_scan_handler              |
+        | I2cBatch             | async    | i2c_batch_handler             |
         | SpiSetConfiguration  | async    | spi_set_config_handler        |
         | I2cGetConfiguration  | blocking | i2c_get_config_handler        |
         | SpiGetConfiguration  | blocking | spi_get_config_handler        |
+        | SpiBatch             | async    | spi_batch_handler             |
         | UartRead             | async    | uart_read_handler             |
         | UartWrite            | async    | uart_write_handler            |
         | UartFlush            | async    | uart_flush_handler            |
@@ -346,15 +467,20 @@ define_dispatch! {
         | PwmSetConfiguration  | blocking | pwm_set_config_handler        |
         | PwmGetConfiguration  | blocking | pwm_get_config_handler        |
         | AdcRead              | blocking | adc_read_handler              |
-        | AdcReadTemperature   | blocking | adc_read_temperature_handler  |
         | AdcGetConfiguration  | blocking | adc_get_config_handler        |
-        | Version             | async    | version_handler               |
+        | OneWireReset         | async    | onewire_reset_handler         |
+        | OneWireRead          | async    | onewire_read_handler          |
+        | OneWireWrite         | async    | onewire_write_handler         |
+        | OneWireWritePullup   | async    | onewire_write_pullup_handler  |
+        | OneWireSearch        | async    | onewire_search_handler        |
+        | OneWireSearchNext    | async    | onewire_search_next_handler   |
+        | Version              | async    | version_handler               |
     };
     topics_in: {
         list: TOPICS_IN_LIST;
 
-        | TopicTy                   | kind      | handler                       |
-        | ----------                | ----      | -------                       |
+        | TopicTy                   | kind      | handler                 |
+        | ----------                | ----      | -------                 |
     };
     topics_out: {
         list: TOPICS_OUT_LIST;
@@ -413,17 +539,32 @@ async fn main(spawner: Spawner) {
         uart::Config::default(),
     );
 
-    // ADC — blocking mode for single-shot reads (GPIO26–29 + temp sensor)
+    // ADC — blocking mode for single-shot reads (GPIO26–29)
     let adc = Adc::new_blocking(p.ADC, adc::Config::default());
     let adc_channels = [
         adc::Channel::new_pin(p.PIN_26, Pull::None),
         adc::Channel::new_pin(p.PIN_27, Pull::None),
         adc::Channel::new_pin(p.PIN_28, Pull::None),
         adc::Channel::new_pin(p.PIN_29, Pull::None),
-        adc::Channel::new_temp_sensor(p.ADC_TEMP_SENSOR),
     ];
 
-    let context = Context::new(i2c, spi, uart, gpios, pwm_slices, pwm_configs, adc, adc_channels);
+    // 1-Wire — PIO0/SM0 on GPIO16
+    let pio::Pio { mut common, sm0, .. } = pio::Pio::new(p.PIO0, Irqs);
+    static OW_PROGRAM: StaticCell<PioOneWireProgram<'static, PIO0>> = StaticCell::new();
+    let ow_program = OW_PROGRAM.init(PioOneWireProgram::new(&mut common));
+    let onewire = PioOneWire::new(&mut common, sm0, p.PIN_16, ow_program);
+
+    let context = Context::new(
+        i2c,
+        spi,
+        uart,
+        gpios,
+        pwm_slices,
+        pwm_configs,
+        adc,
+        adc_channels,
+        onewire,
+    );
 
     let (device, tx_impl, rx_impl) = STORAGE.init(
         driver,
@@ -433,6 +574,13 @@ async fn main(spawner: Spawner) {
     );
     let dispatcher = PicoDeGallo::new(context, spawner.into());
     let vkk = dispatcher.min_key_len();
+
+    // Spawn GPIO monitor tasks before creating the server.
+    // EUsbWireTx is Clone, so we clone tx_impl for each task.
+    for slot in 0..NUM_GPIOS {
+        spawner.must_spawn(gpio_monitor_task(slot, tx_impl.clone(), vkk));
+    }
+
     let mut server: AppServer = Server::new(tx_impl, rx_impl, pbufs.rx_buf.as_mut_slice(), dispatcher, vkk);
     spawner.must_spawn(usb_task(device));
 
@@ -553,6 +701,102 @@ async fn i2c_scan_handler<'a>(
     Ok(&context.buf[..found])
 }
 
+/// Handler for `i2c/batch` — executes multiple I2C operations in one USB transfer.
+///
+/// Decodes postcard-serialized ops and executes each operation sequentially.
+/// Read data is accumulated in `context.buf`. If any operation fails,
+/// subsequent operations are skipped and the error includes the index of
+/// the failed operation.
+async fn i2c_batch_handler<'a>(
+    context: &'a mut Context,
+    _header: VarHeader,
+    req: I2cBatchRequest<'a>,
+) -> I2cBatchResponse<'a> {
+    let ops = req.ops;
+    let count = req.count as usize;
+
+    // Pre-validate op count
+    if count > MAX_BATCH_OPS {
+        return Err(I2cBatchError {
+            failed_op: 0,
+            kind: I2cError::BufferTooLong,
+        });
+    }
+
+    // Pre-validate: walk the ops to compute total read length
+    let mut total_read = 0usize;
+    let mut remaining = ops;
+    let mut validated = 0usize;
+    while !remaining.is_empty() {
+        let (op, rest) = postcard::take_from_bytes::<I2cBatchOp>(remaining).map_err(|_| I2cBatchError {
+            failed_op: validated as u16,
+            kind: I2cError::Other,
+        })?;
+        match op {
+            I2cBatchOp::Read { len } => total_read += len as usize,
+            I2cBatchOp::Write { .. } => {}
+        }
+        remaining = rest;
+        validated += 1;
+    }
+    if validated != count {
+        return Err(I2cBatchError {
+            failed_op: 0,
+            kind: I2cError::Other,
+        });
+    }
+    if total_read > MAX_TRANSFER_SIZE {
+        return Err(I2cBatchError {
+            failed_op: 0,
+            kind: I2cError::BufferTooLong,
+        });
+    }
+
+    debug!(
+        "i2c batch: addr={=u8:#x} ops={=usize} total_read={=usize}",
+        req.address, count, total_read
+    );
+
+    // Execute ops
+    let mut remaining = ops;
+    let mut read_offset = 0usize;
+    let mut op_index = 0u16;
+
+    while !remaining.is_empty() {
+        let (op, rest) = postcard::take_from_bytes::<I2cBatchOp>(remaining).unwrap();
+        remaining = rest;
+
+        match op {
+            I2cBatchOp::Read { len } => {
+                let len = len as usize;
+                let buf = &mut context.buf[read_offset..read_offset + len];
+                context
+                    .i2c
+                    .read_async(req.address, buf)
+                    .await
+                    .map_err(|e| I2cBatchError {
+                        failed_op: op_index,
+                        kind: map_i2c_error(e),
+                    })?;
+                read_offset += len;
+            }
+            I2cBatchOp::Write { data } => {
+                context
+                    .i2c
+                    .write_async(req.address, data.iter().copied())
+                    .await
+                    .map_err(|e| I2cBatchError {
+                        failed_op: op_index,
+                        kind: map_i2c_error(e),
+                    })?;
+            }
+        }
+        op_index += 1;
+    }
+
+    Ok(&context.buf[..read_offset])
+}
+
 /// Handler for `spi/read` — reads bytes from the SPI bus.
 async fn spi_read_handler<'a>(
     context: &'a mut Context,
@@ -609,6 +853,142 @@ async fn spi_transfer_handler<'a>(
     Ok(&context.buf[..len])
 }
 
+/// Handler for `spi/batch` — executes multiple SPI operations atomically under CS.
+///
+/// The firmware asserts CS on the specified GPIO pin before executing
+/// operations, and deasserts it after completion (even on error).
+/// Read and Transfer data is accumulated in `context.buf`.
+async fn spi_batch_handler<'a>(
+    context: &'a mut Context,
+    _header: VarHeader,
+    req: SpiBatchRequest<'a>,
+) -> SpiBatchResponse<'a> {
+    let ops = req.ops;
+    let count = req.count as usize;
+    let cs_idx = usize::from(req.cs_pin);
+
+    // Pre-validate op count
+    if count > MAX_BATCH_OPS {
+        return Err(SpiBatchError {
+            failed_op: 0,
+            kind: SpiError::BufferTooLong,
+        });
+    }
+
+    // Pre-validate: walk the ops to compute total read length
+    let mut total_read = 0usize;
+    let mut remaining = ops;
+    let mut validated = 0usize;
+    while !remaining.is_empty() {
+        let (op, rest) = postcard::take_from_bytes::<SpiBatchOp>(remaining).map_err(|_| SpiBatchError {
+            failed_op: validated as u16,
+            kind: SpiError::Other,
+        })?;
+        match op {
+            SpiBatchOp::Read { len } => total_read += len as usize,
+            SpiBatchOp::Transfer { data } => total_read += data.len(),
+            _ => {}
+        }
+        remaining = rest;
+        validated += 1;
+    }
+    if validated != count {
+        return Err(SpiBatchError {
+            failed_op: 0,
+            kind: SpiError::Other,
+        });
+    }
+    if total_read > MAX_TRANSFER_SIZE {
+        return Err(SpiBatchError {
+            failed_op: 0,
+            kind: SpiError::BufferTooLong,
+        });
+    }
+
+    // Validate and get the CS pin
+    let cs = context
+        .gpios
+        .get_mut(cs_idx)
+        .ok_or(SpiBatchError {
+            failed_op: 0,
+            kind: SpiError::Other,
+        })?
+        .as_mut()
+        .ok_or(SpiBatchError {
+            failed_op: 0,
+            kind: SpiError::Other,
+        })?;
+    cs.set_as_output();
+    cs.set_high();
+
+    debug!(
+        "spi batch: cs_pin={=u8} ops={=usize} total_read={=usize}",
+        req.cs_pin, count, total_read
+    );
+
+    // Assert CS (active low)
+    let cs = context.gpios[cs_idx].as_mut().unwrap();
+    cs.set_low();
+
+    let result = spi_batch_execute(&mut context.spi, &mut context.buf, ops).await;
+
+    // Deassert CS (always, even on error)
+    let cs = context.gpios[cs_idx].as_mut().unwrap();
+    cs.set_high();
+
+    result
+}
+
+/// Inner execution loop for SPI batch, separated so CS can be
+/// reliably deasserted in the caller regardless of outcome.
+async fn spi_batch_execute<'a>(
+    spi: &mut Spi<'static, SPI0, spi::Async>,
+    buf: &'a mut [u8; MAX_TRANSFER_SIZE],
+    ops: &[u8],
+) -> Result<&'a [u8], SpiBatchError> {
+    let mut remaining = ops;
+    let mut read_offset = 0usize;
+    let mut op_index = 0u16;
+
+    while !remaining.is_empty() {
+        let (op, rest) = postcard::take_from_bytes::<SpiBatchOp>(remaining).unwrap();
+        remaining = rest;
+
+        match op {
+            SpiBatchOp::Read { len } => {
+                let len = len as usize;
+                let slice = &mut buf[read_offset..read_offset + len];
+                spi.read(slice).await.map_err(|_| SpiBatchError {
+                    failed_op: op_index,
+                    kind: SpiError::Other,
+                })?;
+                read_offset += len;
+            }
+            SpiBatchOp::Write { data } => {
+                spi.write(data).await.map_err(|_| SpiBatchError {
+                    failed_op: op_index,
+                    kind: SpiError::Other,
+                })?;
+            }
+            SpiBatchOp::Transfer { data } => {
+                let len = data.len();
+                let slice = &mut buf[read_offset..read_offset + len];
+                spi.transfer(slice, data).await.map_err(|_| SpiBatchError {
+                    failed_op: op_index,
+                    kind: SpiError::Other,
+                })?;
+                read_offset += len;
+            }
+            SpiBatchOp::DelayNs { ns } => {
+                embassy_time::Timer::after(Duration::from_nanos(ns as u64)).await;
+            }
+        }
+        op_index += 1;
+    }
+
+    Ok(&buf[..read_offset])
+}
+
 /// Handler for `gpio/get` — reads the current logic level of a pin.
 async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGetRequest) -> GpioGetResponse {
     let gpio = gpio_for_input!(context, req.pin);
@@ -623,7 +1003,12 @@ async fn gpio_get_handler(context: &mut Context, _header: VarHeader, req: GpioGe
 async fn gpio_put_handler(context: &mut Context, _header: VarHeader, req: GpioPutRequest) -> GpioPutResponse {
     let idx = usize::from(req.pin);
     let mode = *context.pin_modes.get(idx).ok_or(GpioError::InvalidPin)?;
-    let gpio = context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+    let gpio = context
+        .gpios
+        .get_mut(idx)
+        .ok_or(GpioError::InvalidPin)?
+        .as_mut()
+        .ok_or(GpioError::PinMonitored)?;
 
     match mode {
         PinMode::LegacyAuto => gpio.set_as_output(),
@@ -713,7 +1098,12 @@ async fn gpio_set_config_handler(
 ) -> GpioSetConfigurationResponse {
     let idx = usize::from(req.pin);
     let mode = context.pin_modes.get_mut(idx).ok_or(GpioError::InvalidPin)?;
-    let gpio = context.gpios.get_mut(idx).ok_or(GpioError::InvalidPin)?;
+    let gpio = context
+        .gpios
+        .get_mut(idx)
+        .ok_or(GpioError::InvalidPin)?
+        .as_mut()
+        .ok_or(GpioError::PinMonitored)?;
 
     // Apply pull resistor setting
     gpio.set_pull(match req.pull {
@@ -738,6 +1128,58 @@ async fn gpio_set_config_handler(
         "gpio set_config: pin={=u8} dir={=u8} pull={=u8}",
         req.pin, req.direction as u8, req.pull as u8
     );
+    Ok(())
+}
+
+/// Handler for `gpio/subscribe` — starts edge-event monitoring on a pin.
+///
+/// Takes ownership of the pin from Context, sends it to a background monitor
+/// task, and waits for the armed acknowledgement before returning. While
+/// subscribed, the pin cannot be used by other GPIO operations.
+async fn gpio_subscribe_handler(
+    context: &mut Context,
+    _header: VarHeader,
+    req: GpioSubscribeRequest,
+) -> GpioSubscribeResponse {
+    let idx = usize::from(req.pin);
+    if idx >= NUM_GPIOS {
+        return Err(GpioError::InvalidPin);
+    }
+
+    let flex = context.gpios[idx].take().ok_or(GpioError::PinMonitored)?;
+
+    debug!("gpio subscribe: pin={=u8} edge={=u8}", req.pin, req.edge as u8);
+
+    GPIO_MONITOR_START[idx].send((flex, req.edge)).await;
+    GPIO_MONITOR_ARMED[idx].receive().await;
+
+    Ok(())
+}
+
+/// Handler for `gpio/unsubscribe` — stops edge-event monitoring on a pin.
+///
+/// Signals the monitor task to stop, waits for the pin to be returned, and
+/// puts it back into Context so regular GPIO operations can resume.
+async fn gpio_unsubscribe_handler(
+    context: &mut Context,
+    _header: VarHeader,
+    req: GpioUnsubscribeRequest,
+) -> GpioUnsubscribeResponse {
+    let idx = usize::from(req.pin);
+    if idx >= NUM_GPIOS {
+        return Err(GpioError::InvalidPin);
+    }
+
+    if context.gpios[idx].is_some() {
+        return Err(GpioError::PinNotMonitored);
+    }
+
+    debug!("gpio unsubscribe: pin={=u8}", req.pin);
+
+    GPIO_MONITOR_STOP[idx].signal(());
+    let flex = GPIO_MONITOR_RETURN[idx].receive().await;
+    context.gpios[idx] = Some(flex);
+
     Ok(())
 }
 
@@ -909,7 +1351,7 @@ fn pwm_channel_parts(channel: u8) -> Result<(usize, bool), PwmError> {
         return Err(PwmError::InvalidChannel);
     }
     let slice_idx = usize::from(channel) / 2;
-    let is_b = (channel % 2) != 0;
+    let is_b = !channel.is_multiple_of(2);
     Ok((slice_idx, is_b))
 }
 
@@ -1112,7 +1554,6 @@ fn adc_channel_index(channel: AdcChannel) -> usize {
         AdcChannel::Adc1 => 1,
         AdcChannel::Adc2 => 2,
         AdcChannel::Adc3 => 3,
-        AdcChannel::TempSensor => 4,
     }
 }
 
@@ -1130,31 +1571,6 @@ fn adc_read_handler(context: &mut Context, _header: VarHeader, req: AdcReadReque
     }
 }
 
-/// Handler for `adc/read-temperature` — reads the on-die temp sensor and
-/// returns the temperature in millidegrees Celsius.
-///
-/// Uses the RP2350 temperature formula (integer math):
-///   V_µV = raw × 3_300_000 / 4096
-///   T_m°C = 27_000 − (V_µV − 706_000) × 1000 / 1721
-fn adc_read_temperature_handler(context: &mut Context, _header: VarHeader, _req: ()) -> AdcReadTemperatureResponse {
-    let ch = &mut context.adc_channels[NUM_ADC_CHANNELS - 1]; // temp sensor is last
-
-    match context.adc.blocking_read(ch) {
-        Ok(raw) => {
-            // Integer math to avoid floats:
-            // V in microvolts: raw * 3_300_000 / 4096
-            let v_uv = i64::from(raw) * 3_300_000 / 4096;
-            // T in millidegrees C: 27000 - (v_uv - 706000) * 1000 / 1721
-            let temp_mc = 27_000i64 - (v_uv - 706_000) * 1000 / 1721;
-            let temp_mc = temp_mc as i32;
-
-            debug!("adc temperature: raw={=u16} temp_mc={=i32}", raw, temp_mc);
-            Ok(temp_mc)
-        }
-        Err(_) => Err(AdcError::ConversionFailed),
-    }
-}
-
 /// Handler for `adc/get-config` — returns ADC configuration info.
 fn adc_get_config_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> AdcGetConfigurationResponse {
     debug!("adc get config");
@@ -1162,8 +1578,89 @@ fn adc_get_config_handler(_context: &mut Context, _header: VarHeader, _req: ()) 
         resolution_bits: ADC_RESOLUTION_BITS,
         nominal_reference_mv: ADC_NOMINAL_REFERENCE_MV,
         num_gpio_channels: NUM_ADC_GPIO_CHANNELS as u8,
-        has_temp_sensor: true,
     }
+}
+
+// ---- 1-Wire handlers ----
+
+/// Handler for `onewire/reset` — performs a bus reset and returns presence detection.
+async fn onewire_reset_handler(context: &mut Context, _header: VarHeader, _req: ()) -> OneWireResetResponse {
+    debug!("onewire reset");
+    let present = context.onewire.reset().await;
+    Ok(present)
+}
+
+/// Handler for `onewire/read` — reads bytes from the 1-Wire bus.
+async fn onewire_read_handler<'a>(
+    context: &'a mut Context,
+    _header: VarHeader,
+    req: OneWireReadRequest,
+) -> OneWireReadResponse<'a> {
+    let len = usize::from(req.len);
+    if len > MAX_TRANSFER_SIZE {
+        warn!("onewire read: requested len {} exceeds buffer", len);
+        return Err(OneWireError::BufferTooLong);
+    }
+
+    debug!("onewire read: len={=usize}", len);
+    let buf = &mut context.buf[..len];
+    context.onewire.read_bytes(buf).await;
+    Ok(&context.buf[..len])
+}
+
+/// Handler for `onewire/write` — writes bytes to the 1-Wire bus.
+async fn onewire_write_handler<'a>(
+    context: &mut Context,
+    _header: VarHeader,
+    req: OneWireWriteRequest<'a>,
+) -> OneWireWriteResponse {
+    if req.data.len() > MAX_TRANSFER_SIZE {
+        warn!("onewire write: data len {} exceeds buffer", req.data.len());
+        return Err(OneWireError::BufferTooLong);
+    }
+
+    debug!("onewire write: len={=usize}", req.data.len());
+    context.onewire.write_bytes(req.data).await;
+    Ok(())
+}
+
+/// Handler for `onewire/write-pullup` — writes bytes then applies strong pullup.
+async fn onewire_write_pullup_handler<'a>(
+    context: &mut Context,
+    _header: VarHeader,
+    req: OneWireWritePullupRequest<'a>,
+) -> OneWireWritePullupResponse {
+    if req.data.len() > MAX_TRANSFER_SIZE {
+        warn!("onewire write-pullup: data len {} exceeds buffer", req.data.len());
+        return Err(OneWireError::BufferTooLong);
+    }
+
+    let duration = Duration::from_millis(u64::from(req.pullup_duration_ms));
+    debug!(
+        "onewire write-pullup: len={=usize} pullup_ms={=u16}",
+        req.data.len(),
+        req.pullup_duration_ms
+    );
+    context.onewire.write_bytes_pullup(req.data, duration).await;
+    Ok(())
+}
+
+/// Handler for `onewire/search` — starts a new ROM search from scratch.
+async fn onewire_search_handler(context: &mut Context, _header: VarHeader, _req: ()) -> OneWireSearchResponse {
+    debug!("onewire search: starting new search");
+    context.onewire_search = PioOneWireSearch::new();
+    let result = context.onewire_search.next(&mut context.onewire).await;
+    Ok(result)
+}
+
+/// Handler for `onewire/search-next` — continues the current ROM search.
+async fn onewire_search_next_handler(context: &mut Context, _header: VarHeader, _req: ()) -> OneWireSearchResponse {
+    debug!("onewire search-next");
+    if context.onewire_search.is_finished() {
+        return Ok(None);
+    }
+    let result = context.onewire_search.next(&mut context.onewire).await;
+    Ok(result)
 }
 
 /// Handler for `version` — returns the firmware version.

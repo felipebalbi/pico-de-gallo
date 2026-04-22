@@ -37,8 +37,8 @@
 
 use futures::executor::block_on;
 use pico_de_gallo_lib::{
-    self as lib, AdcChannel, AdcError, GpioError, I2cError, PicoDeGalloError, PwmError, SpiError,
-    UartError,
+    self as lib, AdcChannel, AdcError, GpioError, I2cError, OneWireError, PicoDeGalloError,
+    PwmError, SpiError, UartError,
 };
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -170,12 +170,28 @@ pub enum Status {
     PwmInvalidConfiguration = -49,
     /// ADC read failed
     AdcReadFailed = -50,
-    /// ADC read-temperature failed
-    AdcReadTemperatureFailed = -51,
     /// ADC get-config query failed
-    AdcGetConfigFailed = -52,
+    AdcGetConfigFailed = -51,
     /// ADC conversion error
-    AdcConversionFailed = -53,
+    AdcConversionFailed = -52,
+    /// GPIO pin is currently being monitored (subscribed)
+    GpioPinMonitored = -53,
+    /// GPIO pin is not being monitored (not subscribed)
+    GpioPinNotMonitored = -54,
+    /// GPIO subscribe failed
+    GpioSubscribeFailed = -55,
+    /// GPIO unsubscribe failed
+    GpioUnsubscribeFailed = -56,
+    /// 1-Wire: no device responded to reset
+    OneWireNoPresence = -57,
+    /// 1-Wire: bus communication error
+    OneWireBusError = -58,
+    /// 1-Wire: read operation failed
+    OneWireReadFailed = -59,
+    /// 1-Wire: write operation failed
+    OneWireWriteFailed = -60,
+    /// 1-Wire: ROM search failed
+    OneWireSearchFailed = -61,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -205,6 +221,8 @@ fn gpio_error_to_status(e: PicoDeGalloError<GpioError>) -> Status {
     match e {
         PicoDeGalloError::Endpoint(GpioError::InvalidPin) => Status::GpioInvalidPin,
         PicoDeGalloError::Endpoint(GpioError::WrongDirection) => Status::GpioWrongDirection,
+        PicoDeGalloError::Endpoint(GpioError::PinMonitored) => Status::GpioPinMonitored,
+        PicoDeGalloError::Endpoint(GpioError::PinNotMonitored) => Status::GpioPinNotMonitored,
         PicoDeGalloError::Endpoint(GpioError::Other) => Status::GpioGetFailed,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
@@ -239,6 +257,16 @@ fn adc_error_to_status(e: PicoDeGalloError<AdcError>) -> Status {
     match e {
         PicoDeGalloError::Endpoint(AdcError::ConversionFailed) => Status::AdcConversionFailed,
         PicoDeGalloError::Endpoint(AdcError::Other) => Status::AdcReadFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn onewire_error_to_status(e: PicoDeGalloError<OneWireError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(OneWireError::NoPresence) => Status::OneWireNoPresence,
+        PicoDeGalloError::Endpoint(OneWireError::BusError) => Status::OneWireBusError,
+        PicoDeGalloError::Endpoint(OneWireError::BufferTooLong) => Status::BufferTooLong,
+        PicoDeGalloError::Endpoint(OneWireError::Other) => Status::OneWireReadFailed,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
 }
@@ -971,6 +999,85 @@ pub unsafe extern "C" fn gallo_gpio_set_config(
     }
 }
 
+// ----------------------------- GPIO Subscribe/Unsubscribe endpoints -----------------------------
+
+/// gallo_gpio_subscribe - Subscribe to GPIO edge events on a pin.
+///
+/// `edge`: 0 = Rising, 1 = Falling, 2 = Any. Any other value returns
+/// `Status::InvalidArgument`.
+///
+/// While subscribed, other GPIO operations on this pin will return
+/// `Status::GpioPinMonitored`. Use [`gallo_gpio_unsubscribe`] to release.
+///
+/// Returns `Status::Ok` on success.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_subscribe(
+    gallo: *mut PicoDeGallo,
+    pin: u8,
+    edge: u8,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    let edge_val = match edge {
+        0 => lib::GpioEdge::Rising,
+        1 => lib::GpioEdge::Falling,
+        2 => lib::GpioEdge::Any,
+        _ => {
+            eprintln!("Invalid edge value: {edge}");
+            return Status::InvalidArgument;
+        }
+    };
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_subscribe(pin, edge_val));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+/// gallo_gpio_unsubscribe - Unsubscribe from GPIO edge events on a pin.
+///
+/// Stops monitoring and returns the pin to normal operation. Returns
+/// `Status::GpioPinNotMonitored` if the pin is not currently subscribed.
+///
+/// Returns `Status::Ok` on success.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_unsubscribe(gallo: *mut PicoDeGallo, pin: u8) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_unsubscribe(pin));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
 // ----------------------------- I2C Set config endpoint -----------------------------
 
 /// gallo_i2c_set_config - Sets the I2C bus configuration parameters.
@@ -1560,8 +1667,7 @@ pub unsafe extern "C" fn gallo_pwm_get_config(
 /// gallo_adc_read - Perform a single-shot ADC read.
 ///
 /// On success, writes the raw 12-bit value (0–4095) to `*out_value`.
-/// `channel` selects the input: 0–3 for GPIO26–29, 4 for the internal
-/// temperature sensor.
+/// `channel` selects the input: 0–3 for GPIO26–29.
 ///
 /// # Safety
 ///
@@ -1589,7 +1695,6 @@ pub unsafe extern "C" fn gallo_adc_read(
         1 => AdcChannel::Adc1,
         2 => AdcChannel::Adc2,
         3 => AdcChannel::Adc3,
-        4 => AdcChannel::TempSensor,
         _ => {
             eprintln!("Invalid ADC channel: {channel}");
             return Status::InvalidArgument;
@@ -1606,45 +1711,10 @@ pub unsafe extern "C" fn gallo_adc_read(
     }
 }
 
-/// gallo_adc_read_temperature - Read the on-die temperature sensor.
-///
-/// On success, writes the temperature in millidegrees Celsius to
-/// `*out_millidegrees` (e.g., 27000 = 27.000 °C). The value is approximate.
-///
-/// # Safety
-///
-/// Caller must ensure that `gallo` is a valid, opaque pointer to
-/// `PicoDeGallo` returned by `gallo_init()`, and that `out_millidegrees`
-/// is a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gallo_adc_read_temperature(
-    gallo: *mut PicoDeGallo,
-    out_millidegrees: *mut i32,
-) -> Status {
-    if gallo.is_null() {
-        eprintln!("Unexpected NULL context");
-        return Status::Uninitialized;
-    }
-
-    if out_millidegrees.is_null() {
-        eprintln!("Unexpected NULL output pointer");
-        return Status::InvalidArgument;
-    }
-
-    let gallo = unsafe { &*gallo };
-    match block_on(gallo.0.adc_read_temperature()) {
-        Ok(temp) => {
-            unsafe { *out_millidegrees = temp };
-            Status::Ok
-        }
-        Err(e) => adc_error_to_status(e),
-    }
-}
-
 /// gallo_adc_get_config - Query the ADC configuration.
 ///
 /// On success, writes resolution (bits), nominal reference voltage (mV),
-/// number of GPIO channels, and temperature sensor availability.
+/// number of GPIO channels.
 ///
 /// # Safety
 ///
@@ -1657,7 +1727,6 @@ pub unsafe extern "C" fn gallo_adc_get_config(
     out_resolution_bits: *mut u8,
     out_nominal_reference_mv: *mut u16,
     out_num_gpio_channels: *mut u8,
-    out_has_temp_sensor: *mut bool,
 ) -> Status {
     if gallo.is_null() {
         eprintln!("Unexpected NULL context");
@@ -1667,7 +1736,6 @@ pub unsafe extern "C" fn gallo_adc_get_config(
     if out_resolution_bits.is_null()
         || out_nominal_reference_mv.is_null()
         || out_num_gpio_channels.is_null()
-        || out_has_temp_sensor.is_null()
     {
         eprintln!("Unexpected NULL output pointer");
         return Status::InvalidArgument;
@@ -1680,7 +1748,6 @@ pub unsafe extern "C" fn gallo_adc_get_config(
                 *out_resolution_bits = info.resolution_bits;
                 *out_nominal_reference_mv = info.nominal_reference_mv;
                 *out_num_gpio_channels = info.num_gpio_channels;
-                *out_has_temp_sensor = info.has_temp_sensor;
             }
             Status::Ok
         }
@@ -1689,6 +1756,221 @@ pub unsafe extern "C" fn gallo_adc_get_config(
             PicoDeGalloError::Endpoint(never) => match never {},
         },
     }
+}
+
+// ----------------------------- 1-Wire endpoints -----------------------------
+
+#[unsafe(no_mangle)]
+/// gallo_onewire_reset - Perform a 1-Wire bus reset.
+///
+/// On success, `*out_present` is set to `true` if device(s) responded with a
+/// presence pulse, `false` otherwise.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+pub unsafe extern "C" fn gallo_onewire_reset(
+    gallo: *mut PicoDeGallo,
+    out_present: *mut bool,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_present.is_null() {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.onewire_reset()) {
+        Ok(present) => {
+            unsafe {
+                *out_present = present;
+            }
+            Status::Ok
+        }
+        Err(e) => onewire_error_to_status(e),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// gallo_onewire_read - Read bytes from the 1-Wire bus.
+///
+/// Reads up to `len` bytes into `buf`. On success, `*out_len` is the number
+/// of bytes actually read.
+///
+/// # Safety
+///
+/// - `buf` must point to at least `len` writable bytes.
+/// - `out_len` must be a valid writable `u16` pointer.
+pub unsafe extern "C" fn gallo_onewire_read(
+    gallo: *mut PicoDeGallo,
+    buf: *mut u8,
+    len: u16,
+    out_len: *mut u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if buf.is_null() || out_len.is_null() {
+        eprintln!("Unexpected NULL pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    match block_on(gallo.0.onewire_read(len)) {
+        Ok(data) => {
+            let copy_len = data.len().min(len as usize);
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), buf, copy_len);
+                *out_len = copy_len as u16;
+            }
+            Status::Ok
+        }
+        Err(e) => onewire_error_to_status(e),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// gallo_onewire_write - Write raw bytes to the 1-Wire bus.
+///
+/// # Safety
+///
+/// - `buf` must point to at least `len` readable bytes.
+pub unsafe extern "C" fn gallo_onewire_write(
+    gallo: *mut PicoDeGallo,
+    buf: *const u8,
+    len: u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if buf.is_null() && len > 0 {
+        eprintln!("Unexpected NULL buffer pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    let data = if len > 0 {
+        unsafe { std::slice::from_raw_parts(buf, len as usize) }
+    } else {
+        &[]
+    };
+
+    match block_on(gallo.0.onewire_write(data)) {
+        Ok(()) => Status::Ok,
+        Err(e) => onewire_error_to_status(e),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// gallo_onewire_write_pullup - Write bytes then apply a strong pullup.
+///
+/// After writing `len` bytes from `buf`, the bus is held high for
+/// `pullup_duration_ms` milliseconds to supply power to parasitic-power devices.
+///
+/// # Safety
+///
+/// - `buf` must point to at least `len` readable bytes.
+pub unsafe extern "C" fn gallo_onewire_write_pullup(
+    gallo: *mut PicoDeGallo,
+    buf: *const u8,
+    len: u16,
+    pullup_duration_ms: u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if buf.is_null() && len > 0 {
+        eprintln!("Unexpected NULL buffer pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    let data = if len > 0 {
+        unsafe { std::slice::from_raw_parts(buf, len as usize) }
+    } else {
+        &[]
+    };
+
+    match block_on(gallo.0.onewire_write_pullup(data, pullup_duration_ms)) {
+        Ok(()) => Status::Ok,
+        Err(e) => onewire_error_to_status(e),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// gallo_onewire_search - Search for all devices on the 1-Wire bus.
+///
+/// Discovers up to `max_count` ROM IDs and writes them to `out_rom_ids`.
+/// On success, `*out_count` holds the number of devices found.
+///
+/// # Safety
+///
+/// - `out_rom_ids` must point to at least `max_count` writable `u64` elements.
+/// - `out_count` must be a valid writable `u16` pointer.
+pub unsafe extern "C" fn gallo_onewire_search(
+    gallo: *mut PicoDeGallo,
+    out_rom_ids: *mut u64,
+    max_count: u16,
+    out_count: *mut u16,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_rom_ids.is_null() || out_count.is_null() {
+        eprintln!("Unexpected NULL pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+
+    // First search
+    let first = match block_on(gallo.0.onewire_search()) {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            unsafe {
+                *out_count = 0;
+            }
+            return Status::Ok;
+        }
+        Err(e) => return onewire_error_to_status(e),
+    };
+
+    unsafe {
+        *out_rom_ids = first;
+    }
+    let mut count: u16 = 1;
+
+    // Continue searching
+    while count < max_count {
+        match block_on(gallo.0.onewire_search_next()) {
+            Ok(Some(id)) => {
+                unsafe {
+                    *out_rom_ids.add(count as usize) = id;
+                }
+                count += 1;
+            }
+            Ok(None) => break,
+            Err(e) => return onewire_error_to_status(e),
+        }
+    }
+
+    unsafe {
+        *out_count = count;
+    }
+    Status::Ok
 }
 
 // ----------------------------- Version endpoint -----------------------------
@@ -1807,9 +2089,12 @@ mod tests {
             Status::PwmInvalidDutyCycle as i32,
             Status::PwmInvalidConfiguration as i32,
             Status::AdcReadFailed as i32,
-            Status::AdcReadTemperatureFailed as i32,
             Status::AdcGetConfigFailed as i32,
             Status::AdcConversionFailed as i32,
+            Status::GpioPinMonitored as i32,
+            Status::GpioPinNotMonitored as i32,
+            Status::GpioSubscribeFailed as i32,
+            Status::GpioUnsubscribeFailed as i32,
         ];
         for code in error_codes {
             assert!(code < 0, "error code {code} should be negative");
@@ -1870,9 +2155,17 @@ mod tests {
             Status::PwmInvalidDutyCycle as i32,
             Status::PwmInvalidConfiguration as i32,
             Status::AdcReadFailed as i32,
-            Status::AdcReadTemperatureFailed as i32,
             Status::AdcGetConfigFailed as i32,
             Status::AdcConversionFailed as i32,
+            Status::GpioPinMonitored as i32,
+            Status::GpioPinNotMonitored as i32,
+            Status::GpioSubscribeFailed as i32,
+            Status::GpioUnsubscribeFailed as i32,
+            Status::OneWireNoPresence as i32,
+            Status::OneWireBusError as i32,
+            Status::OneWireReadFailed as i32,
+            Status::OneWireWriteFailed as i32,
+            Status::OneWireSearchFailed as i32,
         ];
         let unique: HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len(), "duplicate status codes found");
@@ -1986,6 +2279,25 @@ mod tests {
     #[test]
     fn gpio_set_config_null_device_returns_uninitialized() {
         let status = unsafe { gallo_gpio_set_config(std::ptr::null_mut(), 0, 0, 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_subscribe_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_gpio_subscribe(std::ptr::null_mut(), 0, 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_subscribe_invalid_edge_returns_uninitialized() {
+        // null check happens before edge validation
+        let status = unsafe { gallo_gpio_subscribe(std::ptr::null_mut(), 0, 99) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_unsubscribe_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_gpio_unsubscribe(std::ptr::null_mut(), 0) };
         assert_eq!(status, Status::Uninitialized);
     }
 
@@ -2142,17 +2454,9 @@ mod tests {
     }
 
     #[test]
-    fn adc_read_temperature_null_device_returns_uninitialized() {
-        let status =
-            unsafe { gallo_adc_read_temperature(std::ptr::null_mut(), std::ptr::null_mut()) };
-        assert_eq!(status, Status::Uninitialized);
-    }
-
-    #[test]
     fn adc_get_config_null_device_returns_uninitialized() {
         let status = unsafe {
             gallo_adc_get_config(
-                std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -2304,5 +2608,109 @@ mod tests {
             adc_error_to_status(PicoDeGalloError::Endpoint(AdcError::Other)),
             Status::AdcReadFailed
         );
+    }
+
+    #[test]
+    fn gpio_error_to_status_maps_pin_monitored() {
+        assert_eq!(
+            gpio_error_to_status(PicoDeGalloError::Endpoint(GpioError::PinMonitored)),
+            Status::GpioPinMonitored
+        );
+    }
+
+    #[test]
+    fn gpio_error_to_status_maps_pin_not_monitored() {
+        assert_eq!(
+            gpio_error_to_status(PicoDeGalloError::Endpoint(GpioError::PinNotMonitored)),
+            Status::GpioPinNotMonitored
+        );
+    }
+
+    #[test]
+    fn gpio_subscribe_status_codes_are_stable() {
+        assert_eq!(Status::GpioPinMonitored as i32, -53);
+        assert_eq!(Status::GpioPinNotMonitored as i32, -54);
+        assert_eq!(Status::GpioSubscribeFailed as i32, -55);
+        assert_eq!(Status::GpioUnsubscribeFailed as i32, -56);
+    }
+
+    // ----------------------------- 1-Wire null pointer checks -----------------------------
+
+    #[test]
+    fn onewire_reset_null_device_returns_uninitialized() {
+        let status = unsafe { gallo_onewire_reset(std::ptr::null_mut(), std::ptr::null_mut()) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn onewire_read_null_device_returns_uninitialized() {
+        let status = unsafe {
+            gallo_onewire_read(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                9,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn onewire_write_null_device_returns_uninitialized() {
+        let data = [0xCC, 0x44];
+        let status = unsafe { gallo_onewire_write(std::ptr::null_mut(), data.as_ptr(), 2) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn onewire_write_pullup_null_device_returns_uninitialized() {
+        let data = [0xCC, 0x44];
+        let status =
+            unsafe { gallo_onewire_write_pullup(std::ptr::null_mut(), data.as_ptr(), 2, 750) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn onewire_search_null_device_returns_uninitialized() {
+        let status = unsafe {
+            gallo_onewire_search(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                10,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    // ----------------------------- 1-Wire error mapping tests -----------------------------
+
+    #[test]
+    fn onewire_error_mapping() {
+        assert_eq!(
+            onewire_error_to_status(PicoDeGalloError::Endpoint(OneWireError::NoPresence)),
+            Status::OneWireNoPresence
+        );
+        assert_eq!(
+            onewire_error_to_status(PicoDeGalloError::Endpoint(OneWireError::BusError)),
+            Status::OneWireBusError
+        );
+        assert_eq!(
+            onewire_error_to_status(PicoDeGalloError::Endpoint(OneWireError::BufferTooLong)),
+            Status::BufferTooLong
+        );
+        assert_eq!(
+            onewire_error_to_status(PicoDeGalloError::Endpoint(OneWireError::Other)),
+            Status::OneWireReadFailed
+        );
+    }
+
+    #[test]
+    fn onewire_status_codes_are_stable() {
+        assert_eq!(Status::OneWireNoPresence as i32, -57);
+        assert_eq!(Status::OneWireBusError as i32, -58);
+        assert_eq!(Status::OneWireReadFailed as i32, -59);
+        assert_eq!(Status::OneWireWriteFailed as i32, -60);
+        assert_eq!(Status::OneWireSearchFailed as i32, -61);
     }
 }

@@ -3,8 +3,9 @@
 //! This crate provides [`PicoDeGallo`], an async client for interacting with
 //! the Pico de Gallo firmware over USB. It supports I2C reads/writes, SPI
 //! operations (including full-duplex transfers), UART reads/writes, GPIO
-//! control, PWM output, ADC sampling, and device configuration — all via
-//! [postcard-rpc](https://docs.rs/postcard-rpc) endpoints.
+//! control, PWM output, ADC sampling, 1-Wire bus operations, and device
+//! configuration — all via [postcard-rpc](https://docs.rs/postcard-rpc)
+//! endpoints.
 //!
 //! # Quick Start
 //!
@@ -44,26 +45,38 @@
 //! communication failures ([`PicoDeGalloError::Comms`]) or endpoint-level
 //! errors ([`PicoDeGalloError::Endpoint`]).
 
+pub mod decode;
+
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
-    AdcGetConfiguration, AdcRead, AdcReadRequest, AdcReadTemperature, GpioGet, GpioGetRequest, GpioPut, GpioPutRequest,
-    GpioSetConfiguration, GpioSetConfigurationRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh,
-    GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan,
-    I2cScanRequest, I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest,
-    I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable, PwmEnableRequest,
-    PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmSetConfiguration,
-    PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SpiFlush, SpiGetConfiguration, SpiRead,
-    SpiReadRequest, SpiSetConfiguration, SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite,
-    SpiWriteRequest, UartFlush, UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration,
-    UartSetConfigurationRequest, UartWrite, UartWriteRequest, Version,
+    AdcGetConfiguration, AdcRead, AdcReadRequest, GpioEventTopic, GpioGet, GpioGetRequest, GpioPut, GpioPutRequest,
+    GpioSetConfiguration, GpioSetConfigurationRequest, GpioSubscribe, GpioSubscribeRequest, GpioUnsubscribe,
+    GpioUnsubscribeRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising,
+    GpioWaitRequest, I2cBatch, I2cBatchRequest, I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest,
+    I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest,
+    MICROSOFT_VID, OneWireRead, OneWireReadRequest, OneWireReset, OneWireSearch, OneWireSearchNext, OneWireWrite,
+    OneWireWritePullup, OneWireWritePullupRequest, OneWireWriteRequest, PICO_DE_GALLO_PID, PwmDisable,
+    PwmDisableRequest, PwmEnable, PwmEnableRequest, PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetDutyCycle,
+    PwmGetDutyCycleRequest, PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest,
+    SpiBatch, SpiBatchRequest, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, UartFlush,
+    UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration, UartSetConfigurationRequest, UartWrite,
+    UartWriteRequest, Version,
 };
 
 pub use pico_de_gallo_internal::{
-    AdcChannel, AdcConfigurationInfo, GpioDirection, GpioPull, GpioState, I2cFrequency, PwmConfigurationInfo,
-    PwmDutyCycleInfo, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo, VersionInfo,
+    AdcChannel, AdcConfigurationInfo, GpioDirection, GpioEdge, GpioEvent, GpioPull, GpioState, I2cBatchOp,
+    I2cFrequency, PwmConfigurationInfo, PwmDutyCycleInfo, SpiBatchOp, SpiConfigurationInfo, SpiPhase, SpiPolarity,
+    UartConfigurationInfo, VersionInfo,
 };
-pub use pico_de_gallo_internal::{AdcError, GpioError, I2cError, PwmError, SpiError, UartError};
+pub use pico_de_gallo_internal::{
+    AdcError, GpioError, I2cBatchError, I2cError, OneWireError, PwmError, SpiBatchError, SpiError, UartError,
+};
+pub use pico_de_gallo_internal::{
+    encode_i2c_batch_ops, encode_spi_batch_ops, i2c_batch_response_len, spi_batch_response_len,
+};
 
+pub use postcard_rpc::host_client::{IoClosed, MultiSubscription};
 use postcard_rpc::{
     header::VarSeqKind,
     host_client::{HostClient, HostErr},
@@ -247,6 +260,30 @@ impl PicoDeGallo {
             .map_err(PicoDeGalloError::Endpoint)
     }
 
+    /// Execute a batch of I2C operations in a single USB transfer.
+    ///
+    /// Pass a slice of [`I2cBatchOp`] values directly — they are encoded
+    /// internally. On success, returns the concatenated read data from
+    /// all Read operations in order.
+    ///
+    /// This is much faster than issuing individual I2C calls when
+    /// performing multi-step sequences (e.g., EEPROM programming).
+    pub async fn i2c_batch(
+        &self,
+        address: u8,
+        ops: &[I2cBatchOp<'_>],
+    ) -> Result<Vec<u8>, PicoDeGalloError<I2cBatchError>> {
+        let encoded = encode_i2c_batch_ops(ops);
+        self.client
+            .send_resp::<I2cBatch>(&I2cBatchRequest {
+                address,
+                count: ops.len() as u16,
+                ops: &encoded,
+            })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
     /// Read `count` bytes from the SPI bus.
     ///
     /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
@@ -282,6 +319,32 @@ impl PicoDeGallo {
     pub async fn spi_transfer(&self, write_data: &[u8]) -> Result<Vec<u8>, PicoDeGalloError<SpiError>> {
         self.client
             .send_resp::<SpiTransfer>(&SpiTransferRequest { contents: write_data })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Execute a batch of SPI operations atomically under chip-select.
+    ///
+    /// Pass a slice of [`SpiBatchOp`] values directly — they are encoded
+    /// internally. The firmware asserts CS on `cs_pin` before the first
+    /// operation and deasserts it after the last (or on error). On success,
+    /// returns concatenated data from all Read and Transfer operations
+    /// in order.
+    ///
+    /// This is much faster than issuing individual SPI calls when
+    /// performing multi-step sequences.
+    pub async fn spi_batch(
+        &self,
+        cs_pin: u8,
+        ops: &[SpiBatchOp<'_>],
+    ) -> Result<Vec<u8>, PicoDeGalloError<SpiBatchError>> {
+        let encoded = encode_spi_batch_ops(ops);
+        self.client
+            .send_resp::<SpiBatch>(&SpiBatchRequest {
+                cs_pin,
+                count: ops.len() as u16,
+                ops: &encoded,
+            })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
@@ -414,6 +477,52 @@ impl PicoDeGallo {
             .send_resp::<GpioSetConfiguration>(&GpioSetConfigurationRequest { pin, direction, pull })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Subscribe to GPIO edge events on a pin.
+    ///
+    /// Starts push-based monitoring for the specified edge type. While subscribed,
+    /// the pin cannot be used by other GPIO operations (they will return
+    /// [`GpioError::PinMonitored`]). Use [`gpio_unsubscribe`](Self::gpio_unsubscribe)
+    /// to release the pin.
+    ///
+    /// Call [`subscribe_gpio_events`](Self::subscribe_gpio_events) to receive the
+    /// event stream.
+    pub async fn gpio_subscribe(&self, pin: u8, edge: GpioEdge) -> Result<(), PicoDeGalloError<GpioError>> {
+        self.client
+            .send_resp::<GpioSubscribe>(&GpioSubscribeRequest { pin, edge })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Unsubscribe from GPIO edge events on a pin.
+    ///
+    /// Stops monitoring and returns the pin to normal operation. Returns
+    /// [`GpioError::PinNotMonitored`] if the pin is not currently subscribed.
+    pub async fn gpio_unsubscribe(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
+        self.client
+            .send_resp::<GpioUnsubscribe>(&GpioUnsubscribeRequest { pin })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Subscribe to the GPIO event topic stream.
+    ///
+    /// Returns a [`MultiSubscription`] that yields [`GpioEvent`] messages as edges
+    /// are detected on any subscribed pin. Call this *before* or *after*
+    /// [`gpio_subscribe`](Self::gpio_subscribe) — events are buffered up to
+    /// `depth` messages.
+    ///
+    /// Edge detection is best-effort: if the pin changes faster than the
+    /// firmware monitor loop cadence, intermediate transitions may be missed.
+    pub async fn subscribe_gpio_events(
+        &self,
+        depth: usize,
+    ) -> Result<MultiSubscription<GpioEvent>, PicoDeGalloError<Infallible>> {
+        self.client
+            .subscribe_multi::<GpioEventTopic>(depth)
+            .await
+            .map_err(|_| PicoDeGalloError::Comms(HostErr::Closed))
     }
 
     /// Set I2C bus configuration parameters.
@@ -581,22 +690,9 @@ impl PicoDeGallo {
     ///
     /// Returns a raw 12-bit value (0–4095). Convert to voltage with:
     /// `V ≈ raw × 3.3 / 4096` (approximate — depends on ADC_AVDD).
-    ///
-    /// For temperature, prefer [`adc_read_temperature`](Self::adc_read_temperature).
     pub async fn adc_read(&self, channel: AdcChannel) -> Result<u16, PicoDeGalloError<AdcError>> {
         self.client
             .send_resp::<AdcRead>(&AdcReadRequest { channel })
-            .await?
-            .map_err(PicoDeGalloError::Endpoint)
-    }
-
-    /// Read the on-die temperature sensor.
-    ///
-    /// Returns the temperature in **millidegrees Celsius** (e.g., 27000 = 27.000 °C).
-    /// The value is approximate — accuracy depends on ADC_AVDD stability.
-    pub async fn adc_read_temperature(&self) -> Result<i32, PicoDeGalloError<AdcError>> {
-        self.client
-            .send_resp::<AdcReadTemperature>(&())
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
@@ -607,6 +703,78 @@ impl PicoDeGallo {
     /// ADC. Useful for host-side discovery.
     pub async fn adc_get_config(&self) -> Result<AdcConfigurationInfo, PicoDeGalloError<Infallible>> {
         Ok(self.client.send_resp::<AdcGetConfiguration>(&()).await?)
+    }
+
+    // ---- 1-Wire ----
+
+    /// Perform a 1-Wire bus reset and detect device presence.
+    ///
+    /// Returns `true` if one or more devices responded with a presence pulse.
+    pub async fn onewire_reset(&self) -> Result<bool, PicoDeGalloError<OneWireError>> {
+        self.client
+            .send_resp::<OneWireReset>(&())
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Read `len` bytes from the 1-Wire bus.
+    ///
+    /// The firmware sends `0xFF` read slots and captures the device's response bits.
+    pub async fn onewire_read(&self, len: u16) -> Result<Vec<u8>, PicoDeGalloError<OneWireError>> {
+        self.client
+            .send_resp::<OneWireRead>(&OneWireReadRequest { len })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Write raw bytes to the 1-Wire bus.
+    pub async fn onewire_write(&self, data: &[u8]) -> Result<(), PicoDeGalloError<OneWireError>> {
+        self.client
+            .send_resp::<OneWireWrite>(&OneWireWriteRequest { data })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Write bytes to the 1-Wire bus, then apply a strong pullup for the given duration.
+    ///
+    /// This is needed for parasitic-power devices like the DS18B20 during temperature
+    /// conversion. The bus is held high for `pullup_duration_ms` milliseconds after
+    /// the last bit is sent.
+    pub async fn onewire_write_pullup(
+        &self,
+        data: &[u8],
+        pullup_duration_ms: u16,
+    ) -> Result<(), PicoDeGalloError<OneWireError>> {
+        self.client
+            .send_resp::<OneWireWritePullup>(&OneWireWritePullupRequest {
+                data,
+                pullup_duration_ms,
+            })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Start a new 1-Wire ROM search and return the first device address.
+    ///
+    /// Returns `Some(rom_id)` for the first device found, or `None` if no devices
+    /// are on the bus. Call [`onewire_search_next`](Self::onewire_search_next) to
+    /// continue enumerating.
+    pub async fn onewire_search(&self) -> Result<Option<u64>, PicoDeGalloError<OneWireError>> {
+        self.client
+            .send_resp::<OneWireSearch>(&())
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Continue the current 1-Wire ROM search.
+    ///
+    /// Returns the next device's 64-bit ROM ID, or `None` when all devices have
+    /// been enumerated.
+    pub async fn onewire_search_next(&self) -> Result<Option<u64>, PicoDeGalloError<OneWireError>> {
+        self.client
+            .send_resp::<OneWireSearchNext>(&())
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
     }
 }
 

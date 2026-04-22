@@ -38,6 +38,12 @@
 //!   and their shared error type [`PwmError`].
 //! - **ADC types**: [`AdcReadRequest`], [`AdcChannel`], [`AdcConfigurationInfo`],
 //!   and their shared error type [`AdcError`].
+//! - **1-Wire types**: [`OneWireReadRequest`], [`OneWireWriteRequest`],
+//!   [`OneWireWritePullupRequest`], and their shared error type [`OneWireError`].
+//! - **Batch types**: [`I2cBatchRequest`], [`I2cBatchError`], [`I2cBatchOp`],
+//!   [`SpiBatchRequest`], [`SpiBatchError`], [`SpiBatchOp`], encoding helpers
+//!   [`encode_i2c_batch_ops`], [`encode_spi_batch_ops`], and response-length
+//!   helpers [`i2c_batch_response_len`], [`spi_batch_response_len`].
 //! - **Configuration**: [`I2cSetConfigurationRequest`], [`SpiSetConfigurationRequest`],
 //!   [`GpioSetConfigurationRequest`], [`UartSetConfigurationRequest`],
 //!   [`PwmSetConfigurationRequest`],
@@ -118,6 +124,10 @@ pub type GpioPutResponse = Result<(), GpioError>;
 pub type GpioWaitResponse = Result<(), GpioError>;
 /// Response type for GPIO set-configuration operations.
 pub type GpioSetConfigurationResponse = Result<(), GpioError>;
+/// Response type for GPIO subscribe operations.
+pub type GpioSubscribeResponse = Result<(), GpioError>;
+/// Response type for GPIO unsubscribe operations.
+pub type GpioUnsubscribeResponse = Result<(), GpioError>;
 /// Response type for I2C bus configuration operations.
 pub type I2cSetConfigurationResponse = Result<(), I2cConfigError>;
 /// Response type for I2C bus scan operations.
@@ -181,10 +191,54 @@ pub type PwmGetConfigurationResponse = Result<PwmConfigurationInfo, PwmError>;
 
 /// Response type for ADC read operations.
 pub type AdcReadResponse = Result<u16, AdcError>;
-/// Response type for ADC read-temperature operations (millidegrees Celsius).
-pub type AdcReadTemperatureResponse = Result<i32, AdcError>;
 /// Response type for ADC get-configuration queries.
 pub type AdcGetConfigurationResponse = AdcConfigurationInfo;
+
+/// Response type for 1-Wire reset operations.
+/// Returns `true` if at least one device is present on the bus.
+pub type OneWireResetResponse = Result<bool, OneWireError>;
+
+/// Response type for 1-Wire read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
+#[cfg(feature = "use-std")]
+pub type OneWireReadResponse<'a> = Result<Vec<u8>, OneWireError>;
+/// Response type for 1-Wire read operations.
+/// On the host (`use-std`), returns `Vec<u8>`; on firmware, returns `&[u8]`.
+#[cfg(not(feature = "use-std"))]
+pub type OneWireReadResponse<'a> = Result<&'a [u8], OneWireError>;
+
+/// Response type for 1-Wire write operations.
+pub type OneWireWriteResponse = Result<(), OneWireError>;
+
+/// Response type for 1-Wire write-with-pullup operations.
+pub type OneWireWritePullupResponse = Result<(), OneWireError>;
+
+/// Response type for 1-Wire ROM search operations.
+/// Returns `Some(rom_id)` for the next device found, or `None` if the
+/// search is complete.
+pub type OneWireSearchResponse = Result<Option<u64>, OneWireError>;
+
+/// Response type for I2C batch transaction operations.
+/// On the host (`use-std`), returns `Vec<u8>` of concatenated read data;
+/// on firmware, returns `&[u8]`.
+#[cfg(feature = "use-std")]
+pub type I2cBatchResponse<'a> = Result<Vec<u8>, I2cBatchError>;
+/// Response type for I2C batch transaction operations.
+/// On the host (`use-std`), returns `Vec<u8>` of concatenated read data;
+/// on firmware, returns `&[u8]`.
+#[cfg(not(feature = "use-std"))]
+pub type I2cBatchResponse<'a> = Result<&'a [u8], I2cBatchError>;
+
+/// Response type for SPI batch transaction operations.
+/// On the host (`use-std`), returns `Vec<u8>` of concatenated read/transfer data;
+/// on firmware, returns `&[u8]`.
+#[cfg(feature = "use-std")]
+pub type SpiBatchResponse<'a> = Result<Vec<u8>, SpiBatchError>;
+/// Response type for SPI batch transaction operations.
+/// On the host (`use-std`), returns `Vec<u8>` of concatenated read/transfer data;
+/// on firmware, returns `&[u8]`.
+#[cfg(not(feature = "use-std"))]
+pub type SpiBatchResponse<'a> = Result<&'a [u8], SpiBatchError>;
 
 endpoints! {
     list = ENDPOINT_LIST;
@@ -223,8 +277,17 @@ endpoints! {
     | PwmSetConfiguration   | PwmSetConfigurationRequest    | PwmSetConfigurationResponse   | "pwm/set-config"     |
     | PwmGetConfiguration   | PwmGetConfigurationRequest    | PwmGetConfigurationResponse   | "pwm/get-config"     |
     | AdcRead               | AdcReadRequest                | AdcReadResponse               | "adc/read"           |
-    | AdcReadTemperature    | ()                            | AdcReadTemperatureResponse    | "adc/read-temperature" |
     | AdcGetConfiguration   | ()                            | AdcGetConfigurationResponse   | "adc/get-config"     |
+    | GpioSubscribe         | GpioSubscribeRequest          | GpioSubscribeResponse         | "gpio/subscribe"     |
+    | GpioUnsubscribe       | GpioUnsubscribeRequest        | GpioUnsubscribeResponse       | "gpio/unsubscribe"   |
+    | I2cBatch              | I2cBatchRequest<'a>           | I2cBatchResponse<'b>          | "i2c/batch"          |
+    | SpiBatch              | SpiBatchRequest<'a>           | SpiBatchResponse<'b>          | "spi/batch"          |
+    | OneWireReset          | ()                            | OneWireResetResponse          | "onewire/reset"      |
+    | OneWireRead           | OneWireReadRequest            | OneWireReadResponse<'a>       | "onewire/read"       |
+    | OneWireWrite          | OneWireWriteRequest<'a>       | OneWireWriteResponse          | "onewire/write"      |
+    | OneWireWritePullup    | OneWireWritePullupRequest<'a> | OneWireWritePullupResponse    | "onewire/write-pullup" |
+    | OneWireSearch         | ()                            | OneWireSearchResponse         | "onewire/search"     |
+    | OneWireSearchNext     | ()                            | OneWireSearchResponse         | "onewire/search-next" |
     | Version               | ()                            | VersionInfo                   | "version"            |
 }
 
@@ -238,8 +301,9 @@ topics! {
 topics! {
     list = TOPICS_OUT_LIST;
     direction = TopicDirection::ToClient;
-    | TopicTy | MessageTy | Path | Cfg |
-    | ------- | --------- | ---- | --- |
+    | TopicTy         | MessageTy  | Path              | Cfg |
+    | -------         | --------- | ----               | --- |
+    | GpioEventTopic    | GpioEvent   | "gpio/event"    |     |
 }
 
 // --- I2C
@@ -407,6 +471,11 @@ pub enum GpioError {
     Other,
     /// The pin is configured in a direction that does not support this operation.
     WrongDirection,
+    /// The pin is currently being monitored for events and cannot be used
+    /// for regular GPIO operations. Unsubscribe first.
+    PinMonitored,
+    /// The pin is not currently monitored — cannot unsubscribe.
+    PinNotMonitored,
 }
 
 impl core::fmt::Display for GpioError {
@@ -415,6 +484,8 @@ impl core::fmt::Display for GpioError {
             Self::InvalidPin => write!(f, "invalid GPIO pin number"),
             Self::Other => write!(f, "GPIO error"),
             Self::WrongDirection => write!(f, "GPIO pin configured in wrong direction"),
+            Self::PinMonitored => write!(f, "GPIO pin is being monitored for events"),
+            Self::PinNotMonitored => write!(f, "GPIO pin is not monitored"),
         }
     }
 }
@@ -504,6 +575,82 @@ pub struct GpioSetConfigurationRequest {
     pub direction: GpioDirection,
     /// Internal pull resistor setting.
     pub pull: GpioPull,
+}
+
+// --- GPIO event monitoring
+
+/// Edge type for GPIO event monitoring.
+///
+/// Selects which transitions trigger a [`GpioEvent`] notification.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index**. Do **not** reorder or insert
+/// variants in the middle — only append at the end.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GpioEdge {
+    /// Trigger on low-to-high transitions.
+    Rising = 0,
+    /// Trigger on high-to-low transitions.
+    Falling = 1,
+    /// Trigger on any transition (rising or falling).
+    Any = 2,
+}
+
+impl core::fmt::Display for GpioEdge {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Rising => write!(f, "rising"),
+            Self::Falling => write!(f, "falling"),
+            Self::Any => write!(f, "any"),
+        }
+    }
+}
+
+/// A GPIO event notification published by the firmware.
+///
+/// Sent as a [`GpioEventTopic`] message whenever a monitored pin detects
+/// an edge matching its subscription. The host receives these via
+/// [`postcard_rpc::host_client::HostClient::subscribe`].
+///
+/// **Note:** Event delivery is best-effort. Edges faster than the
+/// firmware's monitor loop may be coalesced or missed.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq, Eq)]
+pub struct GpioEvent {
+    /// GPIO pin index (0–3) that triggered the event.
+    pub pin: u8,
+    /// The edge type that was detected.
+    pub edge: GpioEdge,
+    /// Pin level sampled immediately after the event (may differ from
+    /// the triggering edge if the signal bounced).
+    pub state: GpioState,
+    /// Monotonic timestamp in microseconds since firmware boot.
+    pub timestamp_us: u64,
+}
+
+/// Request to subscribe a GPIO pin to edge-event monitoring.
+///
+/// Once subscribed, the pin is exclusively owned by the monitor task.
+/// Regular GPIO operations ([`GpioGet`], [`GpioPut`], wait, set-config)
+/// on this pin will return [`GpioError::PinMonitored`] until
+/// [`GpioUnsubscribe`] is called.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct GpioSubscribeRequest {
+    /// GPIO pin index (0–3).
+    pub pin: u8,
+    /// Which edges to monitor.
+    pub edge: GpioEdge,
+}
+
+/// Request to unsubscribe a GPIO pin from edge-event monitoring.
+///
+/// The pin is returned to normal GPIO mode and can be used for regular
+/// operations again.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct GpioUnsubscribeRequest {
+    /// GPIO pin index (0–3).
+    pub pin: u8,
 }
 
 // --- Set config
@@ -854,12 +1001,11 @@ pub const ADC_NOMINAL_REFERENCE_MV: u16 = 3300;
 /// ADC channel selector.
 ///
 /// Identifies which ADC input to sample. GPIO-based channels (`Adc0`–`Adc3`)
-/// read external analog voltages on GPIO26–GPIO29. The [`TempSensor`](AdcChannel::TempSensor)
-/// variant reads the RP2350's on-die temperature sensor.
+/// read external analog voltages on GPIO26–GPIO29.
 ///
 /// # Wire Compatibility
 ///
-/// Variants are serialized as discriminant integers (0–4). **Do not**
+/// Variants are serialized as discriminant integers (0–3). **Do not**
 /// reorder or insert variants before existing ones — that changes the
 /// wire encoding and breaks backward compatibility.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
@@ -872,8 +1018,6 @@ pub enum AdcChannel {
     Adc2 = 2,
     /// ADC channel 3 — GPIO29.
     Adc3 = 3,
-    /// Internal temperature sensor (RP2350 on-die).
-    TempSensor = 4,
 }
 
 impl core::fmt::Display for AdcChannel {
@@ -883,7 +1027,6 @@ impl core::fmt::Display for AdcChannel {
             Self::Adc1 => write!(f, "ADC1 (GPIO27)"),
             Self::Adc2 => write!(f, "ADC2 (GPIO28)"),
             Self::Adc3 => write!(f, "ADC3 (GPIO29)"),
-            Self::TempSensor => write!(f, "temperature sensor"),
         }
     }
 }
@@ -922,9 +1065,6 @@ pub type AdcConfigError = AdcError;
 ///
 /// Returns a raw 12-bit value (0–4095). The host can convert to voltage
 /// using `V = raw * nominal_reference_mv / 4096`.
-///
-/// For temperature readings, prefer the dedicated
-/// [`AdcReadTemperature`] endpoint which returns millidegrees Celsius.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct AdcReadRequest {
     /// Which ADC channel to sample.
@@ -946,8 +1086,289 @@ pub struct AdcConfigurationInfo {
     pub nominal_reference_mv: u16,
     /// Number of external (GPIO-based) ADC channels.
     pub num_gpio_channels: u8,
-    /// Whether the internal temperature sensor is available.
-    pub has_temp_sensor: bool,
+}
+
+// --- 1-Wire
+
+/// Error from 1-Wire operations, propagated from firmware.
+///
+/// # Wire Compatibility
+///
+/// Variants are serialized by **index** (0, 1, 2, …). Do **not** reorder,
+/// rename, or remove existing variants — only append new ones at the end.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OneWireError {
+    /// No device responded to reset (no presence pulse detected).
+    NoPresence,
+    /// Bus communication error (short circuit, stuck bus, etc.).
+    BusError,
+    /// Requested transfer exceeds [`MAX_TRANSFER_SIZE`].
+    BufferTooLong,
+    /// Catch-all for unexpected 1-Wire errors.
+    Other,
+}
+
+impl core::fmt::Display for OneWireError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoPresence => write!(f, "no device present on 1-Wire bus"),
+            Self::BusError => write!(f, "1-Wire bus error"),
+            Self::BufferTooLong => write!(f, "buffer exceeds firmware limit"),
+            Self::Other => write!(f, "1-Wire error"),
+        }
+    }
+}
+
+/// Request to read bytes from the 1-Wire bus.
+///
+/// The firmware reads `len` bytes from the bus after the host has already
+/// issued the appropriate ROM and function commands via [`OneWireWrite`].
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct OneWireReadRequest {
+    /// Number of bytes to read (max [`MAX_TRANSFER_SIZE`]).
+    pub len: u16,
+}
+
+/// Request to write bytes to the 1-Wire bus.
+///
+/// Writes raw bytes (ROM commands, function commands, data) to the bus.
+/// The host is responsible for issuing the correct 1-Wire command
+/// sequences (e.g., Skip ROM `0xCC` + Convert T `0x44`).
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct OneWireWriteRequest<'a> {
+    /// Bytes to write to the bus.
+    pub data: &'a [u8],
+}
+
+/// Request to write bytes to the 1-Wire bus with strong pullup.
+///
+/// After writing, the firmware drives the data line high for
+/// `pullup_duration_ms` milliseconds to supply parasitic power.
+/// This is required for devices like DS18B20 that draw power from
+/// the data line during temperature conversion.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct OneWireWritePullupRequest<'a> {
+    /// Bytes to write to the bus.
+    pub data: &'a [u8],
+    /// Duration in milliseconds to hold the strong pullup after writing.
+    pub pullup_duration_ms: u16,
+}
+
+// --- Transaction Batching
+///
+/// This limits stack usage on the firmware side. Each operation requires
+/// a small amount of bookkeeping during execution.
+pub const MAX_BATCH_OPS: usize = 64;
+
+/// A single I2C operation for building a batch request.
+///
+/// The typed ops are serialized by postcard into the `ops` byte stream
+/// of [`I2cBatchRequest`]. Use [`encode_i2c_batch_ops`] on the host
+/// side to produce it, and [`postcard::take_from_bytes`] on the firmware
+/// side to iterate.
+///
+/// WARNING: do not reorder variants — postcard encodes by index, not discriminant.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq)]
+pub enum I2cBatchOp<'a> {
+    /// Read `len` bytes from the device.
+    Read { len: u16 },
+    /// Write `data` to the device.
+    Write {
+        #[serde(borrow)]
+        data: &'a [u8],
+    },
+}
+
+/// A single SPI operation for building a batch request.
+///
+/// The typed ops are serialized by postcard into the `ops` byte stream
+/// of [`SpiBatchRequest`]. Use [`encode_spi_batch_ops`] on the host
+/// side to produce it, and [`postcard::take_from_bytes`] on the firmware
+/// side to iterate.
+///
+/// WARNING: do not reorder variants — postcard encodes by index, not discriminant.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, PartialEq)]
+pub enum SpiBatchOp<'a> {
+    /// Read `len` bytes from the bus (MISO only).
+    Read { len: u16 },
+    /// Write `data` to the bus (MOSI only).
+    Write {
+        #[serde(borrow)]
+        data: &'a [u8],
+    },
+    /// Full-duplex transfer: send `data` on MOSI, receive same number of bytes on MISO.
+    Transfer {
+        #[serde(borrow)]
+        data: &'a [u8],
+    },
+    /// Delay for `ns` nanoseconds (best-effort, firmware resolution).
+    DelayNs { ns: u32 },
+}
+
+/// Request to execute a batch of I2C operations as a single transaction.
+///
+/// The `ops` field contains a sequence of postcard-serialized
+/// [`I2cBatchOp`] values. Use [`encode_i2c_batch_ops`] on the host
+/// side to build it from a typed slice.
+///
+/// ## Response
+///
+/// On success, the response contains the concatenated read data from all
+/// Read operations in order. The host already knows the expected lengths
+/// from the request, so it can split the response accordingly.
+///
+/// ## Limitations
+///
+/// - Total read data must not exceed [`MAX_TRANSFER_SIZE`]
+/// - Total write data is limited by USB packet size
+/// - Maximum [`MAX_BATCH_OPS`] operations per batch
+/// - Operations execute sequentially with STOP between each (not using
+///   I2C repeated-start). For write-then-read to the same device, prefer
+///   the existing [`I2cWriteRead`] endpoint.
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct I2cBatchRequest<'a> {
+    /// 7-bit I2C slave address.
+    pub address: u8,
+    /// Number of operations encoded in `ops`.
+    pub count: u16,
+    /// Postcard-serialized [`I2cBatchOp`] sequence.
+    pub ops: &'a [u8],
+}
+
+/// Error returned when an I2C batch transaction fails.
+///
+/// Includes the zero-based index of the operation that failed, so the
+/// host can identify exactly which step caused the error. Operations
+/// before `failed_op` completed successfully; their read data is NOT
+/// included in the response.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct I2cBatchError {
+    /// Zero-based index of the operation that failed.
+    pub failed_op: u16,
+    /// The I2C error that occurred.
+    pub kind: I2cError,
+}
+
+impl core::fmt::Display for I2cBatchError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "I2C batch operation {} failed: {}",
+            self.failed_op, self.kind
+        )
+    }
+}
+
+/// Request to execute a batch of SPI operations as a single transaction.
+///
+/// The firmware asserts CS on the specified pin before executing the
+/// operations, and deasserts CS after completion (even on error). This
+/// provides atomic [`SpiDevice::transaction`] semantics.
+///
+/// The `ops` field contains a sequence of postcard-serialized
+/// [`SpiBatchOp`] values. Use [`encode_spi_batch_ops`] on the host
+/// side to build it from a typed slice.
+///
+/// ## Response
+///
+/// On success, the response contains concatenated data from Read and
+/// Transfer operations in order. The host knows expected lengths from
+/// the request.
+///
+/// [`SpiDevice::transaction`]: embedded_hal::spi::SpiDevice::transaction
+#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
+pub struct SpiBatchRequest<'a> {
+    /// GPIO pin index (0–3) to use as chip select. The firmware asserts
+    /// it low before the first operation and deasserts it high after the
+    /// last (or on error).
+    pub cs_pin: u8,
+    /// Number of operations encoded in `ops`.
+    pub count: u16,
+    /// Postcard-serialized [`SpiBatchOp`] sequence.
+    pub ops: &'a [u8],
+}
+
+/// Error returned when an SPI batch transaction fails.
+///
+/// See [`I2cBatchError`] for the general pattern. For SPI batches,
+/// the firmware always deasserts CS before returning, even on error.
+#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpiBatchError {
+    /// Zero-based index of the operation that failed.
+    pub failed_op: u16,
+    /// The SPI error that occurred.
+    pub kind: SpiError,
+}
+
+impl core::fmt::Display for SpiBatchError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "SPI batch operation {} failed: {}",
+            self.failed_op, self.kind
+        )
+    }
+}
+
+/// Encode a sequence of I2C batch operations into the postcard wire format.
+///
+/// Returns the serialized byte stream suitable for [`I2cBatchRequest::ops`].
+///
+/// # Panics
+///
+/// Panics if `ops.len()` exceeds [`MAX_BATCH_OPS`].
+#[cfg(feature = "use-std")]
+pub fn encode_i2c_batch_ops(ops: &[I2cBatchOp<'_>]) -> Vec<u8> {
+    assert!(ops.len() <= MAX_BATCH_OPS, "too many batch operations");
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 128];
+    for op in ops {
+        let encoded = postcard::to_slice(op, &mut tmp).expect("I2cBatchOp encode failed");
+        buf.extend_from_slice(encoded);
+    }
+    buf
+}
+
+/// Encode a sequence of SPI batch operations into the postcard wire format.
+///
+/// Returns the serialized byte stream suitable for [`SpiBatchRequest::ops`].
+///
+/// # Panics
+///
+/// Panics if `ops.len()` exceeds [`MAX_BATCH_OPS`].
+#[cfg(feature = "use-std")]
+pub fn encode_spi_batch_ops(ops: &[SpiBatchOp<'_>]) -> Vec<u8> {
+    assert!(ops.len() <= MAX_BATCH_OPS, "too many batch operations");
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 128];
+    for op in ops {
+        let encoded = postcard::to_slice(op, &mut tmp).expect("SpiBatchOp encode failed");
+        buf.extend_from_slice(encoded);
+    }
+    buf
+}
+
+/// Compute the total number of bytes that will appear in the response for
+/// an I2C batch — the sum of all Read lengths.
+pub fn i2c_batch_response_len(ops: &[I2cBatchOp<'_>]) -> usize {
+    ops.iter()
+        .map(|op| match op {
+            I2cBatchOp::Read { len } => *len as usize,
+            I2cBatchOp::Write { .. } => 0,
+        })
+        .sum()
+}
+
+/// Compute the total number of bytes that will appear in the response for
+/// an SPI batch — the sum of Read and Transfer lengths.
+pub fn spi_batch_response_len(ops: &[SpiBatchOp<'_>]) -> usize {
+    ops.iter()
+        .map(|op| match op {
+            SpiBatchOp::Read { len } => *len as usize,
+            SpiBatchOp::Transfer { data } => data.len(),
+            _ => 0,
+        })
+        .sum()
 }
 
 // --- Version
@@ -1198,6 +1619,8 @@ mod tests {
             GpioError::InvalidPin,
             GpioError::Other,
             GpioError::WrongDirection,
+            GpioError::PinMonitored,
+            GpioError::PinNotMonitored,
         ] {
             let bytes = to_allocvec(&err).unwrap();
             let decoded: GpioError = from_bytes(&bytes).unwrap();
@@ -1250,6 +1673,14 @@ mod tests {
         assert_eq!(
             format!("{}", GpioError::WrongDirection),
             "GPIO pin configured in wrong direction"
+        );
+        assert_eq!(
+            format!("{}", GpioError::PinMonitored),
+            "GPIO pin is being monitored for events"
+        );
+        assert_eq!(
+            format!("{}", GpioError::PinNotMonitored),
+            "GPIO pin is not monitored"
         );
     }
 
@@ -2033,23 +2464,12 @@ mod tests {
     }
 
     #[test]
-    fn adc_read_request_temp_sensor_round_trip() {
-        let req = AdcReadRequest {
-            channel: AdcChannel::TempSensor,
-        };
-        let bytes = to_allocvec(&req).unwrap();
-        let decoded: AdcReadRequest = from_bytes(&bytes).unwrap();
-        assert_eq!(req, decoded);
-    }
-
-    #[test]
     #[cfg(feature = "use-std")]
     fn adc_channel_display() {
         assert_eq!(format!("{}", AdcChannel::Adc0), "ADC0 (GPIO26)");
         assert_eq!(format!("{}", AdcChannel::Adc1), "ADC1 (GPIO27)");
         assert_eq!(format!("{}", AdcChannel::Adc2), "ADC2 (GPIO28)");
         assert_eq!(format!("{}", AdcChannel::Adc3), "ADC3 (GPIO29)");
-        assert_eq!(format!("{}", AdcChannel::TempSensor), "temperature sensor");
     }
 
     #[test]
@@ -2068,7 +2488,6 @@ mod tests {
             resolution_bits: 12,
             nominal_reference_mv: 3300,
             num_gpio_channels: 4,
-            has_temp_sensor: true,
         };
         let bytes = to_allocvec(&info).unwrap();
         let decoded: AdcConfigurationInfo = from_bytes(&bytes).unwrap();
@@ -2093,7 +2512,6 @@ mod tests {
             resolution_bits: 12,
             nominal_reference_mv: 3300,
             num_gpio_channels: 4,
-            has_temp_sensor: true,
         };
         let bytes = to_allocvec(&info).unwrap();
         let canonical = bytes.clone();
@@ -2109,6 +2527,533 @@ mod tests {
         assert_eq!(to_allocvec(&AdcChannel::Adc1).unwrap(), [1]);
         assert_eq!(to_allocvec(&AdcChannel::Adc2).unwrap(), [2]);
         assert_eq!(to_allocvec(&AdcChannel::Adc3).unwrap(), [3]);
-        assert_eq!(to_allocvec(&AdcChannel::TempSensor).unwrap(), [4]);
     }
+
+    // --- GPIO event monitoring tests ---
+
+    #[test]
+    fn gpio_edge_round_trip() {
+        for edge in [GpioEdge::Rising, GpioEdge::Falling, GpioEdge::Any] {
+            let bytes = to_allocvec(&edge).unwrap();
+            let decoded: GpioEdge = from_bytes(&bytes).unwrap();
+            assert_eq!(edge, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_edge_discriminants_are_stable() {
+        assert_eq!(GpioEdge::Rising as u8, 0);
+        assert_eq!(GpioEdge::Falling as u8, 1);
+        assert_eq!(GpioEdge::Any as u8, 2);
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn gpio_edge_display() {
+        assert_eq!(format!("{}", GpioEdge::Rising), "rising");
+        assert_eq!(format!("{}", GpioEdge::Falling), "falling");
+        assert_eq!(format!("{}", GpioEdge::Any), "any");
+    }
+
+    #[test]
+    fn gpio_event_round_trip() {
+        let event = GpioEvent {
+            pin: 2,
+            edge: GpioEdge::Rising,
+            state: GpioState::High,
+            timestamp_us: 123_456_789,
+        };
+        let bytes = to_allocvec(&event).unwrap();
+        let decoded: GpioEvent = from_bytes(&bytes).unwrap();
+        assert_eq!(event, decoded);
+    }
+
+    #[test]
+    fn gpio_event_all_edge_variants() {
+        for edge in [GpioEdge::Rising, GpioEdge::Falling, GpioEdge::Any] {
+            for state in [GpioState::Low, GpioState::High] {
+                let event = GpioEvent {
+                    pin: 0,
+                    edge,
+                    state,
+                    timestamp_us: 0,
+                };
+                let bytes = to_allocvec(&event).unwrap();
+                let decoded: GpioEvent = from_bytes(&bytes).unwrap();
+                assert_eq!(event, decoded);
+            }
+        }
+    }
+
+    #[test]
+    fn gpio_event_wire_stability() {
+        let event = GpioEvent {
+            pin: 1,
+            edge: GpioEdge::Falling,
+            state: GpioState::Low,
+            timestamp_us: 999_999,
+        };
+        let bytes = to_allocvec(&event).unwrap();
+        let canonical = bytes.clone();
+        let decoded: GpioEvent = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, event);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn gpio_subscribe_request_round_trip() {
+        for edge in [GpioEdge::Rising, GpioEdge::Falling, GpioEdge::Any] {
+            let req = GpioSubscribeRequest { pin: 3, edge };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: GpioSubscribeRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_unsubscribe_request_round_trip() {
+        for pin in 0..4u8 {
+            let req = GpioUnsubscribeRequest { pin };
+            let bytes = to_allocvec(&req).unwrap();
+            let decoded: GpioUnsubscribeRequest = from_bytes(&bytes).unwrap();
+            assert_eq!(req, decoded);
+        }
+    }
+
+    #[test]
+    fn gpio_subscribe_request_wire_stability() {
+        let req = GpioSubscribeRequest {
+            pin: 2,
+            edge: GpioEdge::Any,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: GpioSubscribeRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    // --- Transaction Batching Tests ---
+
+    #[test]
+    fn i2c_batch_op_round_trip() {
+        let ops = [
+            I2cBatchOp::Read { len: 16 },
+            I2cBatchOp::Write {
+                data: &[0xAA, 0xBB],
+            },
+        ];
+        for op in &ops {
+            let bytes = to_allocvec(op).unwrap();
+            let decoded: I2cBatchOp = from_bytes(&bytes).unwrap();
+            assert_eq!(&decoded, op);
+        }
+    }
+
+    #[test]
+    fn spi_batch_op_round_trip() {
+        let ops = [
+            SpiBatchOp::Read { len: 8 },
+            SpiBatchOp::Write {
+                data: &[0x01, 0x02],
+            },
+            SpiBatchOp::Transfer { data: &[0xFF; 4] },
+            SpiBatchOp::DelayNs { ns: 1_000_000 },
+        ];
+        for op in &ops {
+            let bytes = to_allocvec(op).unwrap();
+            let decoded: SpiBatchOp = from_bytes(&bytes).unwrap();
+            assert_eq!(&decoded, op);
+        }
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    fn i2c_batch_ops_take_from_bytes() {
+        let ops = [
+            I2cBatchOp::Write {
+                data: &[0xAA, 0xBB],
+            },
+            I2cBatchOp::Read { len: 4 },
+        ];
+        let encoded = encode_i2c_batch_ops(&ops);
+        let mut remaining: &[u8] = &encoded;
+        let mut decoded = Vec::new();
+        while !remaining.is_empty() {
+            let (op, rest) = postcard::take_from_bytes::<I2cBatchOp>(remaining).unwrap();
+            decoded.push(op);
+            remaining = rest;
+        }
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0], ops[0]);
+        assert_eq!(decoded[1], ops[1]);
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    fn spi_batch_ops_take_from_bytes() {
+        let ops = [
+            SpiBatchOp::Write {
+                data: &[0x01, 0x02],
+            },
+            SpiBatchOp::Read { len: 8 },
+            SpiBatchOp::Transfer { data: &[0xFF; 4] },
+            SpiBatchOp::DelayNs { ns: 1000 },
+        ];
+        let encoded = encode_spi_batch_ops(&ops);
+        let mut remaining: &[u8] = &encoded;
+        let mut decoded = Vec::new();
+        while !remaining.is_empty() {
+            let (op, rest) = postcard::take_from_bytes::<SpiBatchOp>(remaining).unwrap();
+            decoded.push(op);
+            remaining = rest;
+        }
+        assert_eq!(decoded.len(), 4);
+        for (d, o) in decoded.iter().zip(ops.iter()) {
+            assert_eq!(d, o);
+        }
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    fn i2c_batch_request_round_trip() {
+        let ops = encode_i2c_batch_ops(&[
+            I2cBatchOp::Write {
+                data: &[0xAA, 0xBB],
+            },
+            I2cBatchOp::Read { len: 4 },
+        ]);
+        let req = I2cBatchRequest {
+            address: 0x50,
+            count: 2,
+            ops: &ops,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: I2cBatchRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    fn spi_batch_request_round_trip() {
+        let ops = encode_spi_batch_ops(&[
+            SpiBatchOp::Write {
+                data: &[0x01, 0x02],
+            },
+            SpiBatchOp::Read { len: 8 },
+            SpiBatchOp::Transfer { data: &[0xFF; 4] },
+            SpiBatchOp::DelayNs { ns: 1000 },
+        ]);
+        let req = SpiBatchRequest {
+            cs_pin: 2,
+            count: 4,
+            ops: &ops,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: SpiBatchRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+    }
+
+    #[test]
+    fn i2c_batch_error_round_trip() {
+        let err = I2cBatchError {
+            failed_op: 3,
+            kind: I2cError::NoAcknowledge,
+        };
+        let bytes = to_allocvec(&err).unwrap();
+        let decoded: I2cBatchError = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, err);
+    }
+
+    #[test]
+    fn spi_batch_error_round_trip() {
+        let err = SpiBatchError {
+            failed_op: 1,
+            kind: SpiError::Other,
+        };
+        let bytes = to_allocvec(&err).unwrap();
+        let decoded: SpiBatchError = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, err);
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    fn encode_i2c_empty_batch() {
+        let ops = encode_i2c_batch_ops(&[]);
+        assert!(ops.is_empty());
+        assert_eq!(i2c_batch_response_len(&[]), 0);
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    fn encode_spi_empty_batch() {
+        let ops = encode_spi_batch_ops(&[]);
+        assert!(ops.is_empty());
+        assert_eq!(spi_batch_response_len(&[]), 0);
+    }
+
+    #[test]
+    fn i2c_batch_response_len_mixed() {
+        let ops = [
+            I2cBatchOp::Write {
+                data: &[0x00, 0x10],
+            },
+            I2cBatchOp::Read { len: 16 },
+            I2cBatchOp::Write {
+                data: &[0x00, 0x20],
+            },
+            I2cBatchOp::Read { len: 32 },
+        ];
+        assert_eq!(i2c_batch_response_len(&ops), 48);
+    }
+
+    #[test]
+    fn spi_batch_response_len_mixed() {
+        let ops = [
+            SpiBatchOp::Write {
+                data: &[0x01, 0x02],
+            },
+            SpiBatchOp::Read { len: 8 },
+            SpiBatchOp::Transfer { data: &[0xFF; 4] },
+            SpiBatchOp::DelayNs { ns: 1000 },
+        ];
+        // Read(8) + Transfer(4) = 12
+        assert_eq!(spi_batch_response_len(&ops), 12);
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    #[should_panic(expected = "too many batch operations")]
+    fn encode_i2c_batch_ops_panics_over_limit() {
+        let ops: Vec<I2cBatchOp> = (0..MAX_BATCH_OPS + 1)
+            .map(|_| I2cBatchOp::Read { len: 1 })
+            .collect();
+        encode_i2c_batch_ops(&ops);
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    #[should_panic(expected = "too many batch operations")]
+    fn encode_spi_batch_ops_panics_over_limit() {
+        let ops: Vec<SpiBatchOp> = (0..MAX_BATCH_OPS + 1)
+            .map(|_| SpiBatchOp::Read { len: 1 })
+            .collect();
+        encode_spi_batch_ops(&ops);
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    fn i2c_batch_ops_at_max_limit() {
+        let ops: Vec<I2cBatchOp> = (0..MAX_BATCH_OPS)
+            .map(|_| I2cBatchOp::Read { len: 1 })
+            .collect();
+        let encoded = encode_i2c_batch_ops(&ops);
+        // Verify we can decode all ops back
+        let mut remaining: &[u8] = &encoded;
+        let mut count = 0;
+        while !remaining.is_empty() {
+            let (_, rest) = postcard::take_from_bytes::<I2cBatchOp>(remaining).unwrap();
+            remaining = rest;
+            count += 1;
+        }
+        assert_eq!(count, MAX_BATCH_OPS);
+        assert_eq!(i2c_batch_response_len(&ops), MAX_BATCH_OPS);
+    }
+
+    #[cfg(feature = "use-std")]
+    #[test]
+    fn spi_batch_ops_at_max_limit() {
+        let ops: Vec<SpiBatchOp> = (0..MAX_BATCH_OPS)
+            .map(|_| SpiBatchOp::Read { len: 1 })
+            .collect();
+        let encoded = encode_spi_batch_ops(&ops);
+        let mut remaining: &[u8] = &encoded;
+        let mut count = 0;
+        while !remaining.is_empty() {
+            let (_, rest) = postcard::take_from_bytes::<SpiBatchOp>(remaining).unwrap();
+            remaining = rest;
+            count += 1;
+        }
+        assert_eq!(count, MAX_BATCH_OPS);
+        assert_eq!(spi_batch_response_len(&ops), MAX_BATCH_OPS);
+    }
+
+    #[test]
+    fn i2c_batch_write_only_response_len() {
+        let ops = [
+            I2cBatchOp::Write {
+                data: &[0x00, 0x10],
+            },
+            I2cBatchOp::Write { data: &[0xFF; 32] },
+        ];
+        // No reads → zero response bytes
+        assert_eq!(i2c_batch_response_len(&ops), 0);
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn i2c_batch_error_display() {
+        let err = I2cBatchError {
+            failed_op: 2,
+            kind: I2cError::Bus,
+        };
+        assert_eq!(
+            format!("{err}"),
+            "I2C batch operation 2 failed: I2C bus error"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn spi_batch_error_display() {
+        let err = SpiBatchError {
+            failed_op: 0,
+            kind: SpiError::Other,
+        };
+        assert_eq!(format!("{err}"), "SPI batch operation 0 failed: SPI error");
+    }
+
+    // --- 1-Wire round-trip tests ---
+
+    #[test]
+    fn onewire_read_request_round_trip() {
+        let req = OneWireReadRequest { len: 9 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: OneWireReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn onewire_write_request_round_trip() {
+        let data = [0xCC, 0x44];
+        let req = OneWireWriteRequest { data: &data };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: OneWireWriteRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn onewire_write_pullup_request_round_trip() {
+        let data = [0xCC, 0x44];
+        let req = OneWireWritePullupRequest {
+            data: &data,
+            pullup_duration_ms: 750,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: OneWireWritePullupRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn onewire_error_variants_round_trip() {
+        for err in [
+            OneWireError::NoPresence,
+            OneWireError::BusError,
+            OneWireError::BufferTooLong,
+            OneWireError::Other,
+        ] {
+            let bytes = to_allocvec(&err).unwrap();
+            let decoded: OneWireError = from_bytes(&bytes).unwrap();
+            assert_eq!(err, decoded);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "use-std")]
+    fn onewire_error_display() {
+        assert_eq!(
+            format!("{}", OneWireError::NoPresence),
+            "no device present on 1-Wire bus"
+        );
+        assert_eq!(format!("{}", OneWireError::BusError), "1-Wire bus error");
+        assert_eq!(
+            format!("{}", OneWireError::BufferTooLong),
+            "buffer exceeds firmware limit"
+        );
+        assert_eq!(format!("{}", OneWireError::Other), "1-Wire error");
+    }
+
+    #[test]
+    fn onewire_error_discriminants_are_stable() {
+        assert_eq!(to_allocvec(&OneWireError::NoPresence).unwrap(), [0]);
+        assert_eq!(to_allocvec(&OneWireError::BusError).unwrap(), [1]);
+        assert_eq!(to_allocvec(&OneWireError::BufferTooLong).unwrap(), [2]);
+        assert_eq!(to_allocvec(&OneWireError::Other).unwrap(), [3]);
+    }
+
+    #[test]
+    fn onewire_read_request_wire_stability() {
+        let req = OneWireReadRequest { len: 9 };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: OneWireReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn onewire_write_pullup_request_wire_stability() {
+        let data = [0xCC, 0x44];
+        let req = OneWireWritePullupRequest {
+            data: &data,
+            pullup_duration_ms: 750,
+        };
+        let bytes = to_allocvec(&req).unwrap();
+        let canonical = bytes.clone();
+        let decoded: OneWireWritePullupRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, req);
+        assert_eq!(to_allocvec(&decoded).unwrap(), canonical);
+    }
+
+    #[test]
+    fn onewire_read_request_zero_len() {
+        let req = OneWireReadRequest { len: 0 };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: OneWireReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn onewire_read_request_max_len() {
+        let req = OneWireReadRequest { len: u16::MAX };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: OneWireReadRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn onewire_write_request_empty() {
+        let req = OneWireWriteRequest { data: &[] };
+        let bytes = to_allocvec(&req).unwrap();
+        let decoded: OneWireWriteRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn onewire_search_response_some_round_trip() {
+        let resp: OneWireSearchResponse = Ok(Some(0x0028_FF12_3456_7800));
+        let bytes = to_allocvec(&resp).unwrap();
+        let decoded: OneWireSearchResponse = from_bytes(&bytes).unwrap();
+        assert_eq!(resp, decoded);
+    }
+
+    #[test]
+    fn onewire_search_response_none_round_trip() {
+        let resp: OneWireSearchResponse = Ok(None);
+        let bytes = to_allocvec(&resp).unwrap();
+        let decoded: OneWireSearchResponse = from_bytes(&bytes).unwrap();
+        assert_eq!(resp, decoded);
+    }
+
+    #[test]
+    fn onewire_reset_response_round_trip() {
+        for present in [true, false] {
+            let resp: OneWireResetResponse = Ok(present);
+            let bytes = to_allocvec(&resp).unwrap();
+            let decoded: OneWireResetResponse = from_bytes(&bytes).unwrap();
+            assert_eq!(resp, decoded);
+        }
+    }
+
+    // --- Logic Capture Tests ---
 }

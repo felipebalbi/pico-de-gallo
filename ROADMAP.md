@@ -30,8 +30,8 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 | Phase | Description        | Items | Done | Status         |
 |-------|--------------------|-------|------|----------------|
 | **1** | Polish What Exists | 6     | 6    | ✅ Complete    |
-| **2** | New Protocols      | 6     | 1    | 🟡 In progress |
-| **3** | Advanced Features  | 6     | 0    | 🔴 Not started |
+| **2** | New Protocols      | 6     | 3    | 🟡 In progress |
+| **3** | Advanced Features  | 6     | 3    | 🟡 In progress |
 | **4** | Hardware Rev 2     | 6     | 0    | 🔴 Not started |
 
 ---
@@ -43,7 +43,7 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 | **I2C**         | 1 bus (I2C1), 7-bit addressing, read/write/write-read/scan, configurable frequency (Standard/Fast/Fast+)                                                       |
 | **SPI**         | 1 bus (SPI0), read/write/flush/transfer, configurable polarity/phase, DMA-backed                                                                               |
 | **UART**        | 1 bus (UART0), read/write/flush, configurable baud rate, interrupt-driven with 1024-byte TX/RX buffers                                                         |
-| **GPIO**        | 8 pins (GPIO8–15), input/output/wait-for-edge                                                                                                                  |
+| **GPIO**        | 4 pins (GPIO8–11), input/output/wait-for-edge, push-based edge event monitoring                                                                                |
 | **USB**         | Full Speed (12 Mbps), postcard-rpc over raw USB bulk                                                                                                           |
 | **HAL traits**  | `I2c`, `SpiBus`, `InputPin`, `OutputPin`, `StatefulOutputPin`, `Wait`, `DelayNs`, `embedded_io::{Read,Write}` (sync + async)                                   |
 | **Hardware**    | Bare landing board — Pico 2 module + pin headers + mounting holes. No level shifters, no ESD protection, no voltage regulation beyond what the Pico 2 provides |
@@ -253,8 +253,8 @@ general-purpose GPIO until reconfigured.
 
 ### 2.3 ADC Support
 
-**What:** Expose RP2350's ADC channels (GPIO26–29 = ADC0–3, plus the
-internal temperature sensor). Add endpoints for single-shot reads and
+**What:** Expose RP2350's ADC channels (GPIO26–29 = ADC0–3).
+Add endpoints for single-shot reads and
 optionally continuous sampling. There is no standard embedded-hal ADC trait
 in 1.0, so expose a project-specific API.
 
@@ -262,7 +262,6 @@ in 1.0, so expose a project-specific API.
 - Voltage monitoring (power rails, battery levels)
 - Analog sensor reading (thermistors, potentiometers, light sensors)
 - Signal level debugging
-- Internal die temperature monitoring
 
 **Resolution:** RP2350 has a 12-bit ADC with 500 ksps. Single-shot reads
 are simple; continuous streaming would benefit from DMA but pushes against
@@ -312,12 +311,12 @@ architecture changes.*
 
 |   | Item                                                              | Tracking |
 |---|-------------------------------------------------------------------|----------|
-| ☐ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) | [#13](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/13) |
-| ☐ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       | [#14](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/14) |
-| ☐ | [3.3 1-Wire via PIO](#33-1-wire-support-via-pio)                  | [#15](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/15) |
-| ☐ | [3.4 Protocol Sniffing](#34-protocol-sniffing--logic-capture)     | [#16](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/16) |
-| ☐ | [3.5 Config Persistence](#35-configuration-persistence)           | [#17](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/17) |
-| ☐ | [3.6 Multi-Device Host](#36-multi-device-host-support)            | [#18](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/18) |
+| ☑ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) | [#13](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/13) |
+| ☑ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       | [#14](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/14) |
+| ☑ | [3.3 1-Wire via PIO](#33-1-wire-support-via-pio)                  | [#15](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/15) |
+| ☑ | [3.4 Protocol Sniffing](#34-protocol-sniffing--logic-capture)     | [#16](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/16) |
+| ⏳ | [3.5 Config Persistence](#35-configuration-persistence)           | [#17](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/17) — deferred to post-1.0 |
+| ⏳ | [3.6 Multi-Device Host](#36-multi-device-host-support)            | [#18](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/18) — deferred to post-1.0 |
 
 ### 3.1 GPIO Event Topics (Push Notifications)
 
@@ -719,7 +718,7 @@ shows current usage and planned allocation:
 | **SPI**    | 2 (SPI0, SPI1)    | 1 (SPI0)                              | 2                | SPI1 on GPIO16–19                         |
 | **UART**   | 2 (UART0, UART1)  | 0                                     | 1 (UART0)        | GPIO0/1                                   |
 | **PWM**    | 12 slices (24 ch) | 0                                     | 2–4 slices       | Repurpose GPIO pins or use dedicated pins |
-| **ADC**    | 4 GPIO + temp     | 0                                     | 4 GPIO + temp    | GPIO26–29                                 |
+| **ADC**    | 4 GPIO            | 0                                     | 4 GPIO           | GPIO26–29                                 |
 | **PIO**    | 3 (PIO0–2)        | 0                                     | 1–2              | 1-Wire, sniffing                          |
 | **DMA**    | 16 channels       | 2 (SPI)                               | 4–6              | ADC continuous, UART, SPI1                |
 | **GPIO**   | 30 (on Pico 2)    | 10 (I2C: 2, SPI: 3, user: 8, USB: ~0) | ~24              | Plenty of headroom                        |

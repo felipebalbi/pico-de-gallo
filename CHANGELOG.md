@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   etc.) with 3 rich error enums: `I2cError` (7 variants), `SpiError` (2 variants),
   `GpioError` (2 variants). Wire protocol is **not** backward compatible —
   firmware and host must be upgraded together.
+- **internal**: `GpioError` now has 4 variants — added `PinMonitored` and
+  `PinNotMonitored` for the GPIO event subscription system.
+- **firmware**: `gpios` field in `Context` changed from `[Flex<'static>; NUM_GPIOS]`
+  to `[Option<Flex<'static>>; NUM_GPIOS]`. GPIO operations on a monitored pin
+  return `GpioError::PinMonitored`.
 - **lib**: All method return types updated from `PicoDeGalloError<*Fail>` to
   `PicoDeGalloError<I2cError>`, `PicoDeGalloError<SpiError>`, or
   `PicoDeGalloError<GpioError>`.
@@ -29,9 +34,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **firmware**: I2C handlers now map embassy-rp `AbortReason` variants to rich
   error types. SPI `set-config` validates frequency before applying (prevents
   panic on zero frequency).
+- **hal**: `I2c::transaction()` and `SpiDevice::transaction()` now use batch
+  endpoints under the hood — one USB round-trip per transaction instead of
+  one per operation. This is a behavioral change: previously each operation
+  in a transaction was an independent USB transfer.
 
 ### Added
 
+- **internal**: `GpioEventTopic` (device-to-host topic), `GpioEdge` enum
+  (Rising/Falling/Any), `GpioEvent` struct (pin, edge, timestamp_us),
+  `GpioSubscribe`/`GpioUnsubscribe` endpoints with request/response types.
+  `TOPICS_OUT_LIST` now contains the GPIO event topic.
+- **firmware**: GPIO event monitoring via 4 pooled `gpio_monitor_task` instances.
+  Subscribe takes ownership of the pin, monitors for edges, and publishes
+  `GpioEvent` via `Sender::publish`. Unsubscribe returns the pin to the
+  context. Static channels for start/stop/return/armed synchronization.
+- **lib**: `gpio_subscribe(pin, edge)`, `gpio_unsubscribe(pin)`, and
+  `subscribe_gpio_events(depth)` methods. Re-exported `GpioEdge`, `GpioEvent`,
+  `IoClosed`, `MultiSubscription`.
+- **hal**: `gpio_subscribe(pin, edge)` and `gpio_unsubscribe(pin)` blocking
+  methods. Re-exported `GpioEdge`, `GpioEvent`.
+- **ffi**: `gallo_gpio_subscribe(pin, edge)` and `gallo_gpio_unsubscribe(pin)`
+  FFI functions. 4 new status codes: `GpioPinMonitored` (-54),
+  `GpioPinNotMonitored` (-55), `GpioSubscribeFailed` (-56),
+  `GpioUnsubscribeFailed` (-57).
+- **app**: `gallo gpio monitor --pin N --edge rising|falling|any` command.
+  Subscribes, prints edge events with timestamps, unsubscribes on Ctrl+C.
+- **internal**: `I2cBatch` and `SpiBatch` endpoints, `I2cBatchOp`/`SpiBatchOp`
+  enums, `I2cBatchRequest`/`SpiBatchRequest`/`I2cBatchError`/`SpiBatchError`
+  types, `encode_i2c_batch_ops`/`encode_spi_batch_ops` helpers,
+  `i2c_batch_response_len`/`spi_batch_response_len`/`count_i2c_batch_ops`/
+  `count_spi_batch_ops` parsing helpers. Constants: `MAX_BATCH_OPS`,
+  `BATCH_OP_READ`, `BATCH_OP_WRITE`, `BATCH_OP_TRANSFER`, `BATCH_OP_DELAY_NS`.
+- **firmware**: `i2c_batch_handler` and `spi_batch_handler` with pre-validation,
+  CS assertion/deassertion for SPI batches. SPI batch executes atomically
+  under chip-select.
+- **lib**: `i2c_batch(address, ops)` and `spi_batch(cs, ops)` async methods.
+  Re-exported `I2cBatchOp`, `SpiBatchOp`, `encode_i2c_batch_ops`,
+  `encode_spi_batch_ops`, `I2cBatchError`, `SpiBatchError`.
+- **hal**: `I2c::transaction()` and `SpiDevice::transaction()` (blocking and
+  async) rewritten to use batch endpoints — 10–50× fewer USB round-trips for
+  multi-operation transactions.
+- **app**: `gallo i2c batch` and `gallo spi batch` CLI commands for executing
+  batched operations (e.g., `--op write:0x00,0x10 --op read:16`).
 - **internal**: 6 PWM endpoints (`pwm/set-duty-cycle`, `pwm/get-duty-cycle`,
   `pwm/enable`, `pwm/disable`, `pwm/set-config`, `pwm/get-config`), `PwmError`
   enum (4 variants), request/response types, `PwmDutyCycleInfo` and
@@ -50,22 +95,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gallo_pwm_set_config`, `gallo_pwm_get_config`) and 9 status codes (-41 to -49).
 - **app**: `gallo pwm` subcommand group with `set-duty`, `get-duty`, `enable`,
   `disable`, `set-config`, and `get-config` commands.
-- **internal**: 3 ADC endpoints (`adc/read`, `adc/read-temperature`,
-  `adc/get-config`), `AdcChannel` enum (5 variants: Adc0–Adc3 + TempSensor),
+- **internal**: 2 ADC endpoints (`adc/read`,
+  `adc/get-config`), `AdcChannel` enum (4 variants: Adc0–Adc3),
   `AdcError` enum (2 variants), `AdcReadRequest` and `AdcConfigurationInfo`
   types. Constants: `NUM_ADC_GPIO_CHANNELS`, `ADC_RESOLUTION_BITS`,
   `ADC_NOMINAL_REFERENCE_MV`.
-- **firmware**: ADC support on GPIO 26–29 (4 GPIO channels) plus the on-die
-  temperature sensor. Uses `Adc::new_blocking` for single-shot reads.
-  Temperature returned in millidegrees Celsius via integer math.
-- **lib**: `adc_read(channel)`, `adc_read_temperature()`, `adc_get_config()`
+- **firmware**: ADC support on GPIO 26–29 (4 GPIO channels).
+  Uses `Adc::new_blocking` for single-shot reads.
+- **lib**: `adc_read(channel)`, `adc_get_config()`
   methods. Re-exported `AdcChannel`, `AdcError`, `AdcConfigurationInfo`.
 - **hal**: `AdcHalError` type. `Hal::adc_read(channel)`,
-  `adc_read_temperature()`, `adc_get_config()` convenience methods.
-- **ffi**: 3 ADC FFI functions (`gallo_adc_read`, `gallo_adc_read_temperature`,
+  `adc_get_config()` convenience methods.
+- **ffi**: 2 ADC FFI functions (`gallo_adc_read`,
   `gallo_adc_get_config`) and 4 status codes (-50 to -53).
-- **app**: `gallo adc` subcommand group with `read`, `temperature`, and
+- **app**: `gallo adc` subcommand group with `read` and
   `info` commands.
+- **internal**: 6 1-Wire endpoints (`onewire/reset`, `onewire/read`, `onewire/write`,
+  `onewire/write-pullup`, `onewire/search`, `onewire/search-next`), `OneWireError`
+  enum (4 variants), `OneWireReadRequest`, `OneWireWriteRequest`,
+  `OneWireWritePullupRequest` types. Response type aliases with `use-std` feature
+  gating for `onewire/read`.
+- **firmware**: 1-Wire support via PIO0/SM0 on GPIO 16 using embassy-rp's
+  `PioOneWire` driver. 6 async handlers. ROM search state held in Context.
+- **lib**: `onewire_reset()`, `onewire_read(len)`, `onewire_write(data)`,
+  `onewire_write_pullup(data, duration_ms)`, `onewire_search()`,
+  `onewire_search_next()` methods. Re-exported `OneWireError`.
+- **hal**: `OneWire` handle struct with blocking wrappers. `OneWireHalError` type.
+  `Hal::onewire()` accessor.
+- **ffi**: 5 1-Wire FFI functions (`gallo_onewire_reset`, `gallo_onewire_read`,
+  `gallo_onewire_write`, `gallo_onewire_write_pullup`, `gallo_onewire_search`)
+  and 5 status codes (-57 to -61).
+- **app**: `gallo onewire` subcommand group with `reset`, `read`, `write`,
+  `write-pullup`, and `search` commands.
+- **book**: New "1-Wire Bus" chapter with DS18B20 temperature sensor examples
+  (CLI, Rust, C, HAL).
+- **internal**: 2 capture endpoints (`capture/start`, `capture/stop`), `CaptureDataTopic`
+  (device-to-host topic), `CaptureError` enum (6 variants), `CaptureStartRequest`,
+  `CaptureStartInfo`, `CaptureStopInfo`, `CaptureData` types. Constants:
+  `CAPTURE_CHANNEL_MIN`, `CAPTURE_CHANNEL_MAX`, `MAX_CAPTURE_CHANNELS`,
+  `CAPTURE_MIN_SAMPLE_RATE_HZ`, `CAPTURE_MAX_SAMPLE_RATE_HZ`.
+- **firmware**: Logic capture via PIO1/SM0 on GPIO 8–11 (channels 0–3).
+  Single-instruction PIO program (`in pins, 8` with autopush). Spawned
+  `capture_task` with Signal/Channel coordination. 256-byte chunks streamed via
+  `CaptureDataTopic`. Capture pins are temporarily taken from the GPIO context
+  and returned when capture stops.
+- **lib**: `capture_start(pins, rate)`, `capture_stop()`, and
+  `subscribe_capture_data(depth)` methods. Host-side `decode` module with
+  `I2cDecoder` (START/STOP/data/ACK detection) and `UartDecoder` (8N1 framing).
+  Re-exported `CaptureError`, `CaptureStartInfo`, `CaptureStopInfo`, `CaptureData`.
+- **hal**: `CaptureHalError` type. `Capture` handle struct with `start()` and
+  `stop()` blocking wrappers. `Hal::capture()` accessor.
+- **ffi**: `gallo_capture_start()` and `gallo_capture_stop()` FFI functions.
+  `GalloCaptureStartInfo` and `GalloCaptureStopInfo` repr(C) output structs.
+  6 status codes (`CaptureInvalidPin` = -62 through `CaptureNoPins` = -67).
+- **app**: `gallo capture` subcommand group with `start`, `stop`, and `raw`
+  commands. Raw mode streams data to stdout or file with Ctrl+C handling.
+- **book**: New "Logic Capture" chapter with I2C sniffing examples (CLI, Rust, C).
 - **internal**: 5 UART endpoints (`uart/read`, `uart/write`, `uart/flush`,
   `uart/set-config`, `uart/get-config`), `UartError` enum (7 variants),
   `UartReadRequest`, `UartWriteRequest`, `UartSetConfigurationRequest`, and
