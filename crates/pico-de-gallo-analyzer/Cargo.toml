@@ -1,0 +1,18 @@
+[package]
+name = "pico-de-gallo-analyzer"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal logic analyzer for Pico de Gallo capture data"
+license = "MIT"
+
+[[bin]]
+name = "gallo-analyzer"
+path = "src/main.rs"
+
+[dependencies]
+pico-de-gallo-lib = { path = "../pico-de-gallo-lib" }
+pico-de-gallo-internal = { path = "../pico-de-gallo-internal", features = ["use-std"] }
+tokio = { version = "1", features = ["full"] }
+ratatui = "0.29"
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }

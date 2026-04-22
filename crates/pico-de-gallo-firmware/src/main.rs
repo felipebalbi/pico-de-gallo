@@ -23,6 +23,7 @@
 //! | PWM 2    | GPIO 14 | Slice 7 channel A |
 //! | PWM 3    | GPIO 15 | Slice 7 channel B |
 //! | 1-Wire   | GPIO 16 | PIO0/SM0, open-drain |
+//! | Capture 0–7 | GPIO 17–24 | PIO1/SM0, logic capture |
 //! | ADC 0    | GPIO 26 | 12-bit, 0–3.3 V nominal |
 //! | ADC 1    | GPIO 27 | 12-bit, 0–3.3 V nominal |
 //! | ADC 2    | GPIO 28 | 12-bit, 0–3.3 V nominal |
@@ -49,8 +50,9 @@ use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio::{Flex, Level, Pull};
 use embassy_rp::i2c::{self, I2c};
-use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, PIO0, SPI0, UART0, USB};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, PIO0, PIO1, SPI0, UART0, USB};
 use embassy_rp::pio;
+use embassy_rp::pio::program::pio_asm;
 use embassy_rp::pio_programs::onewire::{PioOneWire, PioOneWireProgram, PioOneWireSearch};
 use embassy_rp::pwm::{self, Pwm};
 use embassy_rp::spi::{self, Phase, Polarity, Spi};
@@ -69,31 +71,34 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
     ADC_NOMINAL_REFERENCE_MV, ADC_RESOLUTION_BITS, AdcChannel, AdcConfigurationInfo, AdcError, AdcGetConfiguration,
-    AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse, ENDPOINT_LIST, GpioDirection, GpioEdge,
-    GpioError, GpioEvent, GpioEventTopic, GpioGet, GpioGetRequest, GpioGetResponse, GpioPull, GpioPut, GpioPutRequest,
-    GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSetConfigurationResponse, GpioState,
-    GpioSubscribe, GpioSubscribeRequest, GpioSubscribeResponse, GpioUnsubscribe, GpioUnsubscribeRequest,
-    GpioUnsubscribeResponse, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising,
-    GpioWaitRequest, GpioWaitResponse, I2cBatch, I2cBatchError, I2cBatchOp, I2cBatchRequest, I2cBatchResponse,
-    I2cError, I2cFrequency, I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse,
-    I2cScan, I2cScanRequest, I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest,
-    I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest,
-    I2cWriteResponse, MAX_BATCH_OPS, MAX_TRANSFER_SIZE, MICROSOFT_VID, NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS,
-    OneWireError, OneWireRead, OneWireReadRequest, OneWireReadResponse, OneWireReset, OneWireResetResponse,
-    OneWireSearch, OneWireSearchNext, OneWireSearchResponse, OneWireWrite, OneWireWritePullup,
-    OneWireWritePullupRequest, OneWireWritePullupResponse, OneWireWriteRequest, OneWireWriteResponse,
-    PICO_DE_GALLO_PID, PingEndpoint, PwmConfigurationInfo, PwmDisable, PwmDisableRequest, PwmDisableResponse,
-    PwmDutyCycleInfo, PwmEnable, PwmEnableRequest, PwmEnableResponse, PwmError, PwmGetConfiguration,
-    PwmGetConfigurationRequest, PwmGetConfigurationResponse, PwmGetDutyCycle, PwmGetDutyCycleRequest,
-    PwmGetDutyCycleResponse, PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetConfigurationResponse,
-    PwmSetDutyCycle, PwmSetDutyCycleRequest, PwmSetDutyCycleResponse, SpiBatch, SpiBatchError, SpiBatchOp,
-    SpiBatchRequest, SpiBatchResponse, SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration,
-    SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration,
-    SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse,
-    SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, UartConfigurationInfo, UartError,
-    UartFlush, UartFlushResponse, UartGetConfiguration, UartGetConfigurationResponse, UartRead, UartReadRequest,
-    UartReadResponse, UartSetConfiguration, UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite,
-    UartWriteRequest, UartWriteResponse, Version, VersionInfo,
+    AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse, CAPTURE_CHANNEL_MAX, CAPTURE_CHANNEL_MIN,
+    CAPTURE_MAX_SAMPLE_RATE_HZ, CaptureData, CaptureDataTopic, CaptureError, CaptureStart, CaptureStartInfo,
+    CaptureStartRequest, CaptureStartResponse, CaptureStop, CaptureStopInfo, CaptureStopResponse, ENDPOINT_LIST,
+    GpioDirection, GpioEdge, GpioError, GpioEvent, GpioEventTopic, GpioGet, GpioGetRequest, GpioGetResponse, GpioPull,
+    GpioPut, GpioPutRequest, GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest,
+    GpioSetConfigurationResponse, GpioState, GpioSubscribe, GpioSubscribeRequest, GpioSubscribeResponse,
+    GpioUnsubscribe, GpioUnsubscribeRequest, GpioUnsubscribeResponse, GpioWaitForAny, GpioWaitForFalling,
+    GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, GpioWaitResponse, I2cBatch, I2cBatchError,
+    I2cBatchOp, I2cBatchRequest, I2cBatchResponse, I2cError, I2cFrequency, I2cGetConfiguration,
+    I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse, I2cScan, I2cScanRequest, I2cScanResponse,
+    I2cSetConfiguration, I2cSetConfigurationRequest, I2cSetConfigurationResponse, I2cWrite, I2cWriteRead,
+    I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse, MAX_BATCH_OPS, MAX_CAPTURE_CHANNELS,
+    MAX_TRANSFER_SIZE, MICROSOFT_VID, NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS, OneWireError, OneWireRead,
+    OneWireReadRequest, OneWireReadResponse, OneWireReset, OneWireResetResponse, OneWireSearch, OneWireSearchNext,
+    OneWireSearchResponse, OneWireWrite, OneWireWritePullup, OneWireWritePullupRequest, OneWireWritePullupResponse,
+    OneWireWriteRequest, OneWireWriteResponse, PICO_DE_GALLO_PID, PingEndpoint, PwmConfigurationInfo, PwmDisable,
+    PwmDisableRequest, PwmDisableResponse, PwmDutyCycleInfo, PwmEnable, PwmEnableRequest, PwmEnableResponse, PwmError,
+    PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetConfigurationResponse, PwmGetDutyCycle,
+    PwmGetDutyCycleRequest, PwmGetDutyCycleResponse, PwmSetConfiguration, PwmSetConfigurationRequest,
+    PwmSetConfigurationResponse, PwmSetDutyCycle, PwmSetDutyCycleRequest, PwmSetDutyCycleResponse, SpiBatch,
+    SpiBatchError, SpiBatchOp, SpiBatchRequest, SpiBatchResponse, SpiConfigurationInfo, SpiError, SpiFlush,
+    SpiFlushResponse, SpiGetConfiguration, SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest,
+    SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer,
+    SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST,
+    TOPICS_OUT_LIST, UartConfigurationInfo, UartError, UartFlush, UartFlushResponse, UartGetConfiguration,
+    UartGetConfigurationResponse, UartRead, UartReadRequest, UartReadResponse, UartSetConfiguration,
+    UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite, UartWriteRequest, UartWriteResponse, Version,
+    VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
@@ -150,6 +155,7 @@ bind_interrupts!(struct Irqs {
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>, embassy_rp::dma::InterruptHandler<DMA_CH1>;
     UART0_IRQ => embassy_rp::uart::BufferedInterruptHandler<UART0>;
     PIO0_IRQ_0 => embassy_rp::pio::InterruptHandler<PIO0>;
+    PIO1_IRQ_0 => embassy_rp::pio::InterruptHandler<PIO1>;
 });
 
 const NUM_GPIOS: usize = 4;
@@ -185,6 +191,11 @@ pub struct Context {
     uart_baud_rate: u32,
     onewire: PioOneWire<'static, PIO0, 0>,
     onewire_search: PioOneWireSearch,
+    capturing: bool,
+    /// Which GPIO pin indices are currently taken for capture.
+    captured_pins: [bool; NUM_GPIOS],
+    /// Flex handles for pins taken during capture (returned on stop).
+    captured_flex: [Option<Flex<'static>>; NUM_GPIOS],
     buf: [u8; MAX_TRANSFER_SIZE],
 }
 
@@ -220,6 +231,9 @@ impl Context {
             uart_baud_rate: 115_200,
             onewire,
             onewire_search: PioOneWireSearch::new(),
+            capturing: false,
+            captured_pins: [false; NUM_GPIOS],
+            captured_flex: [const { None }; NUM_GPIOS],
             buf: [0; MAX_TRANSFER_SIZE],
         }
     }
@@ -370,6 +384,132 @@ async fn gpio_monitor_task(slot: usize, tx: AppTx, vkk: VarKeyKind) {
     }
 }
 
+// --- Logic capture infrastructure ---
+
+/// Configuration sent to the capture task when starting a session.
+struct CaptureConfig {
+    /// Number of pins to capture.
+    num_pins: u8,
+    /// PIO clock divider (sys_clk / divider = sample rate).
+    clk_div: u32,
+    /// Actual achieved sample rate in Hz.
+    actual_rate: u32,
+}
+
+/// Signal to start capture (carries configuration).
+static CAPTURE_START: Signal<CriticalSectionRawMutex, CaptureConfig> = Signal::new();
+
+/// Signal to stop capture.
+static CAPTURE_STOP: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Channel to return capture statistics after stopping.
+static CAPTURE_RESULT: Channel<CriticalSectionRawMutex, CaptureStopInfo, 1> = Channel::new();
+
+/// Background task that performs PIO-based logic capture on GPIO 8–11.
+///
+/// Waits for a `CaptureConfig` on `CAPTURE_START`, configures PIO1/SM0 to
+/// sample pins at the requested rate, then loops reading the FIFO and
+/// publishing `CaptureDataTopic` chunks. Stops when `CAPTURE_STOP` is
+/// signalled and sends `CaptureStopInfo` back via `CAPTURE_RESULT`.
+#[embassy_executor::task]
+async fn capture_task(mut sm: pio::StateMachine<'static, PIO1, 0>, tx: AppTx, vkk: VarKeyKind) {
+    let sender = Sender::new(tx, vkk);
+
+    loop {
+        let config = CAPTURE_START.wait().await;
+
+        // Only update the clock divider — the program, shift config, and
+        // in_base pin were configured once in main().
+        sm.set_clock_divider(config.clk_div.to_fixed());
+        sm.set_enable(true);
+
+        let mut sequence: u32 = 0;
+        let mut total_samples: u64 = 0;
+        let mut chunks_sent: u32 = 0;
+        let mut drops: u32 = 0;
+        let start_time = Instant::now();
+
+        // Chunk buffer: collect samples before publishing.
+        const CHUNK_SIZE: usize = 256;
+        let mut chunk_buf = [0u8; CHUNK_SIZE];
+        let mut chunk_pos: usize = 0;
+
+        debug!(
+            "capture: started, pins={=u8}, rate={=u32}",
+            config.num_pins, config.actual_rate
+        );
+
+        loop {
+            use embassy_futures::select::{Either, select};
+
+            let fifo_future = sm.rx().wait_pull();
+
+            match select(fifo_future, CAPTURE_STOP.wait()).await {
+                Either::First(word) => {
+                    // Each 32-bit word contains 4 samples (8 bits each).
+                    let bytes = word.to_le_bytes();
+                    for &b in &bytes[..4] {
+                        chunk_buf[chunk_pos] = b;
+                        chunk_pos += 1;
+                        total_samples += 1;
+
+                        if chunk_pos >= CHUNK_SIZE {
+                            let timestamp_us = Instant::now().as_micros();
+                            let data = CaptureData {
+                                sequence,
+                                timestamp_us,
+                                samples: &chunk_buf[..],
+                            };
+                            if sender.publish::<CaptureDataTopic>(sequence.into(), &data).await.is_ok() {
+                                chunks_sent += 1;
+                            } else {
+                                drops += 1;
+                            }
+                            sequence += 1;
+                            chunk_pos = 0;
+                        }
+                    }
+                }
+                Either::Second(()) => {
+                    // Flush remaining samples if any.
+                    if chunk_pos > 0 {
+                        let timestamp_us = Instant::now().as_micros();
+                        let data = CaptureData {
+                            sequence,
+                            timestamp_us,
+                            samples: &chunk_buf[..chunk_pos],
+                        };
+                        if sender.publish::<CaptureDataTopic>(sequence.into(), &data).await.is_ok() {
+                            chunks_sent += 1;
+                        } else {
+                            drops += 1;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        sm.set_enable(false);
+
+        let duration_us = Instant::now().duration_since(start_time).as_micros();
+
+        debug!(
+            "capture: stopped, samples={=u64}, chunks={=u32}, drops={=u32}",
+            total_samples, chunks_sent, drops
+        );
+
+        CAPTURE_RESULT
+            .send(CaptureStopInfo {
+                total_samples,
+                duration_us,
+                chunks_sent,
+                drops,
+            })
+            .await;
+    }
+}
+
 /// Build the USB device configuration.
 ///
 /// Reads the chip unique ID from OTP to generate a deterministic serial
@@ -474,6 +614,8 @@ define_dispatch! {
         | OneWireWritePullup   | async    | onewire_write_pullup_handler  |
         | OneWireSearch        | async    | onewire_search_handler        |
         | OneWireSearchNext    | async    | onewire_search_next_handler   |
+        | CaptureStart         | async    | capture_start_handler         |
+        | CaptureStop          | async    | capture_stop_handler          |
         | Version              | async    | version_handler               |
     };
     topics_in: {
@@ -554,6 +696,34 @@ async fn main(spawner: Spawner) {
     let ow_program = OW_PROGRAM.init(PioOneWireProgram::new(&mut common));
     let onewire = PioOneWire::new(&mut common, sm0, p.PIN_16, ow_program);
 
+    // Logic Capture — PIO1/SM0 on GPIO 17–24
+    let pio::Pio {
+        common: mut pio1_common,
+        sm0: mut capture_sm,
+        ..
+    } = pio::Pio::new(p.PIO1, Irqs);
+    // Load the capture program: a single `in pins, 8` instruction with wrap.
+    let capture_prg = pio_asm!(".wrap_target", "in pins, 8", ".wrap",);
+    let capture_prg = pio1_common.load_program(&capture_prg.program);
+    // Set in_base to GPIO 8 directly via PAC register. PIO reads 8
+    // consecutive pins (8–15). Only bits 0–3 (GPIO 8–11, capture channels
+    // 0–3) carry valid data; bits 4–7 (GPIO 12–15, PWM) are ignored by host
+    // decoders. We bypass set_in_pins() because GPIO 8 is already owned by
+    // the Flex GPIO array — PIO reads the pad input register regardless.
+    let mut capture_cfg = pio::Config::default();
+    capture_cfg.use_program(&capture_prg, &[]);
+    capture_cfg.shift_in = pio::ShiftConfig {
+        auto_fill: true,
+        threshold: 8,
+        direction: pio::ShiftDirection::Right,
+    };
+    // Default clock divider — will be reconfigured when capture starts.
+    capture_cfg.clock_divider = 300u32.to_fixed();
+    capture_sm.set_config(&capture_cfg);
+    // Override in_base to GPIO 8 via PAC (pins field is private in Config).
+    // PIO reads the GPIO pad input register regardless of pin ownership.
+    embassy_rp::pac::PIO1.sm(0).pinctrl().modify(|w| w.set_in_base(8));
+
     let context = Context::new(
         i2c,
         spi,
@@ -580,6 +750,9 @@ async fn main(spawner: Spawner) {
     for slot in 0..NUM_GPIOS {
         spawner.must_spawn(gpio_monitor_task(slot, tx_impl.clone(), vkk));
     }
+
+    // Spawn capture task with PIO1/SM0.
+    spawner.must_spawn(capture_task(capture_sm, tx_impl.clone(), vkk));
 
     let mut server: AppServer = Server::new(tx_impl, rx_impl, pbufs.rx_buf.as_mut_slice(), dispatcher, vkk);
     spawner.must_spawn(usb_task(device));
@@ -1670,4 +1843,100 @@ async fn version_handler(_context: &mut Context, _header: VarHeader, _req: ()) -
         minor: VERSION_MINOR,
         patch: VERSION_PATCH,
     }
+}
+
+/// Handler for `capture/start` — begins a logic capture session.
+///
+/// Validates the requested channels (0–3), sample rate, and channel count.
+/// Takes the requested GPIO pins from the context (like GPIO subscribe) and
+/// signals the capture task to start.
+async fn capture_start_handler(
+    context: &mut Context,
+    _header: VarHeader,
+    req: CaptureStartRequest<'_>,
+) -> CaptureStartResponse {
+    if context.capturing {
+        return Err(CaptureError::AlreadyCapturing);
+    }
+    if req.pins.is_empty() {
+        return Err(CaptureError::NoPins);
+    }
+    if req.pins.len() > MAX_CAPTURE_CHANNELS as usize {
+        return Err(CaptureError::TooManyChannels);
+    }
+    for &ch in req.pins {
+        if !(CAPTURE_CHANNEL_MIN..=CAPTURE_CHANNEL_MAX).contains(&ch) {
+            return Err(CaptureError::InvalidPin);
+        }
+    }
+    if req.sample_rate_hz == 0 || req.sample_rate_hz > CAPTURE_MAX_SAMPLE_RATE_HZ {
+        return Err(CaptureError::InvalidSampleRate);
+    }
+
+    // First pass: validate all requested pins are available.
+    for &ch in req.pins {
+        let idx = ch as usize;
+        if context.gpios[idx].is_none() {
+            return Err(CaptureError::InvalidPin);
+        }
+    }
+
+    // Second pass: take pins from context and store in captured_flex.
+    let mut taken: [bool; NUM_GPIOS] = [false; NUM_GPIOS];
+    for &ch in req.pins {
+        let idx = ch as usize;
+        context.captured_flex[idx] = context.gpios[idx].take();
+        taken[idx] = true;
+    }
+
+    // Compute clock divider and actual rate (integer divider quantization).
+    let clk_div = SYS_CLK_HZ / req.sample_rate_hz;
+    let clk_div = clk_div.max(1);
+    let actual_rate = SYS_CLK_HZ / clk_div;
+
+    debug!(
+        "capture start: channels={=usize}, rate={=u32}, actual={=u32}, div={=u32}",
+        req.pins.len(),
+        req.sample_rate_hz,
+        actual_rate,
+        clk_div,
+    );
+
+    context.capturing = true;
+    context.captured_pins = taken;
+    CAPTURE_START.signal(CaptureConfig {
+        num_pins: req.pins.len() as u8,
+        clk_div,
+        actual_rate,
+    });
+
+    Ok(CaptureStartInfo {
+        actual_sample_rate_hz: actual_rate,
+        num_channels: req.pins.len() as u8,
+    })
+}
+
+/// Handler for `capture/stop` — stops an active logic capture session.
+///
+/// Returns the captured GPIO pins to the context so they can be used for
+/// GPIO operations again.
+async fn capture_stop_handler(context: &mut Context, _header: VarHeader, _req: ()) -> CaptureStopResponse {
+    if !context.capturing {
+        return Err(CaptureError::NotCapturing);
+    }
+
+    debug!("capture stop: signalling task");
+    CAPTURE_STOP.signal(());
+    let info = CAPTURE_RESULT.receive().await;
+
+    // Return captured pins to the GPIO context.
+    for i in 0..NUM_GPIOS {
+        if context.captured_pins[i] {
+            context.gpios[i] = context.captured_flex[i].take();
+        }
+    }
+    context.captured_pins = [false; NUM_GPIOS];
+    context.capturing = false;
+
+    Ok(info)
 }

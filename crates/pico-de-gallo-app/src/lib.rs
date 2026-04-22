@@ -1,6 +1,6 @@
 //! Command-line interface for the Pico de Gallo USB bridge.
 //!
-//! The `gallo` CLI provides direct access to I2C, SPI, UART, GPIO, PWM, ADC, and 1-Wire peripherals
+//! The `gallo` CLI provides direct access to I2C, SPI, UART, GPIO, PWM, ADC, 1-Wire, and capture peripherals
 //! connected through a Pico de Gallo device. It is built with
 //! [clap](https://docs.rs/clap) and supports:
 //!
@@ -10,6 +10,7 @@
 //! - **PWM**: duty cycle control, enable/disable, frequency/phase configuration
 //! - **ADC**: single-shot reads, configuration queries
 //! - **1-Wire**: reset, read, write, strong-pullup write, ROM search
+//! - **Capture**: start/stop logic capture, raw data streaming
 //! - **GPIO**: read/write pins, edge event monitoring with subscribe/unsubscribe
 //! - **Configuration**: set I2C/SPI/UART bus frequencies and SPI mode
 //! - **Device management**: list connected devices, query firmware version
@@ -214,6 +215,13 @@ enum Commands {
         /// 1-Wire commands
         #[command(subcommand)]
         command: OneWireCommands,
+    },
+
+    /// Logic capture access methods
+    Capture {
+        /// Capture commands
+        #[command(subcommand)]
+        command: CaptureCommands,
     },
 }
 
@@ -544,6 +552,38 @@ enum OneWireCommands {
     Search,
 }
 
+#[derive(Subcommand, Debug)]
+enum CaptureCommands {
+    /// Start a logic capture session
+    Start {
+        /// Comma-separated capture channel indices (0–3, e.g., 0,1)
+        #[arg(short, long, value_parser(parse_pin_list))]
+        pins: Vec<u8>,
+
+        /// Sample rate in Hz (default: 500000)
+        #[arg(short, long, default_value_t = 500_000)]
+        rate: u32,
+    },
+
+    /// Stop a running logic capture session
+    Stop,
+
+    /// Start capture and stream raw data (Ctrl+C to stop)
+    Raw {
+        /// Comma-separated capture channel indices (0–3, e.g., 0,1)
+        #[arg(short, long, value_parser(parse_pin_list))]
+        pins: Vec<u8>,
+
+        /// Sample rate in Hz (default: 500000)
+        #[arg(short, long, default_value_t = 500_000)]
+        rate: u32,
+
+        /// Output file for binary data (default: hex to stdout)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+}
+
 fn print_data(data: &[u8], format: &OutputFormat) {
     match format {
         OutputFormat::Hex => {
@@ -652,6 +692,11 @@ impl Cli {
                 OneWireCommands::Write { data } => self.onewire_write(data).await,
                 OneWireCommands::WritePullup { data, duration } => self.onewire_write_pullup(data, *duration).await,
                 OneWireCommands::Search => self.onewire_search().await,
+            },
+            Commands::Capture { command } => match command {
+                CaptureCommands::Start { pins, rate } => self.capture_start(pins, *rate).await,
+                CaptureCommands::Stop => self.capture_stop().await,
+                CaptureCommands::Raw { pins, rate, output } => self.capture_raw(pins, *rate, output.as_deref()).await,
             },
         }
     }
@@ -1246,6 +1291,99 @@ impl Cli {
         }
         Ok(())
     }
+
+    // ---- Capture methods ----
+
+    async fn capture_start(&self, pins: &[u8], sample_rate_hz: u32) -> Result<()> {
+        let pg = self.connect();
+        let info = pg
+            .capture_start(pins, sample_rate_hz)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("capture start failed"))?;
+        println!(
+            "Capture started: {} channel(s), actual rate {} Hz",
+            info.num_channels, info.actual_sample_rate_hz
+        );
+        Ok(())
+    }
+
+    async fn capture_stop(&self) -> Result<()> {
+        let pg = self.connect();
+        let info = pg
+            .capture_stop()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("capture stop failed"))?;
+        println!("Capture stopped:");
+        println!("  Total samples:  {}", info.total_samples);
+        println!("  Duration:       {} µs", info.duration_us);
+        println!("  Chunks sent:    {}", info.chunks_sent);
+        println!("  Drops:          {}", info.drops);
+        Ok(())
+    }
+
+    async fn capture_raw(&self, pins: &[u8], sample_rate_hz: u32, output: Option<&str>) -> Result<()> {
+        let pg = self.connect();
+
+        let mut sub = pg
+            .subscribe_capture_data(16)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("failed to open capture subscription"))?;
+
+        let info = pg
+            .capture_start(pins, sample_rate_hz)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("capture start failed"))?;
+
+        eprintln!(
+            "Capture started: {} channel(s), actual rate {} Hz (Ctrl+C to stop)",
+            info.num_channels, info.actual_sample_rate_hz
+        );
+
+        let mut file = match output {
+            Some(path) => Some(std::fs::File::create(path).map_err(|e| eyre!("failed to create output file: {e}"))?),
+            None => None,
+        };
+
+        let result = loop {
+            tokio::select! {
+                chunk = sub.recv() => {
+                    match chunk {
+                        Ok(data) => {
+                            if let Some(ref mut f) = file {
+                                use std::io::Write;
+                                f.write_all(&data.samples)
+                                    .map_err(|e| eyre!("write failed: {e}"))?;
+                            } else {
+                                for b in &data.samples {
+                                    print!("{:02x} ", b);
+                                }
+                                println!();
+                            }
+                        }
+                        Err(_) => {
+                            break Err(eyre!("capture subscription closed"));
+                        }
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    break Ok(());
+                }
+            }
+        };
+
+        let stop_info = pg
+            .capture_stop()
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("capture stop failed"))?;
+
+        eprintln!("Capture stopped:");
+        eprintln!("  Total samples:  {}", stop_info.total_samples);
+        eprintln!("  Duration:       {} µs", stop_info.duration_us);
+        eprintln!("  Chunks sent:    {}", stop_info.chunks_sent);
+        eprintln!("  Drops:          {}", stop_info.drops);
+
+        result
+    }
 }
 
 fn parse_byte(s: &str) -> Result<u8, ParseIntError> {
@@ -1286,6 +1424,13 @@ fn parse_byte_list(s: &str) -> Result<Vec<u8>> {
             let b = b.trim();
             parse_byte(b).map_err(|e| eyre!("invalid byte '{b}': {e}"))
         })
+        .collect()
+}
+
+/// Parse a comma-separated list of channel indices (e.g., "0,1").
+fn parse_pin_list(s: &str) -> Result<Vec<u8>, String> {
+    s.split(',')
+        .map(|p| p.trim().parse::<u8>().map_err(|e| format!("invalid pin '{p}': {e}")))
         .collect()
 }
 

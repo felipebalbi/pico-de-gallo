@@ -220,6 +220,48 @@ $ gallo spi write-read --bytes 0x00 0x01 0x02 0x03 0x04 0x05 --count 10
 00 00 00 00 00 00 00 00 00 00
 ```
 
+### Communicating via Logic Capture
+
+The `capture` subcommand provides logic capture functionality for
+sampling digital signals on channels 0–3 (GPIO 8–11).
+
+```console
+$ gallo capture help
+Logic capture access methods
+
+Usage: gallo.exe capture [COMMAND]
+
+Commands:
+  start   Start capturing on selected channels at given sample rate
+  stop    Stop an active capture session
+  raw     Stream raw capture data to stdout or file
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+```
+
+#### Starting a Capture
+
+```console
+$ gallo capture start --pins 0,1 --rate 1000000
+Capture started on 2 channel(s) at 1000000 Hz
+```
+
+#### Streaming Raw Data
+
+```console
+$ gallo capture raw > capture.bin
+^C
+```
+
+#### Stopping a Capture
+
+```console
+$ gallo capture stop
+Capture stopped
+```
+
 ### Output Formats
 
 Read operations (both I<sup>2</sup>C and SPI) support three output

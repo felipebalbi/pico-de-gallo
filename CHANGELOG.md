@@ -129,6 +129,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `write-pullup`, and `search` commands.
 - **book**: New "1-Wire Bus" chapter with DS18B20 temperature sensor examples
   (CLI, Rust, C, HAL).
+- **internal**: 2 capture endpoints (`capture/start`, `capture/stop`), `CaptureDataTopic`
+  (device-to-host topic), `CaptureError` enum (6 variants), `CaptureStartRequest`,
+  `CaptureStartInfo`, `CaptureStopInfo`, `CaptureData` types. Constants:
+  `CAPTURE_CHANNEL_MIN`, `CAPTURE_CHANNEL_MAX`, `MAX_CAPTURE_CHANNELS`,
+  `CAPTURE_MIN_SAMPLE_RATE_HZ`, `CAPTURE_MAX_SAMPLE_RATE_HZ`.
+- **firmware**: Logic capture via PIO1/SM0 on GPIO 8–11 (channels 0–3).
+  Single-instruction PIO program (`in pins, 8` with autopush). Spawned
+  `capture_task` with Signal/Channel coordination. 256-byte chunks streamed via
+  `CaptureDataTopic`. Capture pins are temporarily taken from the GPIO context
+  and returned when capture stops.
+- **lib**: `capture_start(pins, rate)`, `capture_stop()`, and
+  `subscribe_capture_data(depth)` methods. Host-side `decode` module with
+  `I2cDecoder` (START/STOP/data/ACK detection) and `UartDecoder` (8N1 framing).
+  Re-exported `CaptureError`, `CaptureStartInfo`, `CaptureStopInfo`, `CaptureData`.
+- **hal**: `CaptureHalError` type. `Capture` handle struct with `start()` and
+  `stop()` blocking wrappers. `Hal::capture()` accessor.
+- **ffi**: `gallo_capture_start()` and `gallo_capture_stop()` FFI functions.
+  `GalloCaptureStartInfo` and `GalloCaptureStopInfo` repr(C) output structs.
+  6 status codes (`CaptureInvalidPin` = -62 through `CaptureNoPins` = -67).
+- **app**: `gallo capture` subcommand group with `start`, `stop`, and `raw`
+  commands. Raw mode streams data to stdout or file with Ctrl+C handling.
+- **book**: New "Logic Capture" chapter with I2C sniffing examples (CLI, Rust, C).
 - **internal**: 5 UART endpoints (`uart/read`, `uart/write`, `uart/flush`,
   `uart/set-config`, `uart/get-config`), `UartError` enum (7 variants),
   `UartReadRequest`, `UartWriteRequest`, `UartSetConfigurationRequest`, and

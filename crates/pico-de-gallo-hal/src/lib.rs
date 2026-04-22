@@ -3,7 +3,7 @@
 //! backed by a Pico de Gallo USB bridge.
 //!
 //! This crate lets you run embedded Rust drivers on a host machine by
-//! forwarding I2C, SPI, GPIO, PWM, ADC, 1-Wire, and delay operations to a Pico de Gallo
+//! forwarding I2C, SPI, GPIO, PWM, ADC, 1-Wire, capture, and delay operations to a Pico de Gallo
 //! device over USB.
 //!
 //! # Quick Start
@@ -44,9 +44,9 @@
 //! | Delay | [`DelayNs`](embedded_hal::delay::DelayNs) | [`DelayNs`](embedded_hal_async::delay::DelayNs) |
 
 use pico_de_gallo_lib::{
-    AdcChannel, AdcConfigurationInfo, AdcError, GpioDirection, GpioEdge, GpioError, GpioPull,
-    GpioState, I2cError, OneWireError, PicoDeGallo, PicoDeGalloError, PwmError, SpiError,
-    UartError,
+    AdcChannel, AdcConfigurationInfo, AdcError, CaptureError, CaptureStartInfo, CaptureStopInfo,
+    GpioDirection, GpioEdge, GpioError, GpioPull, GpioState, I2cError, OneWireError, PicoDeGallo,
+    PicoDeGalloError, PwmError, SpiError, UartError,
 };
 use std::sync::Arc;
 use tokio::runtime::{Handle, Runtime};
@@ -54,7 +54,8 @@ use tokio::sync::Mutex;
 use tokio::task::block_in_place;
 
 pub use pico_de_gallo_lib::{
-    GpioEvent, I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo,
+    CaptureData, GpioEvent, I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity,
+    UartConfigurationInfo,
 };
 
 /// Top-level HAL context for a Pico de Gallo device.
@@ -454,6 +455,17 @@ impl Hal {
     /// this is a custom API.
     pub fn onewire(&self) -> OneWire {
         OneWire {
+            gallo: self.gallo.clone(),
+            handle: self.handle.clone(),
+        }
+    }
+
+    /// Create a logic capture handle.
+    ///
+    /// The returned [`Capture`] provides blocking methods for starting and
+    /// stopping PIO-based logic capture sessions.
+    pub fn capture(&self) -> Capture {
+        Capture {
             gallo: self.gallo.clone(),
             handle: self.handle.clone(),
         }
@@ -1657,6 +1669,100 @@ impl OneWire {
     }
 }
 
+// ----------------------------- Capture -----------------------------
+
+/// Error type for logic capture HAL operations.
+#[derive(Debug)]
+pub enum CaptureHalError {
+    /// A capture-specific error from the device firmware.
+    Capture(CaptureError),
+    /// A USB communication error.
+    Comms(String),
+}
+
+impl core::fmt::Display for CaptureHalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Capture(e) => write!(f, "{e}"),
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for CaptureHalError {}
+
+impl From<PicoDeGalloError<CaptureError>> for CaptureHalError {
+    fn from(e: PicoDeGalloError<CaptureError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(e) => Self::Capture(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
+/// Logic capture handle backed by PIO hardware on the firmware.
+///
+/// Obtained from [`Hal::capture`]. Provides blocking methods that mirror
+/// the async methods on [`PicoDeGallo`](pico_de_gallo_lib::PicoDeGallo).
+pub struct Capture {
+    gallo: Arc<Mutex<PicoDeGallo>>,
+    handle: Handle,
+}
+
+impl Capture {
+    /// Start a logic capture session.
+    ///
+    /// `pins` lists the capture channel indices (0–3) to sample and
+    /// `sample_rate_hz` is the desired sampling frequency. Returns
+    /// [`CaptureStartInfo`] with the actual rate achieved after clock
+    /// divider quantization.
+    pub fn start(
+        &self,
+        pins: &[u8],
+        sample_rate_hz: u32,
+    ) -> Result<CaptureStartInfo, CaptureHalError> {
+        if Hal::in_async_context() {
+            block_in_place(|| self.handle.block_on(self.start_inner(pins, sample_rate_hz)))
+        } else {
+            self.handle.block_on(self.start_inner(pins, sample_rate_hz))
+        }
+    }
+
+    async fn start_inner(
+        &self,
+        pins: &[u8],
+        sample_rate_hz: u32,
+    ) -> Result<CaptureStartInfo, CaptureHalError> {
+        self.gallo
+            .lock()
+            .await
+            .capture_start(pins, sample_rate_hz)
+            .await
+            .map_err(CaptureHalError::from)
+    }
+
+    /// Stop an active logic capture session.
+    ///
+    /// Returns [`CaptureStopInfo`] with statistics about the completed
+    /// session (total samples, duration, chunks sent, drops).
+    pub fn stop(&self) -> Result<CaptureStopInfo, CaptureHalError> {
+        if Hal::in_async_context() {
+            block_in_place(|| self.handle.block_on(self.stop_inner()))
+        } else {
+            self.handle.block_on(self.stop_inner())
+        }
+    }
+
+    async fn stop_inner(&self) -> Result<CaptureStopInfo, CaptureHalError> {
+        self.gallo
+            .lock()
+            .await
+            .capture_stop()
+            .await
+            .map_err(CaptureHalError::from)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1885,6 +1991,34 @@ mod tests {
         match hal_err {
             OneWireHalError::OneWire(OneWireError::BusError) => {}
             other => panic!("expected OneWire(BusError), got {other:?}"),
+        }
+    }
+
+    // --- Capture error tests ---
+
+    #[test]
+    fn capture_hal_error_display_invalid_pin() {
+        let err = CaptureHalError::Capture(CaptureError::InvalidPin);
+        assert_eq!(
+            format!("{err}"),
+            "capture channel outside valid range or pin in use"
+        );
+    }
+
+    #[test]
+    fn capture_hal_error_display_comms() {
+        let err = CaptureHalError::Comms("timeout".into());
+        assert_eq!(format!("{err}"), "communication error: timeout");
+    }
+
+    #[test]
+    fn capture_hal_error_from_endpoint() {
+        let e: PicoDeGalloError<CaptureError> =
+            PicoDeGalloError::Endpoint(CaptureError::AlreadyCapturing);
+        let hal_err = CaptureHalError::from(e);
+        match hal_err {
+            CaptureHalError::Capture(CaptureError::AlreadyCapturing) => {}
+            other => panic!("expected Capture(AlreadyCapturing), got {other:?}"),
         }
     }
 }

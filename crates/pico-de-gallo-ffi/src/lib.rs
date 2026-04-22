@@ -37,8 +37,8 @@
 
 use futures::executor::block_on;
 use pico_de_gallo_lib::{
-    self as lib, AdcChannel, AdcError, GpioError, I2cError, OneWireError, PicoDeGalloError,
-    PwmError, SpiError, UartError,
+    self as lib, AdcChannel, AdcError, CaptureError, GpioError, I2cError, OneWireError,
+    PicoDeGalloError, PwmError, SpiError, UartError,
 };
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -192,6 +192,18 @@ pub enum Status {
     OneWireWriteFailed = -60,
     /// 1-Wire: ROM search failed
     OneWireSearchFailed = -61,
+    /// Capture: requested pin outside valid range
+    CaptureInvalidPin = -62,
+    /// Capture: invalid sample rate
+    CaptureInvalidRate = -63,
+    /// Capture: too many channels requested
+    CaptureTooManyChannels = -64,
+    /// Capture: a capture session is already running
+    CaptureAlreadyRunning = -65,
+    /// Capture: no capture session is currently running
+    CaptureNotRunning = -66,
+    /// Capture: no pins specified
+    CaptureNoPins = -67,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -267,6 +279,18 @@ fn onewire_error_to_status(e: PicoDeGalloError<OneWireError>) -> Status {
         PicoDeGalloError::Endpoint(OneWireError::BusError) => Status::OneWireBusError,
         PicoDeGalloError::Endpoint(OneWireError::BufferTooLong) => Status::BufferTooLong,
         PicoDeGalloError::Endpoint(OneWireError::Other) => Status::OneWireReadFailed,
+        PicoDeGalloError::Comms(_) => Status::CommsFailed,
+    }
+}
+
+fn capture_error_to_status(e: PicoDeGalloError<CaptureError>) -> Status {
+    match e {
+        PicoDeGalloError::Endpoint(CaptureError::InvalidPin) => Status::CaptureInvalidPin,
+        PicoDeGalloError::Endpoint(CaptureError::InvalidSampleRate) => Status::CaptureInvalidRate,
+        PicoDeGalloError::Endpoint(CaptureError::TooManyChannels) => Status::CaptureTooManyChannels,
+        PicoDeGalloError::Endpoint(CaptureError::AlreadyCapturing) => Status::CaptureAlreadyRunning,
+        PicoDeGalloError::Endpoint(CaptureError::NotCapturing) => Status::CaptureNotRunning,
+        PicoDeGalloError::Endpoint(CaptureError::NoPins) => Status::CaptureNoPins,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
 }
@@ -1973,6 +1997,113 @@ pub unsafe extern "C" fn gallo_onewire_search(
     Status::Ok
 }
 
+// ----------------------------- Capture endpoints ----------------------------
+
+/// Output struct for [`gallo_capture_start`].
+#[repr(C)]
+pub struct GalloCaptureStartInfo {
+    /// Actual sample rate achieved after clock divider quantization.
+    pub actual_sample_rate_hz: u32,
+    /// Number of channels being captured.
+    pub num_channels: u8,
+}
+
+/// Output struct for [`gallo_capture_stop`].
+#[repr(C)]
+pub struct GalloCaptureStopInfo {
+    /// Total number of samples captured.
+    pub total_samples: u64,
+    /// Capture duration in microseconds.
+    pub duration_us: u64,
+    /// Number of topic chunks published.
+    pub chunks_sent: u32,
+    /// Number of chunks lost to FIFO overflow.
+    pub drops: u32,
+}
+
+#[unsafe(no_mangle)]
+/// gallo_capture_start - Start a logic capture session.
+///
+/// `pins` contains capture channel indices (0–3, corresponding to GPIO 8–11).
+/// On success, `*out_info` is populated with the actual sample rate and number
+/// of channels.
+///
+/// # Safety
+///
+/// - `gallo` must be a valid pointer returned by `gallo_init()`.
+/// - `pins` must point to at least `num_pins` readable bytes.
+/// - `out_info` must be a valid writable `GalloCaptureStartInfo` pointer.
+pub unsafe extern "C" fn gallo_capture_start(
+    gallo: *mut PicoDeGallo,
+    pins: *const u8,
+    num_pins: u32,
+    sample_rate_hz: u32,
+    out_info: *mut GalloCaptureStartInfo,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if pins.is_null() || out_info.is_null() {
+        eprintln!("Unexpected NULL pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+    let pin_slice = unsafe { std::slice::from_raw_parts(pins, num_pins as usize) };
+
+    match block_on(gallo.0.capture_start(pin_slice, sample_rate_hz)) {
+        Ok(info) => {
+            unsafe {
+                (*out_info).actual_sample_rate_hz = info.actual_sample_rate_hz;
+                (*out_info).num_channels = info.num_channels;
+            }
+            Status::Ok
+        }
+        Err(e) => capture_error_to_status(e),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// gallo_capture_stop - Stop an active logic capture session.
+///
+/// On success, `*out_info` is populated with capture statistics.
+///
+/// # Safety
+///
+/// - `gallo` must be a valid pointer returned by `gallo_init()`.
+/// - `out_info` must be a valid writable `GalloCaptureStopInfo` pointer.
+pub unsafe extern "C" fn gallo_capture_stop(
+    gallo: *mut PicoDeGallo,
+    out_info: *mut GalloCaptureStopInfo,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    if out_info.is_null() {
+        eprintln!("Unexpected NULL output pointer");
+        return Status::InvalidArgument;
+    }
+
+    let gallo = unsafe { &*gallo };
+
+    match block_on(gallo.0.capture_stop()) {
+        Ok(info) => {
+            unsafe {
+                (*out_info).total_samples = info.total_samples;
+                (*out_info).duration_us = info.duration_us;
+                (*out_info).chunks_sent = info.chunks_sent;
+                (*out_info).drops = info.drops;
+            }
+            Status::Ok
+        }
+        Err(e) => capture_error_to_status(e),
+    }
+}
+
 // ----------------------------- Version endpoint -----------------------------
 
 #[unsafe(no_mangle)]
@@ -2095,6 +2226,12 @@ mod tests {
             Status::GpioPinNotMonitored as i32,
             Status::GpioSubscribeFailed as i32,
             Status::GpioUnsubscribeFailed as i32,
+            Status::CaptureInvalidPin as i32,
+            Status::CaptureInvalidRate as i32,
+            Status::CaptureTooManyChannels as i32,
+            Status::CaptureAlreadyRunning as i32,
+            Status::CaptureNotRunning as i32,
+            Status::CaptureNoPins as i32,
         ];
         for code in error_codes {
             assert!(code < 0, "error code {code} should be negative");
@@ -2166,6 +2303,12 @@ mod tests {
             Status::OneWireReadFailed as i32,
             Status::OneWireWriteFailed as i32,
             Status::OneWireSearchFailed as i32,
+            Status::CaptureInvalidPin as i32,
+            Status::CaptureInvalidRate as i32,
+            Status::CaptureTooManyChannels as i32,
+            Status::CaptureAlreadyRunning as i32,
+            Status::CaptureNotRunning as i32,
+            Status::CaptureNoPins as i32,
         ];
         let unique: HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len(), "duplicate status codes found");
@@ -2712,5 +2855,78 @@ mod tests {
         assert_eq!(Status::OneWireReadFailed as i32, -59);
         assert_eq!(Status::OneWireWriteFailed as i32, -60);
         assert_eq!(Status::OneWireSearchFailed as i32, -61);
+    }
+
+    // ----------------------------- Capture null pointer checks -----------------------------
+
+    #[test]
+    fn capture_start_null_device_returns_uninitialized() {
+        let pins = [0u8, 1];
+        let mut info = GalloCaptureStartInfo {
+            actual_sample_rate_hz: 0,
+            num_channels: 0,
+        };
+        let status = unsafe {
+            gallo_capture_start(
+                std::ptr::null_mut(),
+                pins.as_ptr(),
+                pins.len() as u32,
+                500_000,
+                &mut info,
+            )
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn capture_stop_null_device_returns_uninitialized() {
+        let mut info = GalloCaptureStopInfo {
+            total_samples: 0,
+            duration_us: 0,
+            chunks_sent: 0,
+            drops: 0,
+        };
+        let status = unsafe { gallo_capture_stop(std::ptr::null_mut(), &mut info) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    // ----------------------------- Capture error mapping tests -----------------------------
+
+    #[test]
+    fn capture_error_mapping() {
+        assert_eq!(
+            capture_error_to_status(PicoDeGalloError::Endpoint(CaptureError::InvalidPin)),
+            Status::CaptureInvalidPin
+        );
+        assert_eq!(
+            capture_error_to_status(PicoDeGalloError::Endpoint(CaptureError::InvalidSampleRate)),
+            Status::CaptureInvalidRate
+        );
+        assert_eq!(
+            capture_error_to_status(PicoDeGalloError::Endpoint(CaptureError::TooManyChannels)),
+            Status::CaptureTooManyChannels
+        );
+        assert_eq!(
+            capture_error_to_status(PicoDeGalloError::Endpoint(CaptureError::AlreadyCapturing)),
+            Status::CaptureAlreadyRunning
+        );
+        assert_eq!(
+            capture_error_to_status(PicoDeGalloError::Endpoint(CaptureError::NotCapturing)),
+            Status::CaptureNotRunning
+        );
+        assert_eq!(
+            capture_error_to_status(PicoDeGalloError::Endpoint(CaptureError::NoPins)),
+            Status::CaptureNoPins
+        );
+    }
+
+    #[test]
+    fn capture_status_codes_are_stable() {
+        assert_eq!(Status::CaptureInvalidPin as i32, -62);
+        assert_eq!(Status::CaptureInvalidRate as i32, -63);
+        assert_eq!(Status::CaptureTooManyChannels as i32, -64);
+        assert_eq!(Status::CaptureAlreadyRunning as i32, -65);
+        assert_eq!(Status::CaptureNotRunning as i32, -66);
+        assert_eq!(Status::CaptureNoPins as i32, -67);
     }
 }
