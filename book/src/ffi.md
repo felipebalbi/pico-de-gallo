@@ -127,6 +127,7 @@ Every `gallo_*` function (except the lifecycle functions above) returns a
 | `DeviceInfoFailed` | −62 | Device info query failed |
 | `SchemaMismatch` | −63 | Schema version mismatch |
 | `LegacyFirmware` | −64 | Firmware too old for device info |
+| `Unsupported` | −65 | Peripheral not available on this hardware revision |
 
 ## Function Reference
 

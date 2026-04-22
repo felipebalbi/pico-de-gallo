@@ -40,26 +40,40 @@
 //! (4096) bytes for I2C and SPI data. Requests exceeding this limit are
 //! rejected with an error.
 
+#[cfg(all(feature = "hw-rev1", feature = "hw-rev2"))]
+compile_error!("Features `hw-rev1` and `hw-rev2` are mutually exclusive");
+#[cfg(not(any(feature = "hw-rev1", feature = "hw-rev2")))]
+compile_error!("One of `hw-rev1` or `hw-rev2` must be enabled");
+
 use core::sync::atomic::{AtomicU16, Ordering};
 use defmt::{debug, info, warn};
 use embassy_embedded_hal::SetConfig;
 use embassy_executor::Spawner;
+#[cfg(feature = "hw-rev2")]
 use embassy_rp::adc::{self, Adc};
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio::{Flex, Level, Pull};
 use embassy_rp::i2c::{self, I2c};
-use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, PIO0, SPI0, UART0, USB};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, SPI0, USB};
+#[cfg(feature = "hw-rev2")]
+use embassy_rp::peripherals::{PIO0, UART0};
+#[cfg(feature = "hw-rev2")]
 use embassy_rp::pio;
+#[cfg(feature = "hw-rev2")]
 use embassy_rp::pio_programs::onewire::{PioOneWire, PioOneWireProgram, PioOneWireSearch};
 use embassy_rp::pwm::{self, Pwm};
 use embassy_rp::spi::{self, Phase, Polarity, Spi};
+#[cfg(feature = "hw-rev2")]
 use embassy_rp::uart::{self, BufferedUart};
 use embassy_rp::usb::Driver;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant, with_timeout};
+#[cfg(feature = "hw-rev2")]
+use embassy_time::with_timeout;
+use embassy_time::{Duration, Instant};
+#[cfg(feature = "hw-rev2")]
 use embedded_io_async::{Read as AsyncRead, Write as AsyncWrite};
 use fixed::traits::ToFixed;
 // Direct embassy-sync dep required: postcard-rpc's WireStorage is generic over
@@ -67,33 +81,37 @@ use fixed::traits::ToFixed;
 // embassy-sync 0.7's RawMutex (they share the same crate version).
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_usb::{Config, UsbDevice};
+#[cfg(feature = "hw-rev2")]
 use pico_de_gallo_internal::{
-    ADC_NOMINAL_REFERENCE_MV, ADC_RESOLUTION_BITS, AdcChannel, AdcConfigurationInfo, AdcError, AdcGetConfiguration,
-    AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse, ENDPOINT_LIST, GpioDirection, GpioEdge,
-    GpioError, GpioEvent, GpioEventTopic, GpioGet, GpioGetRequest, GpioGetResponse, GpioPull, GpioPut, GpioPutRequest,
-    GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSetConfigurationResponse, GpioState,
-    GpioSubscribe, GpioSubscribeRequest, GpioSubscribeResponse, GpioUnsubscribe, GpioUnsubscribeRequest,
-    GpioUnsubscribeResponse, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising,
-    GpioWaitRequest, GpioWaitResponse, I2cBatch, I2cBatchError, I2cBatchOp, I2cBatchRequest, I2cBatchResponse,
-    I2cError, I2cFrequency, I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse,
-    I2cScan, I2cScanRequest, I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest,
-    I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest,
-    I2cWriteResponse, MAX_BATCH_OPS, MAX_TRANSFER_SIZE, MICROSOFT_VID, NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS,
-    OneWireError, OneWireRead, OneWireReadRequest, OneWireReadResponse, OneWireReset, OneWireResetResponse,
-    OneWireSearch, OneWireSearchNext, OneWireSearchResponse, OneWireWrite, OneWireWritePullup,
-    OneWireWritePullupRequest, OneWireWritePullupResponse, OneWireWriteRequest, OneWireWriteResponse,
-    PICO_DE_GALLO_PID, PingEndpoint, PwmConfigurationInfo, PwmDisable, PwmDisableRequest, PwmDisableResponse,
-    PwmDutyCycleInfo, PwmEnable, PwmEnableRequest, PwmEnableResponse, PwmError, PwmGetConfiguration,
-    PwmGetConfigurationRequest, PwmGetConfigurationResponse, PwmGetDutyCycle, PwmGetDutyCycleRequest,
-    PwmGetDutyCycleResponse, PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetConfigurationResponse,
-    PwmSetDutyCycle, PwmSetDutyCycleRequest, PwmSetDutyCycleResponse, SpiBatch, SpiBatchError, SpiBatchOp,
-    SpiBatchRequest, SpiBatchResponse, SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration,
-    SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration,
-    SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse,
-    SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, UartConfigurationInfo, UartError,
-    UartFlush, UartFlushResponse, UartGetConfiguration, UartGetConfigurationResponse, UartRead, UartReadRequest,
-    UartReadResponse, UartSetConfiguration, UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite,
-    UartWriteRequest, UartWriteResponse, Version, VersionInfo,
+    ADC_NOMINAL_REFERENCE_MV, ADC_RESOLUTION_BITS, AdcChannel, AdcConfigurationInfo, NUM_ADC_GPIO_CHANNELS,
+    UartConfigurationInfo,
+};
+use pico_de_gallo_internal::{
+    AdcError, AdcGetConfiguration, AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse,
+    ENDPOINT_LIST, GpioDirection, GpioEdge, GpioError, GpioEvent, GpioEventTopic, GpioGet, GpioGetRequest,
+    GpioGetResponse, GpioPull, GpioPut, GpioPutRequest, GpioPutResponse, GpioSetConfiguration,
+    GpioSetConfigurationRequest, GpioSetConfigurationResponse, GpioState, GpioSubscribe, GpioSubscribeRequest,
+    GpioSubscribeResponse, GpioUnsubscribe, GpioUnsubscribeRequest, GpioUnsubscribeResponse, GpioWaitForAny,
+    GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, GpioWaitResponse,
+    I2cBatch, I2cBatchError, I2cBatchOp, I2cBatchRequest, I2cBatchResponse, I2cError, I2cFrequency,
+    I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse, I2cScan,
+    I2cScanRequest, I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest, I2cSetConfigurationResponse,
+    I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse,
+    MAX_BATCH_OPS, MAX_TRANSFER_SIZE, MICROSOFT_VID, NUM_PWM_CHANNELS, OneWireError, OneWireRead, OneWireReadRequest,
+    OneWireReadResponse, OneWireReset, OneWireResetResponse, OneWireSearch, OneWireSearchNext, OneWireSearchResponse,
+    OneWireWrite, OneWireWritePullup, OneWireWritePullupRequest, OneWireWritePullupResponse, OneWireWriteRequest,
+    OneWireWriteResponse, PICO_DE_GALLO_PID, PingEndpoint, PwmConfigurationInfo, PwmDisable, PwmDisableRequest,
+    PwmDisableResponse, PwmDutyCycleInfo, PwmEnable, PwmEnableRequest, PwmEnableResponse, PwmError,
+    PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetConfigurationResponse, PwmGetDutyCycle,
+    PwmGetDutyCycleRequest, PwmGetDutyCycleResponse, PwmSetConfiguration, PwmSetConfigurationRequest,
+    PwmSetConfigurationResponse, PwmSetDutyCycle, PwmSetDutyCycleRequest, PwmSetDutyCycleResponse, SpiBatch,
+    SpiBatchError, SpiBatchOp, SpiBatchRequest, SpiBatchResponse, SpiConfigurationInfo, SpiError, SpiFlush,
+    SpiFlushResponse, SpiGetConfiguration, SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest,
+    SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer,
+    SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST,
+    TOPICS_OUT_LIST, UartError, UartFlush, UartFlushResponse, UartGetConfiguration, UartGetConfigurationResponse,
+    UartRead, UartReadRequest, UartReadResponse, UartSetConfiguration, UartSetConfigurationRequest,
+    UartSetConfigurationResponse, UartWrite, UartWriteRequest, UartWriteResponse, Version, VersionInfo,
 };
 use pico_de_gallo_internal::{
     Capabilities, DeviceInfo, GetDeviceInfo, SCHEMA_VERSION_MAJOR, SCHEMA_VERSION_MINOR, SCHEMA_VERSION_PATCH,
@@ -151,6 +169,11 @@ bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => embassy_rp::usb::InterruptHandler<USB>;
     I2C1_IRQ => embassy_rp::i2c::InterruptHandler<I2C1>;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>, embassy_rp::dma::InterruptHandler<DMA_CH1>;
+});
+
+// UART and PIO interrupts only needed when those peripherals are active.
+#[cfg(feature = "hw-rev2")]
+bind_interrupts!(struct Rev2Irqs {
     UART0_IRQ => embassy_rp::uart::BufferedInterruptHandler<UART0>;
     PIO0_IRQ_0 => embassy_rp::pio::InterruptHandler<PIO0>;
 });
@@ -164,6 +187,7 @@ const NUM_PWM_SLICES: usize = 2;
 const SYS_CLK_HZ: u32 = 150_000_000;
 
 /// Number of ADC channels stored in Context (4 GPIO channels).
+#[cfg(feature = "hw-rev2")]
 const NUM_ADC_CHANNELS: usize = NUM_ADC_GPIO_CHANNELS;
 
 /// Firmware application context holding all peripheral handles.
@@ -174,24 +198,31 @@ const NUM_ADC_CHANNELS: usize = NUM_ADC_GPIO_CHANNELS;
 pub struct Context {
     i2c: I2c<'static, I2C1, i2c::Async>,
     spi: Spi<'static, SPI0, spi::Async>,
+    #[cfg(feature = "hw-rev2")]
     uart: BufferedUart,
     gpios: [Option<Flex<'static>>; NUM_GPIOS],
     pin_modes: [PinMode; NUM_GPIOS],
     pwm_slices: [Pwm<'static>; NUM_PWM_SLICES],
     pwm_configs: [pwm::Config; NUM_PWM_SLICES],
+    #[cfg(feature = "hw-rev2")]
     adc: Adc<'static, adc::Blocking>,
+    #[cfg(feature = "hw-rev2")]
     adc_channels: [adc::Channel<'static>; NUM_ADC_CHANNELS],
     i2c_frequency: I2cFrequency,
     spi_frequency: u32,
     spi_phase: SpiPhase,
     spi_polarity: SpiPolarity,
+    #[cfg_attr(not(feature = "hw-rev2"), allow(dead_code))]
     uart_baud_rate: u32,
+    #[cfg(feature = "hw-rev2")]
     onewire: PioOneWire<'static, PIO0, 0>,
+    #[cfg(feature = "hw-rev2")]
     onewire_search: PioOneWireSearch,
     buf: [u8; MAX_TRANSFER_SIZE],
 }
 
 impl Context {
+    #[cfg(feature = "hw-rev2")]
     #[allow(clippy::too_many_arguments)]
     fn new(
         i2c: I2c<'static, I2C1, i2c::Async>,
@@ -205,7 +236,6 @@ impl Context {
         onewire: PioOneWire<'static, PIO0, 0>,
     ) -> Self {
         let [g0, g1, g2, g3] = gpios;
-        // Defaults match embassy-rp Config::default()
         Self {
             i2c,
             spi,
@@ -223,6 +253,32 @@ impl Context {
             uart_baud_rate: 115_200,
             onewire,
             onewire_search: PioOneWireSearch::new(),
+            buf: [0; MAX_TRANSFER_SIZE],
+        }
+    }
+
+    #[cfg(not(feature = "hw-rev2"))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        i2c: I2c<'static, I2C1, i2c::Async>,
+        spi: Spi<'static, SPI0, spi::Async>,
+        gpios: [Flex<'static>; NUM_GPIOS],
+        pwm_slices: [Pwm<'static>; NUM_PWM_SLICES],
+        pwm_configs: [pwm::Config; NUM_PWM_SLICES],
+    ) -> Self {
+        let [g0, g1, g2, g3] = gpios;
+        Self {
+            i2c,
+            spi,
+            gpios: [Some(g0), Some(g1), Some(g2), Some(g3)],
+            pin_modes: [PinMode::LegacyAuto; NUM_GPIOS],
+            pwm_slices,
+            pwm_configs,
+            i2c_frequency: I2cFrequency::Standard,
+            spi_frequency: 1_000_000,
+            spi_phase: SpiPhase::CaptureOnFirstTransition,
+            spi_polarity: SpiPolarity::IdleLow,
+            uart_baud_rate: 115_200,
             buf: [0; MAX_TRANSFER_SIZE],
         }
     }
@@ -529,22 +585,27 @@ async fn main(spawner: Spawner) {
     let pwm_configs = [pwm::Config::default(), pwm::Config::default()];
 
     // UART0 on GPIO0 (TX) and GPIO1 (RX) — default Pico 2 header pins
-    static UART_TX_BUF: StaticCell<[u8; 1024]> = StaticCell::new();
-    static UART_RX_BUF: StaticCell<[u8; 1024]> = StaticCell::new();
-    let uart_tx_buf = UART_TX_BUF.init([0u8; 1024]);
-    let uart_rx_buf = UART_RX_BUF.init([0u8; 1024]);
-    let uart = BufferedUart::new(
-        p.UART0,
-        p.PIN_0,
-        p.PIN_1,
-        Irqs,
-        uart_tx_buf,
-        uart_rx_buf,
-        uart::Config::default(),
-    );
+    #[cfg(feature = "hw-rev2")]
+    let uart = {
+        static UART_TX_BUF: StaticCell<[u8; 1024]> = StaticCell::new();
+        static UART_RX_BUF: StaticCell<[u8; 1024]> = StaticCell::new();
+        let uart_tx_buf = UART_TX_BUF.init([0u8; 1024]);
+        let uart_rx_buf = UART_RX_BUF.init([0u8; 1024]);
+        BufferedUart::new(
+            p.UART0,
+            p.PIN_0,
+            p.PIN_1,
+            Rev2Irqs,
+            uart_tx_buf,
+            uart_rx_buf,
+            uart::Config::default(),
+        )
+    };
 
     // ADC — blocking mode for single-shot reads (GPIO26–29)
+    #[cfg(feature = "hw-rev2")]
     let adc = Adc::new_blocking(p.ADC, adc::Config::default());
+    #[cfg(feature = "hw-rev2")]
     let adc_channels = [
         adc::Channel::new_pin(p.PIN_26, Pull::None),
         adc::Channel::new_pin(p.PIN_27, Pull::None),
@@ -553,11 +614,15 @@ async fn main(spawner: Spawner) {
     ];
 
     // 1-Wire — PIO0/SM0 on GPIO16
-    let pio::Pio { mut common, sm0, .. } = pio::Pio::new(p.PIO0, Irqs);
-    static OW_PROGRAM: StaticCell<PioOneWireProgram<'static, PIO0>> = StaticCell::new();
-    let ow_program = OW_PROGRAM.init(PioOneWireProgram::new(&mut common));
-    let onewire = PioOneWire::new(&mut common, sm0, p.PIN_16, ow_program);
+    #[cfg(feature = "hw-rev2")]
+    let onewire = {
+        let pio::Pio { mut common, sm0, .. } = pio::Pio::new(p.PIO0, Rev2Irqs);
+        static OW_PROGRAM: StaticCell<PioOneWireProgram<'static, PIO0>> = StaticCell::new();
+        let ow_program = OW_PROGRAM.init(PioOneWireProgram::new(&mut common));
+        PioOneWire::new(&mut common, sm0, p.PIN_16, ow_program)
+    };
 
+    #[cfg(feature = "hw-rev2")]
     let context = Context::new(
         i2c,
         spi,
@@ -569,6 +634,9 @@ async fn main(spawner: Spawner) {
         adc_channels,
         onewire,
     );
+
+    #[cfg(not(feature = "hw-rev2"))]
+    let context = Context::new(i2c, spi, gpios, pwm_slices, pwm_configs);
 
     let (device, tx_impl, rx_impl) = STORAGE.init(
         driver,
@@ -1267,6 +1335,7 @@ fn spi_get_config_handler(context: &mut Context, _header: VarHeader, _req: ()) -
 ///
 /// Reads up to `count` bytes with a timeout. Returns whatever bytes are
 /// available (1 to count), or an empty slice on timeout.
+#[cfg(feature = "hw-rev2")]
 async fn uart_read_handler<'a>(
     context: &'a mut Context,
     _header: VarHeader,
@@ -1300,7 +1369,17 @@ async fn uart_read_handler<'a>(
     }
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn uart_read_handler<'a>(
+    _context: &'a mut Context,
+    _header: VarHeader,
+    _req: UartReadRequest,
+) -> UartReadResponse<'a> {
+    Err(UartError::Unsupported)
+}
+
 /// Handler for `uart/write` — writes bytes to the UART transmit buffer.
+#[cfg(feature = "hw-rev2")]
 async fn uart_write_handler(context: &mut Context, _header: VarHeader, req: UartWriteRequest<'_>) -> UartWriteResponse {
     if req.contents.len() > MAX_TRANSFER_SIZE {
         return Err(UartError::BufferTooLong);
@@ -1311,12 +1390,28 @@ async fn uart_write_handler(context: &mut Context, _header: VarHeader, req: Uart
         .map_err(|_| UartError::Other)
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn uart_write_handler(
+    _context: &mut Context,
+    _header: VarHeader,
+    _req: UartWriteRequest<'_>,
+) -> UartWriteResponse {
+    Err(UartError::Unsupported)
+}
+
 /// Handler for `uart/flush` — flushes the UART transmit buffer.
+#[cfg(feature = "hw-rev2")]
 async fn uart_flush_handler(context: &mut Context, _header: VarHeader, _req: ()) -> UartFlushResponse {
     AsyncWrite::flush(&mut context.uart).await.map_err(|_| UartError::Other)
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn uart_flush_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> UartFlushResponse {
+    Err(UartError::Unsupported)
+}
+
 /// Handler for `uart/set-config` — changes the UART baud rate.
+#[cfg(feature = "hw-rev2")]
 async fn uart_set_config_handler(
     context: &mut Context,
     _header: VarHeader,
@@ -1333,11 +1428,26 @@ async fn uart_set_config_handler(
     Ok(())
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn uart_set_config_handler(
+    _context: &mut Context,
+    _header: VarHeader,
+    _req: UartSetConfigurationRequest,
+) -> UartSetConfigurationResponse {
+    Err(UartError::Unsupported)
+}
+
 /// Handler for `uart/get-config` — returns the current UART configuration.
+#[cfg(feature = "hw-rev2")]
 fn uart_get_config_handler(context: &mut Context, _header: VarHeader, _req: ()) -> UartGetConfigurationResponse {
-    UartConfigurationInfo {
+    Ok(UartConfigurationInfo {
         baud_rate: context.uart_baud_rate,
-    }
+    })
+}
+
+#[cfg(not(feature = "hw-rev2"))]
+fn uart_get_config_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> UartGetConfigurationResponse {
+    Err(UartError::Unsupported)
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,34 +1478,23 @@ fn compute_pwm_params(freq_hz: u32, phase_correct: bool) -> Result<(u16, u16), P
         return Err(PwmError::InvalidConfiguration);
     }
 
-    // Try integer dividers 1..=4095 until top fits in u16.
-    for div in 1u32..=4095 {
-        let top_val = if phase_correct {
-            // f = sys / (2 * div * top), so top = sys / (2 * div * f)
-            let denom = 2u64 * u64::from(div) * u64::from(freq_hz);
-            if denom == 0 {
-                continue;
-            }
-            u64::from(SYS_CLK_HZ) / denom
-        } else {
-            // f = sys / (div * (top + 1)), so top = sys / (div * f) - 1
-            let denom = u64::from(div) * u64::from(freq_hz);
-            if denom == 0 {
-                continue;
-            }
-            let raw = u64::from(SYS_CLK_HZ) / denom;
-            if raw == 0 {
-                continue;
-            }
-            raw - 1
-        };
+    (1u32..=4095)
+        .find_map(|div| {
+            let top = if phase_correct {
+                // f = sys / (2 * div * top), so top = sys / (2 * div * f)
+                let denom = 2u64 * u64::from(div) * u64::from(freq_hz);
+                u64::from(SYS_CLK_HZ).checked_div(denom)
+            } else {
+                // f = sys / (div * (top + 1)), so top = sys / (div * f) - 1
+                let denom = u64::from(div) * u64::from(freq_hz);
+                u64::from(SYS_CLK_HZ)
+                    .checked_div(denom)
+                    .and_then(|raw| raw.checked_sub(1))
+            }?;
 
-        if top_val <= u64::from(u16::MAX) && top_val > 0 {
-            return Ok((top_val as u16, div as u16));
-        }
-    }
-
-    Err(PwmError::InvalidConfiguration)
+            (top > 0 && top <= u64::from(u16::MAX)).then_some((top as u16, div as u16))
+        })
+        .ok_or(PwmError::InvalidConfiguration)
 }
 
 /// Handler for `pwm/set-duty-cycle` — sets the duty cycle of a PWM channel.
@@ -1522,19 +1621,11 @@ fn pwm_get_config_handler(
     let frequency_hz = if cfg.phase_correct {
         // f = sys / (2 * div * top)
         let denom = 2u64 * u64::from(div_val) * u64::from(cfg.top);
-        if denom == 0 {
-            0
-        } else {
-            (u64::from(SYS_CLK_HZ) / denom) as u32
-        }
+        u64::from(SYS_CLK_HZ).checked_div(denom).unwrap_or(0) as u32
     } else {
         // f = sys / (div * (top + 1))
         let denom = u64::from(div_val) * (u64::from(cfg.top) + 1);
-        if denom == 0 {
-            0
-        } else {
-            (u64::from(SYS_CLK_HZ) / denom) as u32
-        }
+        u64::from(SYS_CLK_HZ).checked_div(denom).unwrap_or(0) as u32
     };
 
     debug!(
@@ -1552,6 +1643,7 @@ fn pwm_get_config_handler(
 // ---- ADC handlers ----
 
 /// Map an [`AdcChannel`] variant to the index into `context.adc_channels`.
+#[cfg(feature = "hw-rev2")]
 fn adc_channel_index(channel: AdcChannel) -> usize {
     match channel {
         AdcChannel::Adc0 => 0,
@@ -1562,6 +1654,7 @@ fn adc_channel_index(channel: AdcChannel) -> usize {
 }
 
 /// Handler for `adc/read` — single-shot ADC read returning a raw 12-bit value.
+#[cfg(feature = "hw-rev2")]
 fn adc_read_handler(context: &mut Context, _header: VarHeader, req: AdcReadRequest) -> AdcReadResponse {
     let idx = adc_channel_index(req.channel);
     let ch = &mut context.adc_channels[idx];
@@ -1575,26 +1668,44 @@ fn adc_read_handler(context: &mut Context, _header: VarHeader, req: AdcReadReque
     }
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+fn adc_read_handler(_context: &mut Context, _header: VarHeader, _req: AdcReadRequest) -> AdcReadResponse {
+    Err(AdcError::Unsupported)
+}
+
 /// Handler for `adc/get-config` — returns ADC configuration info.
+#[cfg(feature = "hw-rev2")]
 fn adc_get_config_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> AdcGetConfigurationResponse {
     debug!("adc get config");
-    AdcConfigurationInfo {
+    Ok(AdcConfigurationInfo {
         resolution_bits: ADC_RESOLUTION_BITS,
         nominal_reference_mv: ADC_NOMINAL_REFERENCE_MV,
         num_gpio_channels: NUM_ADC_GPIO_CHANNELS as u8,
-    }
+    })
+}
+
+#[cfg(not(feature = "hw-rev2"))]
+fn adc_get_config_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> AdcGetConfigurationResponse {
+    Err(AdcError::Unsupported)
 }
 
 // ---- 1-Wire handlers ----
 
 /// Handler for `onewire/reset` — performs a bus reset and returns presence detection.
+#[cfg(feature = "hw-rev2")]
 async fn onewire_reset_handler(context: &mut Context, _header: VarHeader, _req: ()) -> OneWireResetResponse {
     debug!("onewire reset");
     let present = context.onewire.reset().await;
     Ok(present)
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn onewire_reset_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> OneWireResetResponse {
+    Err(OneWireError::Unsupported)
+}
+
 /// Handler for `onewire/read` — reads bytes from the 1-Wire bus.
+#[cfg(feature = "hw-rev2")]
 async fn onewire_read_handler<'a>(
     context: &'a mut Context,
     _header: VarHeader,
@@ -1612,7 +1723,17 @@ async fn onewire_read_handler<'a>(
     Ok(&context.buf[..len])
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn onewire_read_handler<'a>(
+    _context: &'a mut Context,
+    _header: VarHeader,
+    _req: OneWireReadRequest,
+) -> OneWireReadResponse<'a> {
+    Err(OneWireError::Unsupported)
+}
+
 /// Handler for `onewire/write` — writes bytes to the 1-Wire bus.
+#[cfg(feature = "hw-rev2")]
 async fn onewire_write_handler<'a>(
     context: &mut Context,
     _header: VarHeader,
@@ -1628,7 +1749,17 @@ async fn onewire_write_handler<'a>(
     Ok(())
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn onewire_write_handler<'a>(
+    _context: &mut Context,
+    _header: VarHeader,
+    _req: OneWireWriteRequest<'a>,
+) -> OneWireWriteResponse {
+    Err(OneWireError::Unsupported)
+}
+
 /// Handler for `onewire/write-pullup` — writes bytes then applies strong pullup.
+#[cfg(feature = "hw-rev2")]
 async fn onewire_write_pullup_handler<'a>(
     context: &mut Context,
     _header: VarHeader,
@@ -1649,7 +1780,17 @@ async fn onewire_write_pullup_handler<'a>(
     Ok(())
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn onewire_write_pullup_handler<'a>(
+    _context: &mut Context,
+    _header: VarHeader,
+    _req: OneWireWritePullupRequest<'a>,
+) -> OneWireWritePullupResponse {
+    Err(OneWireError::Unsupported)
+}
+
 /// Handler for `onewire/search` — starts a new ROM search from scratch.
+#[cfg(feature = "hw-rev2")]
 async fn onewire_search_handler(context: &mut Context, _header: VarHeader, _req: ()) -> OneWireSearchResponse {
     debug!("onewire search: starting new search");
     context.onewire_search = PioOneWireSearch::new();
@@ -1657,7 +1798,13 @@ async fn onewire_search_handler(context: &mut Context, _header: VarHeader, _req:
     Ok(result)
 }
 
+#[cfg(not(feature = "hw-rev2"))]
+async fn onewire_search_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> OneWireSearchResponse {
+    Err(OneWireError::Unsupported)
+}
+
 /// Handler for `onewire/search-next` — continues the current ROM search.
+#[cfg(feature = "hw-rev2")]
 async fn onewire_search_next_handler(context: &mut Context, _header: VarHeader, _req: ()) -> OneWireSearchResponse {
     debug!("onewire search-next");
     if context.onewire_search.is_finished() {
@@ -1665,6 +1812,11 @@ async fn onewire_search_next_handler(context: &mut Context, _header: VarHeader, 
     }
     let result = context.onewire_search.next(&mut context.onewire).await;
     Ok(result)
+}
+
+#[cfg(not(feature = "hw-rev2"))]
+async fn onewire_search_next_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> OneWireSearchResponse {
+    Err(OneWireError::Unsupported)
 }
 
 /// Handler for `version` — returns the firmware version.
@@ -1677,11 +1829,26 @@ async fn version_handler(_context: &mut Context, _header: VarHeader, _req: ()) -
 }
 
 /// Hardware revision. Bump when the physical board layout changes.
+#[cfg(feature = "hw-rev1")]
 const HW_VERSION: u8 = 1;
+#[cfg(feature = "hw-rev2")]
+const HW_VERSION: u8 = 2;
 
 /// Handler for `device/info` — returns firmware version, schema version,
 /// hardware version, and peripheral capabilities.
 fn device_info_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> DeviceInfo {
+    #[cfg(feature = "hw-rev1")]
+    let capabilities = Capabilities::I2C | Capabilities::SPI | Capabilities::GPIO | Capabilities::PWM;
+
+    #[cfg(feature = "hw-rev2")]
+    let capabilities = Capabilities::I2C
+        | Capabilities::SPI
+        | Capabilities::UART
+        | Capabilities::GPIO
+        | Capabilities::PWM
+        | Capabilities::ADC
+        | Capabilities::ONEWIRE;
+
     DeviceInfo {
         fw_major: VERSION_MAJOR,
         fw_minor: VERSION_MINOR,
@@ -1690,12 +1857,6 @@ fn device_info_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> 
         schema_minor: SCHEMA_VERSION_MINOR,
         schema_patch: SCHEMA_VERSION_PATCH,
         hw_version: HW_VERSION,
-        capabilities: Capabilities::I2C
-            | Capabilities::SPI
-            | Capabilities::UART
-            | Capabilities::GPIO
-            | Capabilities::PWM
-            | Capabilities::ADC
-            | Capabilities::ONEWIRE,
+        capabilities,
     }
 }

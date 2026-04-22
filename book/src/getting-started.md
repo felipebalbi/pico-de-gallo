@@ -199,12 +199,27 @@ $ gallo version
 Pico de Gallo FW v0.8.0
 Schema v0.4.0
 HW revision 1
-Capabilities: I2C ✓ | SPI ✓ | UART ✓ | GPIO ✓ | PWM ✓ | ADC ✓ | 1-Wire ✓
+Capabilities: I2C ✓ | SPI ✓ | UART ✗ | GPIO ✓ | PWM ✓ | ADC ✗ | 1-Wire ✗
 ```
 
 Success 🎉. With this completed we can get familiarized with the other
 parts of the *Pico de Gallo* ecosystem and write a driver for the
 `tmp102` temperature sensor.
+
+## Hardware Revisions
+
+The firmware is compiled with a hardware revision feature flag that
+controls which peripherals are available. The `gallo version` output
+shows the hardware revision and its supported capabilities.
+
+| Revision | Feature Flag | Capabilities |
+|----------|-------------|--------------|
+| **v1** (current) | `hw-rev1` (default) | I2C, SPI, GPIO, PWM |
+| **v2** (future)  | `hw-rev2`           | I2C, SPI, UART, GPIO, PWM, ADC, 1-Wire |
+
+The v1 landing board does not route UART (GPIO 0–1), ADC (GPIO 26–29),
+or 1-Wire (GPIO 16) pins. Calling an unsupported endpoint on v1
+firmware returns an `Unsupported` error.
 
 ## Pin Map
 
@@ -212,28 +227,28 @@ The table below shows every function exposed by the firmware and the
 RP2350 GPIO it maps to. This is the authoritative pin assignment —
 refer to this when wiring peripherals.
 
-| Function     | GPIO     | Notes |
-|--------------|----------|-------|
-| UART TX      | GPIO 0   | Buffered, interrupt-driven |
-| UART RX      | GPIO 1   | |
-| I²C SDA      | GPIO 2   | 7-bit addressing, async DMA |
-| I²C SCL      | GPIO 3   | |
-| SPI RX (MISO)| GPIO 4   | DMA-backed full-duplex |
-| SPI SCK      | GPIO 6   | |
-| SPI TX (MOSI)| GPIO 7   | |
-| GPIO 0       | GPIO 8   | Input/output/edge events |
-| GPIO 1       | GPIO 9   | Input/output/edge events |
-| GPIO 2       | GPIO 10  | Input/output/edge events |
-| GPIO 3       | GPIO 11  | Input/output/edge events |
-| PWM 0        | GPIO 12  | Slice 6 channel A |
-| PWM 1        | GPIO 13  | Slice 6 channel B |
-| PWM 2        | GPIO 14  | Slice 7 channel A |
-| PWM 3        | GPIO 15  | Slice 7 channel B |
-| 1-Wire       | GPIO 16  | PIO0/SM0, open-drain |
-| ADC 0        | GPIO 26  | 12-bit, 0–3.3 V nominal |
-| ADC 1        | GPIO 27  | 12-bit |
-| ADC 2        | GPIO 28  | 12-bit |
-| ADC 3        | GPIO 29  | 12-bit |
+| Function     | GPIO     | HW Rev | Notes |
+|--------------|----------|--------|-------|
+| UART TX      | GPIO 0   | v2     | Buffered, interrupt-driven |
+| UART RX      | GPIO 1   | v2     | |
+| I²C SDA      | GPIO 2   | v1+    | 7-bit addressing, async DMA |
+| I²C SCL      | GPIO 3   | v1+    | |
+| SPI RX (MISO)| GPIO 4   | v1+    | DMA-backed full-duplex |
+| SPI SCK      | GPIO 6   | v1+    | |
+| SPI TX (MOSI)| GPIO 7   | v1+    | |
+| GPIO 0       | GPIO 8   | v1+    | Input/output/edge events |
+| GPIO 1       | GPIO 9   | v1+    | Input/output/edge events |
+| GPIO 2       | GPIO 10  | v1+    | Input/output/edge events |
+| GPIO 3       | GPIO 11  | v1+    | Input/output/edge events |
+| PWM 0        | GPIO 12  | v1+    | Slice 6 channel A |
+| PWM 1        | GPIO 13  | v1+    | Slice 6 channel B |
+| PWM 2        | GPIO 14  | v1+    | Slice 7 channel A |
+| PWM 3        | GPIO 15  | v1+    | Slice 7 channel B |
+| 1-Wire       | GPIO 16  | v2     | PIO0/SM0, open-drain |
+| ADC 0        | GPIO 26  | v2     | 12-bit, 0–3.3 V nominal |
+| ADC 1        | GPIO 27  | v2     | 12-bit |
+| ADC 2        | GPIO 28  | v2     | 12-bit |
+| ADC 3        | GPIO 29  | v2     | 12-bit |
 
 ## Software Prerequisites
 

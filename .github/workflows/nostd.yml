@@ -1,6 +1,7 @@
-# This workflow checks whether the library is able to run without the std library (e.g., embedded).
-# This entire file should be removed if this crate does not support no-std. See check.yml for
-# information about how the concurrency cancellation and workflow triggering works
+# This workflow checks whether the firmware compiles for the no_std embedded
+# target.  Because the firmware uses mutually exclusive hw-rev1 / hw-rev2
+# feature flags, cargo-hack's --feature-powerset cannot be used here.
+# Instead we test each revision explicitly.
 permissions:
   contents: read
 on:
@@ -14,17 +15,28 @@ name: no-std
 jobs:
   nostd:
     runs-on: ubuntu-latest
-    name: ${{ matrix.target }}
+    name: ${{ matrix.target }} / ${{ matrix.hw-rev }}
     strategy:
+      fail-fast: false
       matrix:
         target: [thumbv8m.main-none-eabihf]
+        hw-rev: [hw-rev1, hw-rev2]
+        include:
+          - hw-rev: hw-rev1
+            feature-flags: ""
+          - hw-rev: hw-rev2
+            feature-flags: "--no-default-features --features hw-rev2"
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: rustup target add ${{ matrix.target }}
         run: rustup target add ${{ matrix.target }}
       - name: cargo check
-        run: cargo check --target ${{ matrix.target }} --manifest-path crates/pico-de-gallo-firmware/Cargo.toml
+        run: cargo check --target ${{ matrix.target }} ${{ matrix.feature-flags }} --manifest-path crates/pico-de-gallo-firmware/Cargo.toml
+      - name: cargo clippy
+        run: cargo clippy --target ${{ matrix.target }} ${{ matrix.feature-flags }} --manifest-path crates/pico-de-gallo-firmware/Cargo.toml -- -D warnings

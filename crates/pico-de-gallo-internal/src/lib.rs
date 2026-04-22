@@ -178,7 +178,7 @@ pub type UartSetConfigurationResponse = Result<(), UartConfigError>;
 /// Response type for UART get-configuration queries.
 ///
 /// Returns the currently active UART parameters.
-pub type UartGetConfigurationResponse = UartConfigurationInfo;
+pub type UartGetConfigurationResponse = Result<UartConfigurationInfo, UartError>;
 
 /// Response type for PWM set-duty-cycle operations.
 pub type PwmSetDutyCycleResponse = Result<(), PwmError>;
@@ -196,7 +196,7 @@ pub type PwmGetConfigurationResponse = Result<PwmConfigurationInfo, PwmError>;
 /// Response type for ADC read operations.
 pub type AdcReadResponse = Result<u16, AdcError>;
 /// Response type for ADC get-configuration queries.
-pub type AdcGetConfigurationResponse = AdcConfigurationInfo;
+pub type AdcGetConfigurationResponse = Result<AdcConfigurationInfo, AdcError>;
 
 /// Response type for 1-Wire reset operations.
 /// Returns `true` if at least one device is present on the bus.
@@ -762,6 +762,9 @@ pub enum UartError {
     InvalidBaudRate,
     /// An unspecified error occurred in the firmware.
     Other,
+    /// The peripheral is not available on this hardware revision.
+    // WARNING: Do not reorder — postcard encodes by variant index.
+    Unsupported,
 }
 
 impl core::fmt::Display for UartError {
@@ -774,6 +777,7 @@ impl core::fmt::Display for UartError {
             Self::Framing => write!(f, "UART framing error"),
             Self::InvalidBaudRate => write!(f, "invalid baud rate"),
             Self::Other => write!(f, "UART error"),
+            Self::Unsupported => write!(f, "UART not supported on this hardware"),
         }
     }
 }
@@ -1049,6 +1053,9 @@ pub enum AdcError {
     ConversionFailed,
     /// Catch-all for unexpected ADC errors.
     Other,
+    /// The peripheral is not available on this hardware revision.
+    // WARNING: Do not reorder — postcard encodes by variant index.
+    Unsupported,
 }
 
 impl core::fmt::Display for AdcError {
@@ -1056,6 +1063,7 @@ impl core::fmt::Display for AdcError {
         match self {
             Self::ConversionFailed => write!(f, "ADC conversion failed"),
             Self::Other => write!(f, "ADC error"),
+            Self::Unsupported => write!(f, "ADC not supported on this hardware"),
         }
     }
 }
@@ -1111,6 +1119,9 @@ pub enum OneWireError {
     BufferTooLong,
     /// Catch-all for unexpected 1-Wire errors.
     Other,
+    /// The peripheral is not available on this hardware revision.
+    // WARNING: Do not reorder — postcard encodes by variant index.
+    Unsupported,
 }
 
 impl core::fmt::Display for OneWireError {
@@ -1120,6 +1131,7 @@ impl core::fmt::Display for OneWireError {
             Self::BusError => write!(f, "1-Wire bus error"),
             Self::BufferTooLong => write!(f, "buffer exceeds firmware limit"),
             Self::Other => write!(f, "1-Wire error"),
+            Self::Unsupported => write!(f, "1-Wire not supported on this hardware"),
         }
     }
 }
@@ -2290,6 +2302,7 @@ mod tests {
             UartError::Framing,
             UartError::InvalidBaudRate,
             UartError::Other,
+            UartError::Unsupported,
         ] {
             let bytes = to_allocvec(&err).unwrap();
             let decoded: UartError = from_bytes(&bytes).unwrap();
@@ -2313,6 +2326,10 @@ mod tests {
             "invalid baud rate"
         );
         assert_eq!(format!("{}", UartError::Other), "UART error");
+        assert_eq!(
+            format!("{}", UartError::Unsupported),
+            "UART not supported on this hardware"
+        );
     }
 
     #[test]
@@ -2578,6 +2595,10 @@ mod tests {
             "ADC conversion failed"
         );
         assert_eq!(format!("{}", AdcError::Other), "ADC error");
+        assert_eq!(
+            format!("{}", AdcError::Unsupported),
+            "ADC not supported on this hardware"
+        );
     }
 
     #[test]
@@ -3049,6 +3070,7 @@ mod tests {
             OneWireError::BusError,
             OneWireError::BufferTooLong,
             OneWireError::Other,
+            OneWireError::Unsupported,
         ] {
             let bytes = to_allocvec(&err).unwrap();
             let decoded: OneWireError = from_bytes(&bytes).unwrap();
@@ -3069,6 +3091,10 @@ mod tests {
             "buffer exceeds firmware limit"
         );
         assert_eq!(format!("{}", OneWireError::Other), "1-Wire error");
+        assert_eq!(
+            format!("{}", OneWireError::Unsupported),
+            "1-Wire not supported on this hardware"
+        );
     }
 
     #[test]
@@ -3077,6 +3103,7 @@ mod tests {
         assert_eq!(to_allocvec(&OneWireError::BusError).unwrap(), [1]);
         assert_eq!(to_allocvec(&OneWireError::BufferTooLong).unwrap(), [2]);
         assert_eq!(to_allocvec(&OneWireError::Other).unwrap(), [3]);
+        assert_eq!(to_allocvec(&OneWireError::Unsupported).unwrap(), [4]);
     }
 
     #[test]

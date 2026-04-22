@@ -198,6 +198,8 @@ pub enum Status {
     SchemaMismatch = -63,
     /// Firmware does not support the device/info endpoint
     LegacyFirmware = -64,
+    /// Peripheral is not supported on this hardware revision
+    Unsupported = -65,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -243,6 +245,7 @@ fn uart_error_to_status(e: PicoDeGalloError<UartError>) -> Status {
         PicoDeGalloError::Endpoint(UartError::Framing) => Status::UartFraming,
         PicoDeGalloError::Endpoint(UartError::InvalidBaudRate) => Status::UartInvalidBaudRate,
         PicoDeGalloError::Endpoint(UartError::Other) => Status::UartReadFailed,
+        PicoDeGalloError::Endpoint(UartError::Unsupported) => Status::Unsupported,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
 }
@@ -263,6 +266,7 @@ fn adc_error_to_status(e: PicoDeGalloError<AdcError>) -> Status {
     match e {
         PicoDeGalloError::Endpoint(AdcError::ConversionFailed) => Status::AdcConversionFailed,
         PicoDeGalloError::Endpoint(AdcError::Other) => Status::AdcReadFailed,
+        PicoDeGalloError::Endpoint(AdcError::Unsupported) => Status::Unsupported,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
 }
@@ -273,6 +277,7 @@ fn onewire_error_to_status(e: PicoDeGalloError<OneWireError>) -> Status {
         PicoDeGalloError::Endpoint(OneWireError::BusError) => Status::OneWireBusError,
         PicoDeGalloError::Endpoint(OneWireError::BufferTooLong) => Status::BufferTooLong,
         PicoDeGalloError::Endpoint(OneWireError::Other) => Status::OneWireReadFailed,
+        PicoDeGalloError::Endpoint(OneWireError::Unsupported) => Status::Unsupported,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
 }
@@ -1480,7 +1485,7 @@ pub unsafe extern "C" fn gallo_uart_get_config(
             }
             Status::Ok
         }
-        Err(_) => Status::UartGetConfigFailed,
+        Err(e) => uart_error_to_status(e),
     }
 }
 
@@ -1757,10 +1762,7 @@ pub unsafe extern "C" fn gallo_adc_get_config(
             }
             Status::Ok
         }
-        Err(e) => match e {
-            PicoDeGalloError::Comms(_) => Status::CommsFailed,
-            PicoDeGalloError::Endpoint(never) => match never {},
-        },
+        Err(e) => adc_error_to_status(e),
     }
 }
 
@@ -2734,6 +2736,10 @@ mod tests {
             uart_error_to_status(PicoDeGalloError::Endpoint(UartError::Other)),
             Status::UartReadFailed
         );
+        assert_eq!(
+            uart_error_to_status(PicoDeGalloError::Endpoint(UartError::Unsupported)),
+            Status::Unsupported
+        );
     }
 
     #[test]
@@ -2745,6 +2751,10 @@ mod tests {
         assert_eq!(
             adc_error_to_status(PicoDeGalloError::Endpoint(AdcError::Other)),
             Status::AdcReadFailed
+        );
+        assert_eq!(
+            adc_error_to_status(PicoDeGalloError::Endpoint(AdcError::Unsupported)),
+            Status::Unsupported
         );
     }
 
@@ -2841,6 +2851,10 @@ mod tests {
             onewire_error_to_status(PicoDeGalloError::Endpoint(OneWireError::Other)),
             Status::OneWireReadFailed
         );
+        assert_eq!(
+            onewire_error_to_status(PicoDeGalloError::Endpoint(OneWireError::Unsupported)),
+            Status::Unsupported
+        );
     }
 
     #[test]
@@ -2853,5 +2867,6 @@ mod tests {
         assert_eq!(Status::DeviceInfoFailed as i32, -62);
         assert_eq!(Status::SchemaMismatch as i32, -63);
         assert_eq!(Status::LegacyFirmware as i32, -64);
+        assert_eq!(Status::Unsupported as i32, -65);
     }
 }

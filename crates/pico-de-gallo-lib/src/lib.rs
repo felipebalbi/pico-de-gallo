@@ -679,8 +679,14 @@ impl PicoDeGallo {
     ///
     /// Returns a [`UartConfigurationInfo`] struct with the active baud rate.
     /// The default is 115200.
-    pub async fn uart_get_config(&self) -> Result<UartConfigurationInfo, PicoDeGalloError<Infallible>> {
-        Ok(self.client.send_resp::<UartGetConfiguration>(&()).await?)
+    ///
+    /// Returns [`UartError::Unsupported`] if the firmware's hardware revision
+    /// does not support UART.
+    pub async fn uart_get_config(&self) -> Result<UartConfigurationInfo, PicoDeGalloError<UartError>> {
+        self.client
+            .send_resp::<UartGetConfiguration>(&())
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     // -----------------------------------------------------------------------
@@ -787,8 +793,14 @@ impl PicoDeGallo {
     ///
     /// Returns an [`AdcConfigurationInfo`] with fixed values for the RP2350
     /// ADC. Useful for host-side discovery.
-    pub async fn adc_get_config(&self) -> Result<AdcConfigurationInfo, PicoDeGalloError<Infallible>> {
-        Ok(self.client.send_resp::<AdcGetConfiguration>(&()).await?)
+    ///
+    /// Returns [`AdcError::Unsupported`] if the firmware's hardware revision
+    /// does not support ADC.
+    pub async fn adc_get_config(&self) -> Result<AdcConfigurationInfo, PicoDeGalloError<AdcError>> {
+        self.client
+            .send_resp::<AdcGetConfiguration>(&())
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
     }
 
     // ---- 1-Wire ----

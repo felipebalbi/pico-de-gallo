@@ -13,16 +13,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Capabilities` bitflag newtype (`u64`) with named constants (`I2C`, `SPI`,
   `UART`, `GPIO`, `PWM`, `ADC`, `ONEWIRE`). Schema version constants
   auto-generated from `Cargo.toml` via `build.rs`.
+- **internal**: `Unsupported` variant added to `UartError`, `AdcError`, and
+  `OneWireError` for endpoints not available on the current hardware revision.
+- **firmware**: `hw-rev1` and `hw-rev2` Cargo feature flags (mutually exclusive).
+  `hw-rev1` is the default and matches the current v1 landing board.
+  Unsupported peripherals (UART, ADC, 1-Wire on v1) return `Unsupported`
+  errors instead of silently failing.
 - **firmware**: `device_info_handler` returning firmware version, schema version,
-  hardware revision, and capabilities bitfield.
+  hardware revision, and capabilities bitfield. Capabilities are gated by
+  hardware revision feature flag.
 - **lib**: `device_info()` and `validate()` methods, `ValidateError` enum.
   Re-exported `Capabilities` and `DeviceInfo`.
 - **ffi**: `gallo_get_device_info()` function, `GalloDeviceInfo` C struct with
-  `capabilities` u64 bitfield, `GALLO_CAP_*` constants. 3 new status codes:
-  `DeviceInfoFailed` (−62), `SchemaMismatch` (−63), `LegacyFirmware` (−64).
+  `capabilities` u64 bitfield, `GALLO_CAP_*` constants. 4 new status codes:
+  `DeviceInfoFailed` (−62), `SchemaMismatch` (−63), `LegacyFirmware` (−64),
+  `Unsupported` (−65).
 - **app**: `gallo version` now shows schema version, HW revision, and
   capabilities with graceful fallback for legacy firmware.
-- **book**: Updated FFI docs with device info section and C constants.
+- **book**: Updated FFI docs with device info section, C constants, and
+  `Unsupported` status code. Added hardware revision notes to getting-started
+  pin map, UART, ADC, and 1-Wire pages.
+- **ci**: `nostd.yml` now builds and lints firmware for both `hw-rev1` and
+  `hw-rev2`. `release-firmware.yml` produces per-revision release assets
+  (`firmware-rev1.uf2`, `firmware-rev2.uf2`).
+
+### Changed
+
+- **internal**: `UartGetConfigurationResponse` changed from `UartConfigurationInfo`
+  to `Result<UartConfigurationInfo, UartError>`. `AdcGetConfigurationResponse`
+  changed from `AdcConfigurationInfo` to `Result<AdcConfigurationInfo, AdcError>`.
+- **lib**: `uart_get_config()` now returns `PicoDeGalloError<UartError>` (was
+  `PicoDeGalloError<Infallible>`). `adc_get_config()` now returns
+  `PicoDeGalloError<AdcError>` (was `PicoDeGalloError<Infallible>`).
 
 ## [0.8.0] — 2026-04-22
 
