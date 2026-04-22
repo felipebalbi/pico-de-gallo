@@ -46,18 +46,17 @@
 
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
-    AdcGetConfiguration, AdcRead, AdcReadRequest, AdcReadTemperature, GpioEventTopic, GpioGet, GpioGetRequest, GpioPut,
-    GpioPutRequest, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSubscribe, GpioSubscribeRequest,
-    GpioUnsubscribe, GpioUnsubscribeRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
-    GpioWaitForRising, GpioWaitRequest, I2cBatch, I2cBatchRequest, I2cGetConfiguration, I2cRead, I2cReadRequest,
-    I2cScan, I2cScanRequest, I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead,
-    I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable,
-    PwmEnableRequest, PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest,
-    PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SpiBatch,
-    SpiBatchRequest, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
-    SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, UartFlush,
-    UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration, UartSetConfigurationRequest, UartWrite,
-    UartWriteRequest, Version,
+    AdcGetConfiguration, AdcRead, AdcReadRequest, GpioEventTopic, GpioGet, GpioGetRequest, GpioPut, GpioPutRequest,
+    GpioSetConfiguration, GpioSetConfigurationRequest, GpioSubscribe, GpioSubscribeRequest, GpioUnsubscribe,
+    GpioUnsubscribeRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising,
+    GpioWaitRequest, I2cBatch, I2cBatchRequest, I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest,
+    I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest,
+    MICROSOFT_VID, PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable, PwmEnableRequest, PwmGetConfiguration,
+    PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmSetConfiguration,
+    PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SpiBatch, SpiBatchRequest, SpiFlush,
+    SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration, SpiSetConfigurationRequest, SpiTransfer,
+    SpiTransferRequest, SpiWrite, SpiWriteRequest, UartFlush, UartGetConfiguration, UartRead, UartReadRequest,
+    UartSetConfiguration, UartSetConfigurationRequest, UartWrite, UartWriteRequest, Version,
 };
 
 pub use pico_de_gallo_internal::{
@@ -686,22 +685,9 @@ impl PicoDeGallo {
     ///
     /// Returns a raw 12-bit value (0–4095). Convert to voltage with:
     /// `V ≈ raw × 3.3 / 4096` (approximate — depends on ADC_AVDD).
-    ///
-    /// For temperature, prefer [`adc_read_temperature`](Self::adc_read_temperature).
     pub async fn adc_read(&self, channel: AdcChannel) -> Result<u16, PicoDeGalloError<AdcError>> {
         self.client
             .send_resp::<AdcRead>(&AdcReadRequest { channel })
-            .await?
-            .map_err(PicoDeGalloError::Endpoint)
-    }
-
-    /// Read the on-die temperature sensor.
-    ///
-    /// Returns the temperature in **millidegrees Celsius** (e.g., 27000 = 27.000 °C).
-    /// The value is approximate — accuracy depends on ADC_AVDD stability.
-    pub async fn adc_read_temperature(&self) -> Result<i32, PicoDeGalloError<AdcError>> {
-        self.client
-            .send_resp::<AdcReadTemperature>(&())
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }

@@ -253,8 +253,8 @@ general-purpose GPIO until reconfigured.
 
 ### 2.3 ADC Support
 
-**What:** Expose RP2350's ADC channels (GPIO26–29 = ADC0–3, plus the
-internal temperature sensor). Add endpoints for single-shot reads and
+**What:** Expose RP2350's ADC channels (GPIO26–29 = ADC0–3).
+Add endpoints for single-shot reads and
 optionally continuous sampling. There is no standard embedded-hal ADC trait
 in 1.0, so expose a project-specific API.
 
@@ -262,7 +262,6 @@ in 1.0, so expose a project-specific API.
 - Voltage monitoring (power rails, battery levels)
 - Analog sensor reading (thermistors, potentiometers, light sensors)
 - Signal level debugging
-- Internal die temperature monitoring
 
 **Resolution:** RP2350 has a 12-bit ADC with 500 ksps. Single-shot reads
 are simple; continuous streaming would benefit from DMA but pushes against
@@ -719,7 +718,7 @@ shows current usage and planned allocation:
 | **SPI**    | 2 (SPI0, SPI1)    | 1 (SPI0)                              | 2                | SPI1 on GPIO16–19                         |
 | **UART**   | 2 (UART0, UART1)  | 0                                     | 1 (UART0)        | GPIO0/1                                   |
 | **PWM**    | 12 slices (24 ch) | 0                                     | 2–4 slices       | Repurpose GPIO pins or use dedicated pins |
-| **ADC**    | 4 GPIO + temp     | 0                                     | 4 GPIO + temp    | GPIO26–29                                 |
+| **ADC**    | 4 GPIO            | 0                                     | 4 GPIO           | GPIO26–29                                 |
 | **PIO**    | 3 (PIO0–2)        | 0                                     | 1–2              | 1-Wire, sniffing                          |
 | **DMA**    | 16 channels       | 2 (SPI)                               | 4–6              | ADC continuous, UART, SPI1                |
 | **GPIO**   | 30 (on Pico 2)    | 10 (I2C: 2, SPI: 3, user: 8, USB: ~0) | ~24              | Plenty of headroom                        |

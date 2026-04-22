@@ -189,8 +189,6 @@ pub type PwmGetConfigurationResponse = Result<PwmConfigurationInfo, PwmError>;
 
 /// Response type for ADC read operations.
 pub type AdcReadResponse = Result<u16, AdcError>;
-/// Response type for ADC read-temperature operations (millidegrees Celsius).
-pub type AdcReadTemperatureResponse = Result<i32, AdcError>;
 /// Response type for ADC get-configuration queries.
 pub type AdcGetConfigurationResponse = AdcConfigurationInfo;
 
@@ -253,7 +251,6 @@ endpoints! {
     | PwmSetConfiguration   | PwmSetConfigurationRequest    | PwmSetConfigurationResponse   | "pwm/set-config"     |
     | PwmGetConfiguration   | PwmGetConfigurationRequest    | PwmGetConfigurationResponse   | "pwm/get-config"     |
     | AdcRead               | AdcReadRequest                | AdcReadResponse               | "adc/read"           |
-    | AdcReadTemperature    | ()                            | AdcReadTemperatureResponse    | "adc/read-temperature" |
     | AdcGetConfiguration   | ()                            | AdcGetConfigurationResponse   | "adc/get-config"     |
     | GpioSubscribe         | GpioSubscribeRequest          | GpioSubscribeResponse         | "gpio/subscribe"     |
     | GpioUnsubscribe       | GpioUnsubscribeRequest        | GpioUnsubscribeResponse       | "gpio/unsubscribe"   |
@@ -972,12 +969,11 @@ pub const ADC_NOMINAL_REFERENCE_MV: u16 = 3300;
 /// ADC channel selector.
 ///
 /// Identifies which ADC input to sample. GPIO-based channels (`Adc0`–`Adc3`)
-/// read external analog voltages on GPIO26–GPIO29. The [`TempSensor`](AdcChannel::TempSensor)
-/// variant reads the RP2350's on-die temperature sensor.
+/// read external analog voltages on GPIO26–GPIO29.
 ///
 /// # Wire Compatibility
 ///
-/// Variants are serialized as discriminant integers (0–4). **Do not**
+/// Variants are serialized as discriminant integers (0–3). **Do not**
 /// reorder or insert variants before existing ones — that changes the
 /// wire encoding and breaks backward compatibility.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
@@ -990,8 +986,6 @@ pub enum AdcChannel {
     Adc2 = 2,
     /// ADC channel 3 — GPIO29.
     Adc3 = 3,
-    /// Internal temperature sensor (RP2350 on-die).
-    TempSensor = 4,
 }
 
 impl core::fmt::Display for AdcChannel {
@@ -1001,7 +995,6 @@ impl core::fmt::Display for AdcChannel {
             Self::Adc1 => write!(f, "ADC1 (GPIO27)"),
             Self::Adc2 => write!(f, "ADC2 (GPIO28)"),
             Self::Adc3 => write!(f, "ADC3 (GPIO29)"),
-            Self::TempSensor => write!(f, "temperature sensor"),
         }
     }
 }
@@ -1040,9 +1033,6 @@ pub type AdcConfigError = AdcError;
 ///
 /// Returns a raw 12-bit value (0–4095). The host can convert to voltage
 /// using `V = raw * nominal_reference_mv / 4096`.
-///
-/// For temperature readings, prefer the dedicated
-/// [`AdcReadTemperature`] endpoint which returns millidegrees Celsius.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct AdcReadRequest {
     /// Which ADC channel to sample.
@@ -1064,8 +1054,6 @@ pub struct AdcConfigurationInfo {
     pub nominal_reference_mv: u16,
     /// Number of external (GPIO-based) ADC channels.
     pub num_gpio_channels: u8,
-    /// Whether the internal temperature sensor is available.
-    pub has_temp_sensor: bool,
 }
 
 // --- Transaction Batching
@@ -2380,23 +2368,12 @@ mod tests {
     }
 
     #[test]
-    fn adc_read_request_temp_sensor_round_trip() {
-        let req = AdcReadRequest {
-            channel: AdcChannel::TempSensor,
-        };
-        let bytes = to_allocvec(&req).unwrap();
-        let decoded: AdcReadRequest = from_bytes(&bytes).unwrap();
-        assert_eq!(req, decoded);
-    }
-
-    #[test]
     #[cfg(feature = "use-std")]
     fn adc_channel_display() {
         assert_eq!(format!("{}", AdcChannel::Adc0), "ADC0 (GPIO26)");
         assert_eq!(format!("{}", AdcChannel::Adc1), "ADC1 (GPIO27)");
         assert_eq!(format!("{}", AdcChannel::Adc2), "ADC2 (GPIO28)");
         assert_eq!(format!("{}", AdcChannel::Adc3), "ADC3 (GPIO29)");
-        assert_eq!(format!("{}", AdcChannel::TempSensor), "temperature sensor");
     }
 
     #[test]
@@ -2415,7 +2392,6 @@ mod tests {
             resolution_bits: 12,
             nominal_reference_mv: 3300,
             num_gpio_channels: 4,
-            has_temp_sensor: true,
         };
         let bytes = to_allocvec(&info).unwrap();
         let decoded: AdcConfigurationInfo = from_bytes(&bytes).unwrap();
@@ -2440,7 +2416,6 @@ mod tests {
             resolution_bits: 12,
             nominal_reference_mv: 3300,
             num_gpio_channels: 4,
-            has_temp_sensor: true,
         };
         let bytes = to_allocvec(&info).unwrap();
         let canonical = bytes.clone();
@@ -2456,7 +2431,6 @@ mod tests {
         assert_eq!(to_allocvec(&AdcChannel::Adc1).unwrap(), [1]);
         assert_eq!(to_allocvec(&AdcChannel::Adc2).unwrap(), [2]);
         assert_eq!(to_allocvec(&AdcChannel::Adc3).unwrap(), [3]);
-        assert_eq!(to_allocvec(&AdcChannel::TempSensor).unwrap(), [4]);
     }
 
     // --- GPIO event monitoring tests ---

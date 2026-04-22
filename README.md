@@ -18,7 +18,7 @@ Pico de Gallo provides:
 - **UART**: read, write, flush, and baud rate configuration
 - **GPIO**: digital input/output, edge event monitoring (subscribe/unsubscribe)
 - **PWM**: 4-channel PWM output with configurable frequency and duty cycle
-- **ADC**: 4 GPIO-based analog inputs plus on-die temperature sensor (12-bit)
+- **ADC**: 4 GPIO-based analog inputs (12-bit)
 - **Configuration**: runtime I²C/SPI/UART/PWM frequency and SPI mode changes
 
 All communication uses [postcard-rpc](https://docs.rs/postcard-rpc) over

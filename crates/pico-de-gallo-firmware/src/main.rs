@@ -26,7 +26,6 @@
 //! | ADC 1    | GPIO 27 | 12-bit, 0–3.3 V nominal |
 //! | ADC 2    | GPIO 28 | 12-bit, 0–3.3 V nominal |
 //! | ADC 3    | GPIO 29 | 12-bit, 0–3.3 V nominal |
-//! | Temp     | Internal | On-die temperature sensor |
 //! | USB      | Native USB | postcard-rpc transport |
 //!
 //! # Endpoints
@@ -67,29 +66,28 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
     ADC_NOMINAL_REFERENCE_MV, ADC_RESOLUTION_BITS, AdcChannel, AdcConfigurationInfo, AdcError, AdcGetConfiguration,
-    AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse, AdcReadTemperature,
-    AdcReadTemperatureResponse, ENDPOINT_LIST, GpioDirection, GpioEdge, GpioError, GpioEvent, GpioEventTopic, GpioGet,
-    GpioGetRequest, GpioGetResponse, GpioPull, GpioPut, GpioPutRequest, GpioPutResponse, GpioSetConfiguration,
-    GpioSetConfigurationRequest, GpioSetConfigurationResponse, GpioState, GpioSubscribe, GpioSubscribeRequest,
-    GpioSubscribeResponse, GpioUnsubscribe, GpioUnsubscribeRequest, GpioUnsubscribeResponse, GpioWaitForAny,
-    GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, GpioWaitResponse,
-    I2cBatch, I2cBatchError, I2cBatchOp, I2cBatchRequest, I2cBatchResponse, I2cError, I2cFrequency,
-    I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse, I2cScan,
-    I2cScanRequest, I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest, I2cSetConfigurationResponse,
-    I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest, I2cWriteResponse,
-    MAX_BATCH_OPS, MAX_TRANSFER_SIZE, MICROSOFT_VID, NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS, PICO_DE_GALLO_PID,
-    PingEndpoint, PwmConfigurationInfo, PwmDisable, PwmDisableRequest, PwmDisableResponse, PwmDutyCycleInfo, PwmEnable,
-    PwmEnableRequest, PwmEnableResponse, PwmError, PwmGetConfiguration, PwmGetConfigurationRequest,
-    PwmGetConfigurationResponse, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmGetDutyCycleResponse, PwmSetConfiguration,
-    PwmSetConfigurationRequest, PwmSetConfigurationResponse, PwmSetDutyCycle, PwmSetDutyCycleRequest,
-    PwmSetDutyCycleResponse, SpiBatch, SpiBatchError, SpiBatchOp, SpiBatchRequest, SpiBatchResponse,
-    SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration, SpiGetConfigurationResponse,
-    SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration, SpiSetConfigurationRequest,
-    SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse, SpiWrite, SpiWriteRequest,
-    SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, UartConfigurationInfo, UartError, UartFlush, UartFlushResponse,
-    UartGetConfiguration, UartGetConfigurationResponse, UartRead, UartReadRequest, UartReadResponse,
-    UartSetConfiguration, UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite, UartWriteRequest,
-    UartWriteResponse, Version, VersionInfo,
+    AdcGetConfigurationResponse, AdcRead, AdcReadRequest, AdcReadResponse, ENDPOINT_LIST, GpioDirection, GpioEdge,
+    GpioError, GpioEvent, GpioEventTopic, GpioGet, GpioGetRequest, GpioGetResponse, GpioPull, GpioPut, GpioPutRequest,
+    GpioPutResponse, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSetConfigurationResponse, GpioState,
+    GpioSubscribe, GpioSubscribeRequest, GpioSubscribeResponse, GpioUnsubscribe, GpioUnsubscribeRequest,
+    GpioUnsubscribeResponse, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising,
+    GpioWaitRequest, GpioWaitResponse, I2cBatch, I2cBatchError, I2cBatchOp, I2cBatchRequest, I2cBatchResponse,
+    I2cError, I2cFrequency, I2cGetConfiguration, I2cGetConfigurationResponse, I2cRead, I2cReadRequest, I2cReadResponse,
+    I2cScan, I2cScanRequest, I2cScanResponse, I2cSetConfiguration, I2cSetConfigurationRequest,
+    I2cSetConfigurationResponse, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteReadResponse, I2cWriteRequest,
+    I2cWriteResponse, MAX_BATCH_OPS, MAX_TRANSFER_SIZE, MICROSOFT_VID, NUM_ADC_GPIO_CHANNELS, NUM_PWM_CHANNELS,
+    PICO_DE_GALLO_PID, PingEndpoint, PwmConfigurationInfo, PwmDisable, PwmDisableRequest, PwmDisableResponse,
+    PwmDutyCycleInfo, PwmEnable, PwmEnableRequest, PwmEnableResponse, PwmError, PwmGetConfiguration,
+    PwmGetConfigurationRequest, PwmGetConfigurationResponse, PwmGetDutyCycle, PwmGetDutyCycleRequest,
+    PwmGetDutyCycleResponse, PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetConfigurationResponse,
+    PwmSetDutyCycle, PwmSetDutyCycleRequest, PwmSetDutyCycleResponse, SpiBatch, SpiBatchError, SpiBatchOp,
+    SpiBatchRequest, SpiBatchResponse, SpiConfigurationInfo, SpiError, SpiFlush, SpiFlushResponse, SpiGetConfiguration,
+    SpiGetConfigurationResponse, SpiPhase, SpiPolarity, SpiRead, SpiReadRequest, SpiReadResponse, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiSetConfigurationResponse, SpiTransfer, SpiTransferRequest, SpiTransferResponse,
+    SpiWrite, SpiWriteRequest, SpiWriteResponse, TOPICS_IN_LIST, TOPICS_OUT_LIST, UartConfigurationInfo, UartError,
+    UartFlush, UartFlushResponse, UartGetConfiguration, UartGetConfigurationResponse, UartRead, UartReadRequest,
+    UartReadResponse, UartSetConfiguration, UartSetConfigurationRequest, UartSetConfigurationResponse, UartWrite,
+    UartWriteRequest, UartWriteResponse, Version, VersionInfo,
 };
 use postcard_rpc::{
     define_dispatch,
@@ -155,8 +153,8 @@ const NUM_PWM_SLICES: usize = 2;
 /// Must match the `ClockConfig::system_freq()` value passed to `embassy_rp::init`.
 const SYS_CLK_HZ: u32 = 150_000_000;
 
-/// Number of ADC channels stored in Context (4 GPIO + 1 temp sensor).
-const NUM_ADC_CHANNELS: usize = NUM_ADC_GPIO_CHANNELS + 1;
+/// Number of ADC channels stored in Context (4 GPIO channels).
+const NUM_ADC_CHANNELS: usize = NUM_ADC_GPIO_CHANNELS;
 
 /// Firmware application context holding all peripheral handles.
 ///
@@ -456,7 +454,6 @@ define_dispatch! {
         | PwmSetConfiguration  | blocking | pwm_set_config_handler        |
         | PwmGetConfiguration  | blocking | pwm_get_config_handler        |
         | AdcRead              | blocking | adc_read_handler              |
-        | AdcReadTemperature   | blocking | adc_read_temperature_handler  |
         | AdcGetConfiguration  | blocking | adc_get_config_handler        |
         | Version              | async    | version_handler               |
     };
@@ -523,14 +520,13 @@ async fn main(spawner: Spawner) {
         uart::Config::default(),
     );
 
-    // ADC — blocking mode for single-shot reads (GPIO26–29 + temp sensor)
+    // ADC — blocking mode for single-shot reads (GPIO26–29)
     let adc = Adc::new_blocking(p.ADC, adc::Config::default());
     let adc_channels = [
         adc::Channel::new_pin(p.PIN_26, Pull::None),
         adc::Channel::new_pin(p.PIN_27, Pull::None),
         adc::Channel::new_pin(p.PIN_28, Pull::None),
         adc::Channel::new_pin(p.PIN_29, Pull::None),
-        adc::Channel::new_temp_sensor(p.ADC_TEMP_SENSOR),
     ];
 
     let context = Context::new(i2c, spi, uart, gpios, pwm_slices, pwm_configs, adc, adc_channels);
@@ -1320,7 +1316,7 @@ fn pwm_channel_parts(channel: u8) -> Result<(usize, bool), PwmError> {
         return Err(PwmError::InvalidChannel);
     }
     let slice_idx = usize::from(channel) / 2;
-    let is_b = (channel % 2) != 0;
+    let is_b = !channel.is_multiple_of(2);
     Ok((slice_idx, is_b))
 }
 
@@ -1523,7 +1519,6 @@ fn adc_channel_index(channel: AdcChannel) -> usize {
         AdcChannel::Adc1 => 1,
         AdcChannel::Adc2 => 2,
         AdcChannel::Adc3 => 3,
-        AdcChannel::TempSensor => 4,
     }
 }
 
@@ -1541,31 +1536,6 @@ fn adc_read_handler(context: &mut Context, _header: VarHeader, req: AdcReadReque
     }
 }
 
-/// Handler for `adc/read-temperature` — reads the on-die temp sensor and
-/// returns the temperature in millidegrees Celsius.
-///
-/// Uses the RP2350 temperature formula (integer math):
-///   V_µV = raw × 3_300_000 / 4096
-///   T_m°C = 27_000 − (V_µV − 706_000) × 1000 / 1721
-fn adc_read_temperature_handler(context: &mut Context, _header: VarHeader, _req: ()) -> AdcReadTemperatureResponse {
-    let ch = &mut context.adc_channels[NUM_ADC_CHANNELS - 1]; // temp sensor is last
-
-    match context.adc.blocking_read(ch) {
-        Ok(raw) => {
-            // Integer math to avoid floats:
-            // V in microvolts: raw * 3_300_000 / 4096
-            let v_uv = i64::from(raw) * 3_300_000 / 4096;
-            // T in millidegrees C: 27000 - (v_uv - 706000) * 1000 / 1721
-            let temp_mc = 27_000i64 - (v_uv - 706_000) * 1000 / 1721;
-            let temp_mc = temp_mc as i32;
-
-            debug!("adc temperature: raw={=u16} temp_mc={=i32}", raw, temp_mc);
-            Ok(temp_mc)
-        }
-        Err(_) => Err(AdcError::ConversionFailed),
-    }
-}
-
 /// Handler for `adc/get-config` — returns ADC configuration info.
 fn adc_get_config_handler(_context: &mut Context, _header: VarHeader, _req: ()) -> AdcGetConfigurationResponse {
     debug!("adc get config");
@@ -1573,7 +1543,6 @@ fn adc_get_config_handler(_context: &mut Context, _header: VarHeader, _req: ()) 
         resolution_bits: ADC_RESOLUTION_BITS,
         nominal_reference_mv: ADC_NOMINAL_REFERENCE_MV,
         num_gpio_channels: NUM_ADC_GPIO_CHANNELS as u8,
-        has_temp_sensor: true,
     }
 }
 

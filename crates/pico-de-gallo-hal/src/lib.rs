@@ -352,26 +352,6 @@ impl Hal {
             .map_err(AdcHalError::from)
     }
 
-    /// Read the on-die temperature sensor.
-    ///
-    /// Returns the temperature in **millidegrees Celsius**
-    /// (e.g., 27000 = 27.000 °C). Approximate — depends on ADC_AVDD.
-    pub fn adc_read_temperature(&self) -> Result<i32, AdcHalError> {
-        if Self::in_async_context() {
-            block_in_place(|| self.adc_read_temperature_inner())
-        } else {
-            self.adc_read_temperature_inner()
-        }
-    }
-
-    fn adc_read_temperature_inner(&self) -> Result<i32, AdcHalError> {
-        let handle = self.handle.clone();
-        let gallo = handle.block_on(self.gallo.lock());
-        handle
-            .block_on(gallo.adc_read_temperature())
-            .map_err(AdcHalError::from)
-    }
-
     /// Query the ADC configuration (resolution, reference, channel count).
     pub fn adc_get_config(&self) -> Result<AdcConfigurationInfo, AdcHalError> {
         if Self::in_async_context() {

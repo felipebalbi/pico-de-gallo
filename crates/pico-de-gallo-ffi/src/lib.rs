@@ -170,20 +170,18 @@ pub enum Status {
     PwmInvalidConfiguration = -49,
     /// ADC read failed
     AdcReadFailed = -50,
-    /// ADC read-temperature failed
-    AdcReadTemperatureFailed = -51,
     /// ADC get-config query failed
-    AdcGetConfigFailed = -52,
+    AdcGetConfigFailed = -51,
     /// ADC conversion error
-    AdcConversionFailed = -53,
+    AdcConversionFailed = -52,
     /// GPIO pin is currently being monitored (subscribed)
-    GpioPinMonitored = -54,
+    GpioPinMonitored = -53,
     /// GPIO pin is not being monitored (not subscribed)
-    GpioPinNotMonitored = -55,
+    GpioPinNotMonitored = -54,
     /// GPIO subscribe failed
-    GpioSubscribeFailed = -56,
+    GpioSubscribeFailed = -55,
     /// GPIO unsubscribe failed
-    GpioUnsubscribeFailed = -57,
+    GpioUnsubscribeFailed = -56,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -1649,8 +1647,7 @@ pub unsafe extern "C" fn gallo_pwm_get_config(
 /// gallo_adc_read - Perform a single-shot ADC read.
 ///
 /// On success, writes the raw 12-bit value (0–4095) to `*out_value`.
-/// `channel` selects the input: 0–3 for GPIO26–29, 4 for the internal
-/// temperature sensor.
+/// `channel` selects the input: 0–3 for GPIO26–29.
 ///
 /// # Safety
 ///
@@ -1678,7 +1675,6 @@ pub unsafe extern "C" fn gallo_adc_read(
         1 => AdcChannel::Adc1,
         2 => AdcChannel::Adc2,
         3 => AdcChannel::Adc3,
-        4 => AdcChannel::TempSensor,
         _ => {
             eprintln!("Invalid ADC channel: {channel}");
             return Status::InvalidArgument;
@@ -1695,45 +1691,10 @@ pub unsafe extern "C" fn gallo_adc_read(
     }
 }
 
-/// gallo_adc_read_temperature - Read the on-die temperature sensor.
-///
-/// On success, writes the temperature in millidegrees Celsius to
-/// `*out_millidegrees` (e.g., 27000 = 27.000 °C). The value is approximate.
-///
-/// # Safety
-///
-/// Caller must ensure that `gallo` is a valid, opaque pointer to
-/// `PicoDeGallo` returned by `gallo_init()`, and that `out_millidegrees`
-/// is a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gallo_adc_read_temperature(
-    gallo: *mut PicoDeGallo,
-    out_millidegrees: *mut i32,
-) -> Status {
-    if gallo.is_null() {
-        eprintln!("Unexpected NULL context");
-        return Status::Uninitialized;
-    }
-
-    if out_millidegrees.is_null() {
-        eprintln!("Unexpected NULL output pointer");
-        return Status::InvalidArgument;
-    }
-
-    let gallo = unsafe { &*gallo };
-    match block_on(gallo.0.adc_read_temperature()) {
-        Ok(temp) => {
-            unsafe { *out_millidegrees = temp };
-            Status::Ok
-        }
-        Err(e) => adc_error_to_status(e),
-    }
-}
-
 /// gallo_adc_get_config - Query the ADC configuration.
 ///
 /// On success, writes resolution (bits), nominal reference voltage (mV),
-/// number of GPIO channels, and temperature sensor availability.
+/// number of GPIO channels.
 ///
 /// # Safety
 ///
@@ -1746,7 +1707,6 @@ pub unsafe extern "C" fn gallo_adc_get_config(
     out_resolution_bits: *mut u8,
     out_nominal_reference_mv: *mut u16,
     out_num_gpio_channels: *mut u8,
-    out_has_temp_sensor: *mut bool,
 ) -> Status {
     if gallo.is_null() {
         eprintln!("Unexpected NULL context");
@@ -1756,7 +1716,6 @@ pub unsafe extern "C" fn gallo_adc_get_config(
     if out_resolution_bits.is_null()
         || out_nominal_reference_mv.is_null()
         || out_num_gpio_channels.is_null()
-        || out_has_temp_sensor.is_null()
     {
         eprintln!("Unexpected NULL output pointer");
         return Status::InvalidArgument;
@@ -1769,7 +1728,6 @@ pub unsafe extern "C" fn gallo_adc_get_config(
                 *out_resolution_bits = info.resolution_bits;
                 *out_nominal_reference_mv = info.nominal_reference_mv;
                 *out_num_gpio_channels = info.num_gpio_channels;
-                *out_has_temp_sensor = info.has_temp_sensor;
             }
             Status::Ok
         }
@@ -1896,7 +1854,6 @@ mod tests {
             Status::PwmInvalidDutyCycle as i32,
             Status::PwmInvalidConfiguration as i32,
             Status::AdcReadFailed as i32,
-            Status::AdcReadTemperatureFailed as i32,
             Status::AdcGetConfigFailed as i32,
             Status::AdcConversionFailed as i32,
             Status::GpioPinMonitored as i32,
@@ -1963,7 +1920,6 @@ mod tests {
             Status::PwmInvalidDutyCycle as i32,
             Status::PwmInvalidConfiguration as i32,
             Status::AdcReadFailed as i32,
-            Status::AdcReadTemperatureFailed as i32,
             Status::AdcGetConfigFailed as i32,
             Status::AdcConversionFailed as i32,
             Status::GpioPinMonitored as i32,
@@ -2258,17 +2214,9 @@ mod tests {
     }
 
     #[test]
-    fn adc_read_temperature_null_device_returns_uninitialized() {
-        let status =
-            unsafe { gallo_adc_read_temperature(std::ptr::null_mut(), std::ptr::null_mut()) };
-        assert_eq!(status, Status::Uninitialized);
-    }
-
-    #[test]
     fn adc_get_config_null_device_returns_uninitialized() {
         let status = unsafe {
             gallo_adc_get_config(
-                std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -2440,9 +2388,9 @@ mod tests {
 
     #[test]
     fn gpio_subscribe_status_codes_are_stable() {
-        assert_eq!(Status::GpioPinMonitored as i32, -54);
-        assert_eq!(Status::GpioPinNotMonitored as i32, -55);
-        assert_eq!(Status::GpioSubscribeFailed as i32, -56);
-        assert_eq!(Status::GpioUnsubscribeFailed as i32, -57);
+        assert_eq!(Status::GpioPinMonitored as i32, -53);
+        assert_eq!(Status::GpioPinNotMonitored as i32, -54);
+        assert_eq!(Status::GpioSubscribeFailed as i32, -55);
+        assert_eq!(Status::GpioUnsubscribeFailed as i32, -56);
     }
 }
