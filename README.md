@@ -20,7 +20,6 @@ Pico de Gallo provides:
 - **PWM**: 4-channel PWM output with configurable frequency and duty cycle
 - **ADC**: 4 GPIO-based analog inputs (12-bit)
 - **1-Wire**: bus reset, read, write, strong pullup, and ROM search (PIO hardware)
-- **Logic Capture**: 1–4 channel digital sampling (GPIO 8–11), raw streaming, I2C/UART protocol decoding
 - **Configuration**: runtime I²C/SPI/UART/PWM frequency and SPI mode changes
 
 All communication uses [postcard-rpc](https://docs.rs/postcard-rpc) over

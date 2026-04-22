@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "pico-de-gallo-analyzer",
     "pico-de-gallo-app",
     "pico-de-gallo-ffi",
     "pico-de-gallo-hal",

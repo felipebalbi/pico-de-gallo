@@ -49,26 +49,25 @@ pub mod decode;
 
 use nusb::DeviceInfo;
 use pico_de_gallo_internal::{
-    AdcGetConfiguration, AdcRead, AdcReadRequest, CaptureDataTopic, CaptureStart, CaptureStartRequest, CaptureStop,
-    GpioEventTopic, GpioGet, GpioGetRequest, GpioPut, GpioPutRequest, GpioSetConfiguration,
-    GpioSetConfigurationRequest, GpioSubscribe, GpioSubscribeRequest, GpioUnsubscribe, GpioUnsubscribeRequest,
-    GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising, GpioWaitRequest, I2cBatch,
-    I2cBatchRequest, I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest, I2cSetConfiguration,
-    I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID,
-    OneWireRead, OneWireReadRequest, OneWireReset, OneWireSearch, OneWireSearchNext, OneWireWrite, OneWireWritePullup,
-    OneWireWritePullupRequest, OneWireWriteRequest, PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable,
-    PwmEnableRequest, PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest,
-    PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SpiBatch,
-    SpiBatchRequest, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
+    AdcGetConfiguration, AdcRead, AdcReadRequest, GpioEventTopic, GpioGet, GpioGetRequest, GpioPut, GpioPutRequest,
+    GpioSetConfiguration, GpioSetConfigurationRequest, GpioSubscribe, GpioSubscribeRequest, GpioUnsubscribe,
+    GpioUnsubscribeRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow, GpioWaitForRising,
+    GpioWaitRequest, I2cBatch, I2cBatchRequest, I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest,
+    I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest,
+    MICROSOFT_VID, OneWireRead, OneWireReadRequest, OneWireReset, OneWireSearch, OneWireSearchNext, OneWireWrite,
+    OneWireWritePullup, OneWireWritePullupRequest, OneWireWriteRequest, PICO_DE_GALLO_PID, PwmDisable,
+    PwmDisableRequest, PwmEnable, PwmEnableRequest, PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetDutyCycle,
+    PwmGetDutyCycleRequest, PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest,
+    SpiBatch, SpiBatchRequest, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
     SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, UartFlush,
     UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration, UartSetConfigurationRequest, UartWrite,
     UartWriteRequest, Version,
 };
 
 pub use pico_de_gallo_internal::{
-    AdcChannel, AdcConfigurationInfo, CaptureData, CaptureError, CaptureStartInfo, CaptureStopInfo, GpioDirection,
-    GpioEdge, GpioEvent, GpioPull, GpioState, I2cBatchOp, I2cFrequency, PwmConfigurationInfo, PwmDutyCycleInfo,
-    SpiBatchOp, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo, VersionInfo,
+    AdcChannel, AdcConfigurationInfo, GpioDirection, GpioEdge, GpioEvent, GpioPull, GpioState, I2cBatchOp,
+    I2cFrequency, PwmConfigurationInfo, PwmDutyCycleInfo, SpiBatchOp, SpiConfigurationInfo, SpiPhase, SpiPolarity,
+    UartConfigurationInfo, VersionInfo,
 };
 pub use pico_de_gallo_internal::{
     AdcError, GpioError, I2cBatchError, I2cError, OneWireError, PwmError, SpiBatchError, SpiError, UartError,
@@ -776,57 +775,6 @@ impl PicoDeGallo {
             .send_resp::<OneWireSearchNext>(&())
             .await?
             .map_err(PicoDeGalloError::Endpoint)
-    }
-
-    // --- Capture ---
-
-    /// Start a logic capture session on the specified channels.
-    ///
-    /// Configures PIO-based sampling at the requested rate. Each sample is one byte
-    /// where bit N represents the state of channel N. Channels use indices 0–3,
-    /// corresponding to GPIO 8–11. The actual achieved sample rate (after clock
-    /// divider quantization) is returned in [`CaptureStartInfo`].
-    ///
-    /// Returns [`CaptureError::InvalidPin`] if a channel is out of range or in
-    /// use, or [`CaptureError::AlreadyCapturing`] if a capture is already running.
-    ///
-    /// Call [`subscribe_capture_data`](Self::subscribe_capture_data) *before* starting
-    /// capture to receive the sample stream.
-    pub async fn capture_start(
-        &self,
-        pins: &[u8],
-        sample_rate_hz: u32,
-    ) -> Result<CaptureStartInfo, PicoDeGalloError<CaptureError>> {
-        self.client
-            .send_resp::<CaptureStart>(&CaptureStartRequest { pins, sample_rate_hz })
-            .await?
-            .map_err(PicoDeGalloError::Endpoint)
-    }
-
-    /// Stop an active logic capture session.
-    ///
-    /// Returns [`CaptureStopInfo`] with statistics about the completed session
-    /// (total samples, duration, chunks sent, drops).
-    pub async fn capture_stop(&self) -> Result<CaptureStopInfo, PicoDeGalloError<CaptureError>> {
-        self.client
-            .send_resp::<CaptureStop>(&())
-            .await?
-            .map_err(PicoDeGalloError::Endpoint)
-    }
-
-    /// Subscribe to the capture data topic stream.
-    ///
-    /// Returns a [`MultiSubscription`] that yields [`CaptureData`] messages
-    /// containing raw sample chunks. Call this *before* starting capture.
-    /// Events are buffered up to `depth` messages.
-    pub async fn subscribe_capture_data(
-        &self,
-        depth: usize,
-    ) -> Result<MultiSubscription<CaptureData<'static>>, PicoDeGalloError<Infallible>> {
-        self.client
-            .subscribe_multi::<CaptureDataTopic<'static>>(depth)
-            .await
-            .map_err(|_| PicoDeGalloError::Comms(HostErr::Closed))
     }
 }
 

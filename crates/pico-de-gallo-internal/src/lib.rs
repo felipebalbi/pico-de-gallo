@@ -40,9 +40,6 @@
 //!   and their shared error type [`AdcError`].
 //! - **1-Wire types**: [`OneWireReadRequest`], [`OneWireWriteRequest`],
 //!   [`OneWireWritePullupRequest`], and their shared error type [`OneWireError`].
-//! - **Capture types**: [`CaptureStartRequest`], [`CaptureStartInfo`],
-//!   [`CaptureStopInfo`], [`CaptureData`], and their shared error type
-//!   [`CaptureError`].
 //! - **Batch types**: [`I2cBatchRequest`], [`I2cBatchError`], [`I2cBatchOp`],
 //!   [`SpiBatchRequest`], [`SpiBatchError`], [`SpiBatchOp`], encoding helpers
 //!   [`encode_i2c_batch_ops`], [`encode_spi_batch_ops`], and response-length
@@ -71,21 +68,6 @@ pub const PICO_DE_GALLO_PID: u16 = 0x067d;
 /// transaction. Requests exceeding this limit will be rejected by the
 /// firmware with an error.
 pub const MAX_TRANSFER_SIZE: usize = 4096;
-
-/// Lowest capture channel index (0-based, maps to GPIO 8).
-pub const CAPTURE_CHANNEL_MIN: u8 = 0;
-
-/// Highest capture channel index (0-based, maps to GPIO 11).
-pub const CAPTURE_CHANNEL_MAX: u8 = 3;
-
-/// Maximum number of simultaneous capture channels.
-pub const MAX_CAPTURE_CHANNELS: u8 = 4;
-
-/// Maximum supported capture sample rate in Hz.
-pub const CAPTURE_MAX_SAMPLE_RATE_HZ: u32 = 1_000_000;
-
-/// Default capture sample rate in Hz.
-pub const CAPTURE_DEFAULT_SAMPLE_RATE_HZ: u32 = 500_000;
 
 // ---
 
@@ -258,11 +240,6 @@ pub type SpiBatchResponse<'a> = Result<Vec<u8>, SpiBatchError>;
 #[cfg(not(feature = "use-std"))]
 pub type SpiBatchResponse<'a> = Result<&'a [u8], SpiBatchError>;
 
-/// Response type for capture-start operations.
-pub type CaptureStartResponse = Result<CaptureStartInfo, CaptureError>;
-/// Response type for capture-stop operations.
-pub type CaptureStopResponse = Result<CaptureStopInfo, CaptureError>;
-
 endpoints! {
     list = ENDPOINT_LIST;
     | EndpointTy          | RequestTy                  | ResponseTy                  | Path                |
@@ -311,8 +288,6 @@ endpoints! {
     | OneWireWritePullup    | OneWireWritePullupRequest<'a> | OneWireWritePullupResponse    | "onewire/write-pullup" |
     | OneWireSearch         | ()                            | OneWireSearchResponse         | "onewire/search"     |
     | OneWireSearchNext     | ()                            | OneWireSearchResponse         | "onewire/search-next" |
-    | CaptureStart          | CaptureStartRequest<'a>       | CaptureStartResponse          | "capture/start"       |
-    | CaptureStop           | ()                            | CaptureStopResponse           | "capture/stop"        |
     | Version               | ()                            | VersionInfo                   | "version"            |
 }
 
@@ -329,7 +304,6 @@ topics! {
     | TopicTy         | MessageTy  | Path              | Cfg |
     | -------         | --------- | ----               | --- |
     | GpioEventTopic    | GpioEvent   | "gpio/event"    |     |
-    | CaptureDataTopic  | CaptureData<'a> | "capture/data"  |     |
 }
 
 // --- I2C
@@ -1178,124 +1152,6 @@ pub struct OneWireWritePullupRequest<'a> {
     pub data: &'a [u8],
     /// Duration in milliseconds to hold the strong pullup after writing.
     pub pullup_duration_ms: u16,
-}
-
-// --- Logic Capture
-
-/// Error from logic capture operations, propagated from firmware.
-///
-/// # Wire Compatibility
-///
-/// Variants are serialized by **index** (0, 1, 2, …). Do **not** reorder,
-/// rename, or remove existing variants — only append new ones at the end.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CaptureError {
-    /// A requested channel is outside the valid range
-    /// ([`CAPTURE_CHANNEL_MIN`]–[`CAPTURE_CHANNEL_MAX`]), or the pin is
-    /// currently in use (GPIO subscribe or another capture session).
-    InvalidPin,
-    /// Sample rate is zero or exceeds [`CAPTURE_MAX_SAMPLE_RATE_HZ`].
-    InvalidSampleRate,
-    /// More than [`MAX_CAPTURE_CHANNELS`] pins were requested.
-    TooManyChannels,
-    /// A capture session is already running.
-    AlreadyCapturing,
-    /// No capture session is currently running.
-    NotCapturing,
-    /// The pin list was empty.
-    NoPins,
-}
-
-impl core::fmt::Display for CaptureError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidPin => write!(f, "capture channel outside valid range or pin in use"),
-            Self::InvalidSampleRate => write!(f, "capture sample rate invalid"),
-            Self::TooManyChannels => write!(f, "too many capture channels"),
-            Self::AlreadyCapturing => write!(f, "capture already in progress"),
-            Self::NotCapturing => write!(f, "no capture in progress"),
-            Self::NoPins => write!(f, "no capture pins specified"),
-        }
-    }
-}
-
-/// Request to start a logic capture session.
-///
-/// The firmware configures PIO1/SM0 to sample the specified GPIO channels
-/// at the requested rate. Channels use indices 0–3 corresponding to the
-/// pico-de-gallo GPIO pins (GPIO 8–11). Each sample is one byte where
-/// bit N corresponds to channel N.
-#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
-pub struct CaptureStartRequest<'a> {
-    /// Capture channel indices (each must be in
-    /// [`CAPTURE_CHANNEL_MIN`]–[`CAPTURE_CHANNEL_MAX`]).
-    #[serde(borrow)]
-    pub pins: &'a [u8],
-    /// Desired sample rate in Hz (1–[`CAPTURE_MAX_SAMPLE_RATE_HZ`]).
-    pub sample_rate_hz: u32,
-}
-
-/// Information returned when a capture session starts successfully.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CaptureStartInfo {
-    /// Actual sample rate achieved after clock divider quantization.
-    pub actual_sample_rate_hz: u32,
-    /// Number of channels being captured.
-    pub num_channels: u8,
-}
-
-/// Information returned when a capture session stops.
-#[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CaptureStopInfo {
-    /// Total number of samples captured.
-    pub total_samples: u64,
-    /// Capture duration in microseconds.
-    pub duration_us: u64,
-    /// Number of topic chunks published.
-    pub chunks_sent: u32,
-    /// Number of chunks lost to FIFO overflow.
-    pub drops: u32,
-}
-
-/// A chunk of raw capture data streamed during an active capture session.
-///
-/// Published via [`CaptureDataTopic`]. Each byte in `samples` represents
-/// one sample instant — bit N is the state of `pins[N]` from the
-/// corresponding [`CaptureStartRequest`].
-///
-/// On the host (`use-std`), `samples` is `Vec<u8>` for owned storage.
-/// On firmware, `samples` is `&[u8]` for zero-copy publishing.
-/// Both versions carry a lifetime parameter so that the `topics!` macro
-/// can use `CaptureData<'a>` uniformly.
-#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
-#[cfg(feature = "use-std")]
-pub struct CaptureData<'a> {
-    /// Monotonic sequence number for gap detection.
-    pub sequence: u32,
-    /// Timestamp of the first sample in this chunk (µs since boot).
-    pub timestamp_us: u64,
-    /// Raw sample bytes.
-    pub samples: Vec<u8>,
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub _lt: core::marker::PhantomData<&'a ()>,
-}
-
-/// A chunk of raw capture data streamed during an active capture session.
-///
-/// Published via [`CaptureDataTopic`]. Each byte in `samples` represents
-/// one sample instant — bit N is the state of `pins[N]` from the
-/// corresponding [`CaptureStartRequest`].
-#[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
-#[cfg(not(feature = "use-std"))]
-pub struct CaptureData<'a> {
-    /// Monotonic sequence number for gap detection.
-    pub sequence: u32,
-    /// Timestamp of the first sample in this chunk (µs since boot).
-    pub timestamp_us: u64,
-    /// Raw sample bytes.
-    #[serde(borrow)]
-    pub samples: &'a [u8],
 }
 
 // --- Transaction Batching
@@ -3190,159 +3046,4 @@ mod tests {
     }
 
     // --- Logic Capture Tests ---
-
-    #[test]
-    fn capture_error_display() {
-        assert_eq!(
-            format!("{}", CaptureError::InvalidPin),
-            "capture channel outside valid range or pin in use"
-        );
-        assert_eq!(
-            format!("{}", CaptureError::InvalidSampleRate),
-            "capture sample rate invalid"
-        );
-        assert_eq!(
-            format!("{}", CaptureError::TooManyChannels),
-            "too many capture channels"
-        );
-        assert_eq!(
-            format!("{}", CaptureError::AlreadyCapturing),
-            "capture already in progress"
-        );
-        assert_eq!(
-            format!("{}", CaptureError::NotCapturing),
-            "no capture in progress"
-        );
-        assert_eq!(
-            format!("{}", CaptureError::NoPins),
-            "no capture pins specified"
-        );
-    }
-
-    #[test]
-    fn capture_error_round_trip() {
-        for err in [
-            CaptureError::InvalidPin,
-            CaptureError::InvalidSampleRate,
-            CaptureError::TooManyChannels,
-            CaptureError::AlreadyCapturing,
-            CaptureError::NotCapturing,
-            CaptureError::NoPins,
-        ] {
-            let bytes = to_allocvec(&err).unwrap();
-            let decoded: CaptureError = from_bytes(&bytes).unwrap();
-            assert_eq!(err, decoded);
-        }
-    }
-
-    #[test]
-    fn capture_error_variant_indices_stable() {
-        assert_eq!(to_allocvec(&CaptureError::InvalidPin).unwrap(), [0]);
-        assert_eq!(to_allocvec(&CaptureError::InvalidSampleRate).unwrap(), [1]);
-        assert_eq!(to_allocvec(&CaptureError::TooManyChannels).unwrap(), [2]);
-        assert_eq!(to_allocvec(&CaptureError::AlreadyCapturing).unwrap(), [3]);
-        assert_eq!(to_allocvec(&CaptureError::NotCapturing).unwrap(), [4]);
-        assert_eq!(to_allocvec(&CaptureError::NoPins).unwrap(), [5]);
-    }
-
-    #[test]
-    fn capture_start_request_round_trip() {
-        let req = CaptureStartRequest {
-            pins: &[0, 1],
-            sample_rate_hz: 500_000,
-        };
-        let bytes = to_allocvec(&req).unwrap();
-        let decoded: CaptureStartRequest = from_bytes(&bytes).unwrap();
-        assert_eq!(req, decoded);
-    }
-
-    #[test]
-    fn capture_start_request_all_channels() {
-        let req = CaptureStartRequest {
-            pins: &[0, 1, 2, 3],
-            sample_rate_hz: 1_000_000,
-        };
-        let bytes = to_allocvec(&req).unwrap();
-        let decoded: CaptureStartRequest = from_bytes(&bytes).unwrap();
-        assert_eq!(req, decoded);
-    }
-
-    #[test]
-    fn capture_start_info_round_trip() {
-        let info = CaptureStartInfo {
-            actual_sample_rate_hz: 500_000,
-            num_channels: 2,
-        };
-        let bytes = to_allocvec(&info).unwrap();
-        let decoded: CaptureStartInfo = from_bytes(&bytes).unwrap();
-        assert_eq!(info, decoded);
-    }
-
-    #[test]
-    fn capture_stop_info_round_trip() {
-        let info = CaptureStopInfo {
-            total_samples: 1_000_000,
-            duration_us: 2_000_000,
-            chunks_sent: 3906,
-            drops: 0,
-        };
-        let bytes = to_allocvec(&info).unwrap();
-        let decoded: CaptureStopInfo = from_bytes(&bytes).unwrap();
-        assert_eq!(info, decoded);
-    }
-
-    #[test]
-    fn capture_data_round_trip() {
-        let data = CaptureData {
-            sequence: 42,
-            timestamp_us: 123_456_789,
-            samples: vec![0b0000_0011, 0b0000_0001, 0b0000_0011, 0b0000_0010],
-            _lt: core::marker::PhantomData,
-        };
-        let bytes = to_allocvec(&data).unwrap();
-        let decoded: CaptureData = from_bytes(&bytes).unwrap();
-        assert_eq!(data, decoded);
-    }
-
-    #[test]
-    fn capture_start_response_ok_round_trip() {
-        let resp: CaptureStartResponse = Ok(CaptureStartInfo {
-            actual_sample_rate_hz: 500_000,
-            num_channels: 2,
-        });
-        let bytes = to_allocvec(&resp).unwrap();
-        let decoded: CaptureStartResponse = from_bytes(&bytes).unwrap();
-        assert_eq!(resp, decoded);
-    }
-
-    #[test]
-    fn capture_start_response_err_round_trip() {
-        let resp: CaptureStartResponse = Err(CaptureError::InvalidPin);
-        let bytes = to_allocvec(&resp).unwrap();
-        let decoded: CaptureStartResponse = from_bytes(&bytes).unwrap();
-        assert_eq!(resp, decoded);
-    }
-
-    #[test]
-    fn capture_stop_response_round_trip() {
-        let resp: CaptureStopResponse = Ok(CaptureStopInfo {
-            total_samples: 500_000,
-            duration_us: 1_000_000,
-            chunks_sent: 1953,
-            drops: 2,
-        });
-        let bytes = to_allocvec(&resp).unwrap();
-        let decoded: CaptureStopResponse = from_bytes(&bytes).unwrap();
-        assert_eq!(resp, decoded);
-    }
-
-    #[test]
-    fn capture_constants_are_consistent() {
-        assert_eq!(
-            CAPTURE_CHANNEL_MAX - CAPTURE_CHANNEL_MIN + 1,
-            MAX_CAPTURE_CHANNELS
-        );
-        const { assert!(CAPTURE_DEFAULT_SAMPLE_RATE_HZ <= CAPTURE_MAX_SAMPLE_RATE_HZ) };
-        const { assert!(CAPTURE_MAX_SAMPLE_RATE_HZ > 0) };
-    }
 }

@@ -105,7 +105,7 @@ use pico_de_gallo_lib::{PicoDeGallo, I2cBatchOp};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pg = PicoDeGallo::new().await?;
+    let pg = PicoDeGallo::new();
 
     // Build a "write register pointer, then read 2 bytes" transaction
     let ops = [
@@ -129,7 +129,7 @@ use pico_de_gallo_lib::{PicoDeGallo, SpiBatchOp};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pg = PicoDeGallo::new().await?;
+    let pg = PicoDeGallo::new();
 
     // Read JEDEC ID: send command 0x9F, then read 3 bytes
     let ops = [

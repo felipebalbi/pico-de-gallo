@@ -166,7 +166,7 @@ latest Firmware. In order to do so, we download the latest
 `firmware.uf2` from the [Releases](https://github.com/OpenDevicePartnership/pico-de-gallo/releases)
 page from our [Github
 repository](https://github.com/OpenDevicePartnership/pico-de-gallo). At
-the time of this writing, that is [Fimware
+the time of this writing, that is [Firmware
 v0.5.0](https://github.com/OpenDevicePartnership/pico-de-gallo/releases/tag/firmware-v0.5.0).
 
 It's very easy to update firmware on *Pico de Gallo*, simply:
@@ -202,3 +202,58 @@ Pico de Gallo FW v0.7.0
 Success 🎉. With this completed we can get familiarized with the other
 parts of the *Pico de Gallo* ecosystem and write a driver for the
 `tmp102` temperature sensor.
+
+## Pin Map
+
+The table below shows every function exposed by the firmware and the
+RP2350 GPIO it maps to. This is the authoritative pin assignment —
+refer to this when wiring peripherals.
+
+| Function     | GPIO     | Notes |
+|--------------|----------|-------|
+| UART TX      | GPIO 0   | Buffered, interrupt-driven |
+| UART RX      | GPIO 1   | |
+| I²C SDA      | GPIO 2   | 7-bit addressing, async DMA |
+| I²C SCL      | GPIO 3   | |
+| SPI RX (MISO)| GPIO 4   | DMA-backed full-duplex |
+| SPI SCK      | GPIO 6   | |
+| SPI TX (MOSI)| GPIO 7   | |
+| GPIO 0       | GPIO 8   | Input/output/edge events |
+| GPIO 1       | GPIO 9   | Input/output/edge events |
+| GPIO 2       | GPIO 10  | Input/output/edge events |
+| GPIO 3       | GPIO 11  | Input/output/edge events |
+| PWM 0        | GPIO 12  | Slice 6 channel A |
+| PWM 1        | GPIO 13  | Slice 6 channel B |
+| PWM 2        | GPIO 14  | Slice 7 channel A |
+| PWM 3        | GPIO 15  | Slice 7 channel B |
+| 1-Wire       | GPIO 16  | PIO0/SM0, open-drain |
+| ADC 0        | GPIO 26  | 12-bit, 0–3.3 V nominal |
+| ADC 1        | GPIO 27  | 12-bit |
+| ADC 2        | GPIO 28  | 12-bit |
+| ADC 3        | GPIO 29  | 12-bit |
+
+## Software Prerequisites
+
+To use *Pico de Gallo* you need the `gallo` CLI application. Pre-built
+binaries for Windows (x86_64, Aarch64), Linux (x86_64, Aarch64), and
+macOS (Aarch64) are available on the
+[Releases](https://github.com/OpenDevicePartnership/pico-de-gallo/releases) page.
+
+If you prefer to build from source:
+
+1. Install [Rust](https://rustup.rs/) (stable toolchain)
+2. Clone the repository: `git clone https://github.com/OpenDevicePartnership/pico-de-gallo`
+3. Build the CLI: `cd crates && cargo build --release -p gallo`
+4. The binary will be at `target/release/gallo` (or `gallo.exe` on Windows)
+
+### USB Driver Notes
+
+- **Linux** — you may need a udev rule to allow non-root access. Create
+  `/etc/udev/rules.d/99-pico-de-gallo.rules` with:
+  ```
+  SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="ffff", MODE="0666"
+  ```
+  Then run `sudo udevadm control --reload-rules && sudo udevadm trigger`.
+- **Windows** — the device should be recognized automatically. If not,
+  use [Zadig](https://zadig.akeo.ie/) to install the WinUSB driver.
+- **macOS** — no additional drivers needed.
