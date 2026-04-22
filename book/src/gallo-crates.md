@@ -287,6 +287,8 @@ endpoints exposed by the firmware. The table below provides a summary.
 | `adc_read`                   | `channel` (AdcChannel enum)                                   | Reads a single 12-bit sample from the given ADC channel                    |
 | `adc_read_temperature`       |                                                               | Reads the on-die temperature sensor (returns millidegrees Celsius)         |
 | `adc_get_config`             |                                                               | Returns the ADC configuration (resolution, reference, channels)            |
+| `i2c_batch`                  | `address`, `ops` (encoded byte stream)                        | Executes multiple I<sup>2</sup>C operations in a single USB transfer       |
+| `spi_batch`                  | `cs_pin`, `ops` (encoded byte stream)                         | Executes multiple SPI operations atomically under chip-select              |
 
 ## Gallo Hal
 

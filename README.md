@@ -13,8 +13,8 @@ or flashing firmware to a target board.
 
 Pico de Gallo provides:
 
-- **I²C**: read, write, write-then-read, and bus scanning
-- **SPI**: read, write, full-duplex transfer, and write-then-read
+- **I²C**: read, write, write-then-read, bus scanning, and transaction batching
+- **SPI**: read, write, full-duplex transfer, write-then-read, and transaction batching
 - **UART**: read, write, flush, and baud rate configuration
 - **GPIO**: digital input/output, edge event monitoring (subscribe/unsubscribe)
 - **PWM**: 4-channel PWM output with configurable frequency and duty cycle

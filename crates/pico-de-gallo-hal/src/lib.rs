@@ -538,6 +538,15 @@ impl From<PicoDeGalloError<I2cError>> for I2cHalError {
     }
 }
 
+impl From<PicoDeGalloError<pico_de_gallo_lib::I2cBatchError>> for I2cHalError {
+    fn from(e: PicoDeGalloError<pico_de_gallo_lib::I2cBatchError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(batch_err) => Self::I2c(batch_err.kind),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
 impl embedded_hal::i2c::Error for I2cHalError {
     fn kind(&self) -> embedded_hal::i2c::ErrorKind {
         match self {
@@ -576,6 +585,15 @@ impl From<PicoDeGalloError<SpiError>> for SpiHalError {
     fn from(e: PicoDeGalloError<SpiError>) -> Self {
         match e {
             PicoDeGalloError::Endpoint(e) => Self::Spi(e),
+            PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
+        }
+    }
+}
+
+impl From<PicoDeGalloError<pico_de_gallo_lib::SpiBatchError>> for SpiHalError {
+    fn from(e: PicoDeGalloError<pico_de_gallo_lib::SpiBatchError>) -> Self {
+        match e {
+            PicoDeGalloError::Endpoint(batch_err) => Self::Spi(batch_err.kind),
             PicoDeGalloError::Comms(c) => Self::Comms(format!("{c:?}")),
         }
     }
@@ -815,20 +833,34 @@ impl I2c {
         address: embedded_hal::i2c::SevenBitAddress,
         operations: &mut [embedded_hal::i2c::Operation<'_>],
     ) -> std::result::Result<(), I2cHalError> {
+        use pico_de_gallo_lib::{I2cBatchOp, encode_i2c_batch_ops};
+
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
 
-        for op in operations {
-            match op {
-                embedded_hal::i2c::Operation::Read(read) => {
-                    let contents = handle
-                        .block_on(gallo.i2c_read(address, read.len() as u16))
-                        .map_err(I2cHalError::from)?;
-                    read.copy_from_slice(&contents);
-                }
-                embedded_hal::i2c::Operation::Write(write) => handle
-                    .block_on(gallo.i2c_write(address, write))
-                    .map_err(I2cHalError::from)?,
+        // Build batch ops
+        let batch_ops: Vec<I2cBatchOp<'_>> = operations
+            .iter()
+            .map(|op| match op {
+                embedded_hal::i2c::Operation::Read(buf) => I2cBatchOp::Read {
+                    len: buf.len() as u16,
+                },
+                embedded_hal::i2c::Operation::Write(data) => I2cBatchOp::Write { data },
+            })
+            .collect();
+
+        let encoded = encode_i2c_batch_ops(&batch_ops);
+        let result = handle
+            .block_on(gallo.i2c_batch(address, &encoded))
+            .map_err(I2cHalError::from)?;
+
+        // Distribute read data back into the caller's buffers
+        let mut offset = 0usize;
+        for op in operations.iter_mut() {
+            if let embedded_hal::i2c::Operation::Read(buf) = op {
+                let len = buf.len();
+                buf.copy_from_slice(&result[offset..offset + len]);
+                offset += len;
             }
         }
 
@@ -860,21 +892,32 @@ impl embedded_hal_async::i2c::I2c<embedded_hal_async::i2c::SevenBitAddress> for 
         address: embedded_hal_async::i2c::SevenBitAddress,
         operations: &mut [embedded_hal_async::i2c::Operation<'_>],
     ) -> std::result::Result<(), Self::Error> {
+        use pico_de_gallo_lib::{I2cBatchOp, encode_i2c_batch_ops};
+
         let gallo = self.gallo.lock().await;
 
-        for op in operations {
-            match op {
-                embedded_hal_async::i2c::Operation::Read(read) => {
-                    let contents = gallo
-                        .i2c_read(address, read.len() as u16)
-                        .await
-                        .map_err(I2cHalError::from)?;
-                    read.copy_from_slice(&contents);
-                }
-                embedded_hal_async::i2c::Operation::Write(write) => gallo
-                    .i2c_write(address, write)
-                    .await
-                    .map_err(I2cHalError::from)?,
+        let batch_ops: Vec<I2cBatchOp<'_>> = operations
+            .iter()
+            .map(|op| match op {
+                embedded_hal_async::i2c::Operation::Read(buf) => I2cBatchOp::Read {
+                    len: buf.len() as u16,
+                },
+                embedded_hal_async::i2c::Operation::Write(data) => I2cBatchOp::Write { data },
+            })
+            .collect();
+
+        let encoded = encode_i2c_batch_ops(&batch_ops);
+        let result = gallo
+            .i2c_batch(address, &encoded)
+            .await
+            .map_err(I2cHalError::from)?;
+
+        let mut offset = 0usize;
+        for op in operations.iter_mut() {
+            if let embedded_hal_async::i2c::Operation::Read(buf) = op {
+                let len = buf.len();
+                buf.copy_from_slice(&result[offset..offset + len]);
+                offset += len;
             }
         }
 
@@ -1072,67 +1115,67 @@ impl SpiDev {
         &mut self,
         operations: &mut [embedded_hal::spi::Operation<'_, u8>],
     ) -> std::result::Result<(), SpiHalError> {
+        use pico_de_gallo_lib::{SpiBatchOp, encode_spi_batch_ops};
+
         let handle = &self.handle;
         let gallo = handle.block_on(self.gallo.lock());
 
-        // Assert CS
-        handle
-            .block_on(gallo.gpio_put(self.cs_pin, GpioState::Low))
-            .map_err(|e| SpiHalError::Comms(format!("CS assert failed: {e:?}")))?;
-
-        // Run operations, capturing the first error
-        let op_result: std::result::Result<(), SpiHalError> = (|| {
-            for op in operations.iter_mut() {
-                match op {
-                    embedded_hal::spi::Operation::Read(buf) => {
-                        let contents = handle
-                            .block_on(gallo.spi_read(buf.len() as u16))
-                            .map_err(SpiHalError::from)?;
-                        buf.copy_from_slice(&contents);
-                    }
-                    embedded_hal::spi::Operation::Write(buf) => {
-                        handle
-                            .block_on(gallo.spi_write(buf))
-                            .map_err(SpiHalError::from)?;
-                    }
-                    embedded_hal::spi::Operation::Transfer(read, write) => {
-                        let contents = handle
-                            .block_on(gallo.spi_transfer(write))
-                            .map_err(SpiHalError::from)?;
-                        let len = read.len().min(contents.len());
-                        read[..len].copy_from_slice(&contents[..len]);
-                    }
-                    embedded_hal::spi::Operation::TransferInPlace(buf) => {
-                        let write_copy = buf.to_vec();
-                        let contents = handle
-                            .block_on(gallo.spi_transfer(&write_copy))
-                            .map_err(SpiHalError::from)?;
-                        let len = buf.len().min(contents.len());
-                        buf[..len].copy_from_slice(&contents[..len]);
-                    }
-                    embedded_hal::spi::Operation::DelayNs(ns) => {
-                        // Flush before sleeping so pending bytes are sent first
-                        handle
-                            .block_on(gallo.spi_flush())
-                            .map_err(SpiHalError::from)?;
-                        std::thread::sleep(std::time::Duration::from_nanos((*ns).into()));
-                    }
+        // Build batch ops. TransferInPlace needs a copy of the write data
+        // so we can reference it in the batch. Track which indices need fixup.
+        let mut in_place_bufs: Vec<(usize, Vec<u8>)> = Vec::new();
+        let mut batch_ops: Vec<SpiBatchOp<'_>> = operations
+            .iter()
+            .enumerate()
+            .map(|(i, op)| match op {
+                embedded_hal::spi::Operation::Read(buf) => SpiBatchOp::Read {
+                    len: buf.len() as u16,
+                },
+                embedded_hal::spi::Operation::Write(data) => SpiBatchOp::Write { data },
+                embedded_hal::spi::Operation::Transfer(_read, write) => {
+                    SpiBatchOp::Transfer { data: write }
                 }
+                embedded_hal::spi::Operation::TransferInPlace(buf) => {
+                    in_place_bufs.push((i, buf.to_vec()));
+                    SpiBatchOp::Transfer { data: &[] }
+                }
+                embedded_hal::spi::Operation::DelayNs(ns) => SpiBatchOp::DelayNs { ns: *ns },
+            })
+            .collect();
+
+        // Fix up TransferInPlace references to point at the saved copies
+        for (idx, buf) in &in_place_bufs {
+            batch_ops[*idx] = SpiBatchOp::Transfer { data: buf };
+        }
+
+        let encoded = encode_spi_batch_ops(&batch_ops);
+        let result = handle
+            .block_on(gallo.spi_batch(self.cs_pin, &encoded))
+            .map_err(SpiHalError::from)?;
+
+        // Distribute read/transfer data back into the caller's buffers
+        let mut offset = 0usize;
+        for op in operations.iter_mut() {
+            match op {
+                embedded_hal::spi::Operation::Read(buf) => {
+                    let len = buf.len();
+                    buf.copy_from_slice(&result[offset..offset + len]);
+                    offset += len;
+                }
+                embedded_hal::spi::Operation::Transfer(read, _write) => {
+                    let len = read.len();
+                    read.copy_from_slice(&result[offset..offset + len]);
+                    offset += len;
+                }
+                embedded_hal::spi::Operation::TransferInPlace(buf) => {
+                    let len = buf.len();
+                    buf.copy_from_slice(&result[offset..offset + len]);
+                    offset += len;
+                }
+                _ => {}
             }
-            Ok(())
-        })();
+        }
 
-        // Flush (best-effort if operations already failed)
-        let flush_result = handle
-            .block_on(gallo.spi_flush())
-            .map_err(SpiHalError::from);
-
-        // Deassert CS (best-effort)
-        let _ = handle.block_on(gallo.gpio_put(self.cs_pin, GpioState::High));
-
-        // Bus/operation errors take priority over flush errors
-        op_result?;
-        flush_result
+        Ok(())
     }
 }
 
@@ -1158,63 +1201,66 @@ impl embedded_hal_async::spi::SpiDevice for SpiDev {
         &mut self,
         operations: &mut [embedded_hal_async::spi::Operation<'_, u8>],
     ) -> std::result::Result<(), Self::Error> {
+        use pico_de_gallo_lib::{SpiBatchOp, encode_spi_batch_ops};
+
         let gallo = self.gallo.lock().await;
 
-        // Assert CS
-        gallo
-            .gpio_put(self.cs_pin, GpioState::Low)
-            .await
-            .map_err(|e| SpiHalError::Comms(format!("CS assert failed: {e:?}")))?;
-
-        // Run operations, capturing the first error
-        let op_result: std::result::Result<(), SpiHalError> = async {
-            for op in operations.iter_mut() {
-                match op {
-                    embedded_hal_async::spi::Operation::Read(buf) => {
-                        let contents = gallo
-                            .spi_read(buf.len() as u16)
-                            .await
-                            .map_err(SpiHalError::from)?;
-                        buf.copy_from_slice(&contents);
-                    }
-                    embedded_hal_async::spi::Operation::Write(buf) => {
-                        gallo.spi_write(buf).await.map_err(SpiHalError::from)?;
-                    }
-                    embedded_hal_async::spi::Operation::Transfer(read, write) => {
-                        let contents =
-                            gallo.spi_transfer(write).await.map_err(SpiHalError::from)?;
-                        let len = read.len().min(contents.len());
-                        read[..len].copy_from_slice(&contents[..len]);
-                    }
-                    embedded_hal_async::spi::Operation::TransferInPlace(buf) => {
-                        let write_copy = buf.to_vec();
-                        let contents = gallo
-                            .spi_transfer(&write_copy)
-                            .await
-                            .map_err(SpiHalError::from)?;
-                        let len = buf.len().min(contents.len());
-                        buf[..len].copy_from_slice(&contents[..len]);
-                    }
-                    embedded_hal_async::spi::Operation::DelayNs(ns) => {
-                        // Flush before sleeping so pending bytes are sent first
-                        gallo.spi_flush().await.map_err(SpiHalError::from)?;
-                        tokio::time::sleep(tokio::time::Duration::from_nanos((*ns).into())).await;
-                    }
+        // Build batch ops. TransferInPlace needs a copy of the write data.
+        let mut in_place_bufs: Vec<(usize, Vec<u8>)> = Vec::new();
+        let mut batch_ops: Vec<SpiBatchOp<'_>> = operations
+            .iter()
+            .enumerate()
+            .map(|(i, op)| match op {
+                embedded_hal_async::spi::Operation::Read(buf) => SpiBatchOp::Read {
+                    len: buf.len() as u16,
+                },
+                embedded_hal_async::spi::Operation::Write(data) => SpiBatchOp::Write { data },
+                embedded_hal_async::spi::Operation::Transfer(_read, write) => {
+                    SpiBatchOp::Transfer { data: write }
                 }
-            }
-            Ok(())
+                embedded_hal_async::spi::Operation::TransferInPlace(buf) => {
+                    in_place_bufs.push((i, buf.to_vec()));
+                    SpiBatchOp::Transfer { data: &[] }
+                }
+                embedded_hal_async::spi::Operation::DelayNs(ns) => SpiBatchOp::DelayNs { ns: *ns },
+            })
+            .collect();
+
+        // Fix up TransferInPlace references to point at the saved copies
+        for (idx, buf) in &in_place_bufs {
+            batch_ops[*idx] = SpiBatchOp::Transfer { data: buf };
         }
-        .await;
 
-        // Flush (best-effort if operations already failed)
-        let flush_result = gallo.spi_flush().await.map_err(SpiHalError::from);
+        let encoded = encode_spi_batch_ops(&batch_ops);
+        let result = gallo
+            .spi_batch(self.cs_pin, &encoded)
+            .await
+            .map_err(SpiHalError::from)?;
 
-        // Deassert CS (best-effort)
-        let _ = gallo.gpio_put(self.cs_pin, GpioState::High).await;
+        // Distribute read/transfer data back into the caller's buffers
+        let mut offset = 0usize;
+        for op in operations.iter_mut() {
+            match op {
+                embedded_hal_async::spi::Operation::Read(buf) => {
+                    let len = buf.len();
+                    buf.copy_from_slice(&result[offset..offset + len]);
+                    offset += len;
+                }
+                embedded_hal_async::spi::Operation::Transfer(read, _write) => {
+                    let len = read.len();
+                    read.copy_from_slice(&result[offset..offset + len]);
+                    offset += len;
+                }
+                embedded_hal_async::spi::Operation::TransferInPlace(buf) => {
+                    let len = buf.len();
+                    buf.copy_from_slice(&result[offset..offset + len]);
+                    offset += len;
+                }
+                _ => {}
+            }
+        }
 
-        // Bus/operation errors take priority over flush errors
-        op_result?;
-        flush_result
+        Ok(())
     }
 }
 

@@ -49,22 +49,26 @@ use pico_de_gallo_internal::{
     AdcGetConfiguration, AdcRead, AdcReadRequest, AdcReadTemperature, GpioEventTopic, GpioGet, GpioGetRequest, GpioPut,
     GpioPutRequest, GpioSetConfiguration, GpioSetConfigurationRequest, GpioSubscribe, GpioSubscribeRequest,
     GpioUnsubscribe, GpioUnsubscribeRequest, GpioWaitForAny, GpioWaitForFalling, GpioWaitForHigh, GpioWaitForLow,
-    GpioWaitForRising, GpioWaitRequest, I2cGetConfiguration, I2cRead, I2cReadRequest, I2cScan, I2cScanRequest,
-    I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead, I2cWriteReadRequest, I2cWriteRequest,
-    MICROSOFT_VID, PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable, PwmEnableRequest, PwmGetConfiguration,
-    PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmSetConfiguration,
-    PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SpiFlush, SpiGetConfiguration, SpiRead,
-    SpiReadRequest, SpiSetConfiguration, SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite,
-    SpiWriteRequest, UartFlush, UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration,
-    UartSetConfigurationRequest, UartWrite, UartWriteRequest, Version,
+    GpioWaitForRising, GpioWaitRequest, I2cBatch, I2cBatchRequest, I2cGetConfiguration, I2cRead, I2cReadRequest,
+    I2cScan, I2cScanRequest, I2cSetConfiguration, I2cSetConfigurationRequest, I2cWrite, I2cWriteRead,
+    I2cWriteReadRequest, I2cWriteRequest, MICROSOFT_VID, PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable,
+    PwmEnableRequest, PwmGetConfiguration, PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest,
+    PwmSetConfiguration, PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SpiBatch,
+    SpiBatchRequest, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
+    SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, UartFlush,
+    UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration, UartSetConfigurationRequest, UartWrite,
+    UartWriteRequest, Version,
 };
 
 pub use pico_de_gallo_internal::{
-    AdcChannel, AdcConfigurationInfo, GpioDirection, GpioEdge, GpioEvent, GpioPull, GpioState, I2cFrequency,
-    PwmConfigurationInfo, PwmDutyCycleInfo, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo,
-    VersionInfo,
+    AdcChannel, AdcConfigurationInfo, GpioDirection, GpioEdge, GpioEvent, GpioPull, GpioState, I2cBatchOp,
+    I2cFrequency, PwmConfigurationInfo, PwmDutyCycleInfo, SpiBatchOp, SpiConfigurationInfo, SpiPhase, SpiPolarity,
+    UartConfigurationInfo, VersionInfo,
 };
-pub use pico_de_gallo_internal::{AdcError, GpioError, I2cError, PwmError, SpiError, UartError};
+pub use pico_de_gallo_internal::{
+    AdcError, GpioError, I2cBatchError, I2cError, PwmError, SpiBatchError, SpiError, UartError,
+};
+pub use pico_de_gallo_internal::{encode_i2c_batch_ops, encode_spi_batch_ops};
 
 pub use postcard_rpc::host_client::{IoClosed, MultiSubscription};
 use postcard_rpc::{
@@ -250,6 +254,21 @@ impl PicoDeGallo {
             .map_err(PicoDeGalloError::Endpoint)
     }
 
+    /// Execute a batch of I2C operations in a single USB transfer.
+    ///
+    /// Use [`encode_i2c_batch_ops`] to build the packed `ops` buffer from
+    /// a slice of [`I2cBatchOp`] values. On success, returns the
+    /// concatenated read data from all Read operations in order.
+    ///
+    /// This is much faster than issuing individual I2C calls when
+    /// performing multi-step sequences (e.g., EEPROM programming).
+    pub async fn i2c_batch(&self, address: u8, ops: &[u8]) -> Result<Vec<u8>, PicoDeGalloError<I2cBatchError>> {
+        self.client
+            .send_resp::<I2cBatch>(&I2cBatchRequest { address, ops })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
     /// Read `count` bytes from the SPI bus.
     ///
     /// The firmware buffer is limited to [`pico_de_gallo_internal::MAX_TRANSFER_SIZE`]
@@ -285,6 +304,23 @@ impl PicoDeGallo {
     pub async fn spi_transfer(&self, write_data: &[u8]) -> Result<Vec<u8>, PicoDeGalloError<SpiError>> {
         self.client
             .send_resp::<SpiTransfer>(&SpiTransferRequest { contents: write_data })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Execute a batch of SPI operations atomically under chip-select.
+    ///
+    /// Use [`encode_spi_batch_ops`] to build the packed `ops` buffer from
+    /// a slice of [`SpiBatchOp`] values. The firmware asserts CS on
+    /// `cs_pin` before the first operation and deasserts it after the last
+    /// (or on error). On success, returns concatenated data from all Read
+    /// and Transfer operations in order.
+    ///
+    /// This is much faster than issuing individual SPI calls when
+    /// performing multi-step sequences.
+    pub async fn spi_batch(&self, cs_pin: u8, ops: &[u8]) -> Result<Vec<u8>, PicoDeGalloError<SpiBatchError>> {
+        self.client
+            .send_resp::<SpiBatch>(&SpiBatchRequest { cs_pin, ops })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }

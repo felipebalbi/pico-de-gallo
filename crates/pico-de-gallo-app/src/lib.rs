@@ -263,6 +263,22 @@ enum I2cCommands {
 
     /// Query the current I2C bus configuration
     GetConfig,
+
+    /// Execute multiple I2C operations in a single USB transfer
+    ///
+    /// Each operation is specified with --op. Use 'read:N' to read N bytes
+    /// or 'write:B1,B2,...' to write bytes (hex or decimal).
+    ///
+    /// Example: gallo i2c batch -a 0x50 --op write:0x00,0x10 --op read:16
+    Batch {
+        /// I2C slave address (7-bit, 0x00–0x7F)
+        #[arg(short, long, value_parser(parse_i2c_address))]
+        address: u8,
+
+        /// Operations: read:N or write:B1,B2,...
+        #[arg(long, num_args(1..), required = true)]
+        op: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -316,6 +332,22 @@ enum SpiCommands {
 
     /// Query the current SPI bus configuration
     GetConfig,
+
+    /// Execute multiple SPI operations atomically under chip-select
+    ///
+    /// Each operation is specified with --op. Use 'read:N', 'write:B1,B2,...',
+    /// 'transfer:B1,B2,...', or 'delay:NS'.
+    ///
+    /// Example: gallo spi batch --cs 0 --op write:0x9F --op read:3
+    Batch {
+        /// GPIO pin to use as chip-select (0–3)
+        #[arg(long)]
+        cs: u8,
+
+        /// Operations: read:N, write:B1,B2,..., transfer:B1,B2,..., delay:NS
+        #[arg(long, num_args(1..), required = true)]
+        op: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -530,6 +562,7 @@ impl Cli {
                 }
                 I2cCommands::SetConfig { frequency } => self.i2c_set_config((*frequency).into()).await,
                 I2cCommands::GetConfig => self.i2c_get_config().await,
+                I2cCommands::Batch { address, op } => self.i2c_batch(*address, op).await,
             },
             Commands::Spi { command } => match command {
                 SpiCommands::Read { count } => self.spi_read(count).await,
@@ -542,6 +575,7 @@ impl Cli {
                     idle_low,
                 } => self.spi_set_config(*frequency, *first_transition, *idle_low).await,
                 SpiCommands::GetConfig => self.spi_get_config().await,
+                SpiCommands::Batch { cs, op } => self.spi_batch(*cs, op).await,
             },
             Commands::Gpio { command } => match command {
                 GpioCommands::Get { pin } => self.gpio_get(*pin).await,
@@ -789,6 +823,64 @@ impl Cli {
         println!("SPI frequency: {} Hz", info.spi_frequency);
         println!("SPI phase:     {phase}");
         println!("SPI polarity:  {polarity}");
+        Ok(())
+    }
+
+    async fn i2c_batch(&self, address: u8, ops: &[String]) -> Result<()> {
+        use pico_de_gallo_lib::{I2cBatchOp, encode_i2c_batch_ops};
+
+        let pg = self.connect();
+        let batch_ops = parse_i2c_batch_ops(ops)?;
+        let refs: Vec<I2cBatchOp<'_>> = batch_ops
+            .iter()
+            .map(|(kind, data)| match kind {
+                I2cBatchKind::Read(len) => I2cBatchOp::Read { len: *len },
+                I2cBatchKind::Write => I2cBatchOp::Write { data },
+            })
+            .collect();
+        let encoded = encode_i2c_batch_ops(&refs);
+
+        let result = pg
+            .i2c_batch(address, &encoded)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("i2c batch failed"))?;
+
+        if result.is_empty() {
+            println!("Batch complete (no read data)");
+        } else {
+            println!("Read data ({} bytes):", result.len());
+            print_hex_dump(&result);
+        }
+        Ok(())
+    }
+
+    async fn spi_batch(&self, cs: u8, ops: &[String]) -> Result<()> {
+        use pico_de_gallo_lib::{SpiBatchOp, encode_spi_batch_ops};
+
+        let pg = self.connect();
+        let batch_ops = parse_spi_batch_ops(ops)?;
+        let refs: Vec<SpiBatchOp<'_>> = batch_ops
+            .iter()
+            .map(|(kind, data)| match kind {
+                SpiBatchKind::Read(len) => SpiBatchOp::Read { len: *len },
+                SpiBatchKind::Write => SpiBatchOp::Write { data },
+                SpiBatchKind::Transfer => SpiBatchOp::Transfer { data },
+                SpiBatchKind::DelayNs(ns) => SpiBatchOp::DelayNs { ns: *ns },
+            })
+            .collect();
+        let encoded = encode_spi_batch_ops(&refs);
+
+        let result = pg
+            .spi_batch(cs, &encoded)
+            .await
+            .map_err(|e| eyre!("{:?}", e).wrap_err("spi batch failed"))?;
+
+        if result.is_empty() {
+            println!("Batch complete (no read data)");
+        } else {
+            println!("Read data ({} bytes):", result.len());
+            print_hex_dump(&result);
+        }
         Ok(())
     }
 
@@ -1063,6 +1155,98 @@ fn parse_i2c_address(s: &str) -> Result<u8, String> {
         return Err(format!("I2C address {s} exceeds 7-bit range (max 0x7F)"));
     }
     Ok(byte)
+}
+
+/// Parse a comma-separated list of bytes, supporting hex and decimal.
+fn parse_byte_list(s: &str) -> Result<Vec<u8>> {
+    s.split(',')
+        .map(|b| {
+            let b = b.trim();
+            parse_byte(b).map_err(|e| eyre!("invalid byte '{b}': {e}"))
+        })
+        .collect()
+}
+
+/// Intermediate I2C batch op representation (owns data).
+enum I2cBatchKind {
+    Read(u16),
+    Write,
+}
+
+/// Intermediate SPI batch op representation (owns data).
+enum SpiBatchKind {
+    Read(u16),
+    Write,
+    Transfer,
+    DelayNs(u32),
+}
+
+/// Parse I2C batch operation strings into owned intermediate values.
+///
+/// Format: `read:N` or `write:B1,B2,...`
+fn parse_i2c_batch_ops(ops: &[String]) -> Result<Vec<(I2cBatchKind, Vec<u8>)>> {
+    ops.iter()
+        .map(|op| {
+            if let Some(n) = op.strip_prefix("read:") {
+                let len: u16 = n.trim().parse().map_err(|e| eyre!("invalid read length '{n}': {e}"))?;
+                Ok((I2cBatchKind::Read(len), Vec::new()))
+            } else if let Some(data) = op.strip_prefix("write:") {
+                let bytes = parse_byte_list(data)?;
+                Ok((I2cBatchKind::Write, bytes))
+            } else {
+                Err(eyre!("unknown I2C batch op '{op}'. Use 'read:N' or 'write:B1,B2,...'"))
+            }
+        })
+        .collect()
+}
+
+/// Parse SPI batch operation strings into owned intermediate values.
+///
+/// Format: `read:N`, `write:B1,B2,...`, `transfer:B1,B2,...`, or `delay:NS`
+fn parse_spi_batch_ops(ops: &[String]) -> Result<Vec<(SpiBatchKind, Vec<u8>)>> {
+    ops.iter()
+        .map(|op| {
+            if let Some(n) = op.strip_prefix("read:") {
+                let len: u16 = n.trim().parse().map_err(|e| eyre!("invalid read length '{n}': {e}"))?;
+                Ok((SpiBatchKind::Read(len), Vec::new()))
+            } else if let Some(data) = op.strip_prefix("write:") {
+                let bytes = parse_byte_list(data)?;
+                Ok((SpiBatchKind::Write, bytes))
+            } else if let Some(data) = op.strip_prefix("transfer:") {
+                let bytes = parse_byte_list(data)?;
+                Ok((SpiBatchKind::Transfer, bytes))
+            } else if let Some(ns) = op.strip_prefix("delay:") {
+                let nanos: u32 = ns
+                    .trim()
+                    .parse()
+                    .map_err(|e| eyre!("invalid delay nanoseconds '{ns}': {e}"))?;
+                Ok((SpiBatchKind::DelayNs(nanos), Vec::new()))
+            } else {
+                Err(eyre!(
+                    "unknown SPI batch op '{op}'. Use 'read:N', 'write:B1,B2,...', 'transfer:B1,B2,...', or 'delay:NS'"
+                ))
+            }
+        })
+        .collect()
+}
+
+/// Print a hex dump of data in the common `offset: hex  ascii` format.
+fn print_hex_dump(data: &[u8]) {
+    for (i, chunk) in data.chunks(16).enumerate() {
+        let offset = i * 16;
+        let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02x}")).collect();
+        let ascii: String = chunk
+            .iter()
+            .map(|&b| {
+                if b.is_ascii_graphic() || b == b' ' {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
+            .collect();
+        println!("  {offset:04x}: {:<48}  {ascii}", hex.join(" "));
+    }
 }
 
 #[cfg(test)]
@@ -1360,5 +1544,155 @@ mod tests {
     fn cli_spi_without_subcommand_fails() {
         let result = Cli::try_parse_from(["gallo", "spi"]);
         assert!(result.is_err());
+    }
+
+    // ----------------------------- batch CLI tests -----------------------------
+
+    #[test]
+    fn cli_i2c_batch() {
+        let cli = Cli::try_parse_from([
+            "gallo",
+            "i2c",
+            "batch",
+            "-a",
+            "0x50",
+            "--op",
+            "write:0x00,0x10",
+            "--op",
+            "read:16",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::I2c {
+                command: I2cCommands::Batch { address, op },
+            } => {
+                assert_eq!(address, 0x50);
+                assert_eq!(op, vec!["write:0x00,0x10", "read:16"]);
+            }
+            _ => panic!("expected I2c Batch command"),
+        }
+    }
+
+    #[test]
+    fn cli_i2c_batch_requires_ops() {
+        let result = Cli::try_parse_from(["gallo", "i2c", "batch", "-a", "0x50"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_spi_batch() {
+        let cli = Cli::try_parse_from([
+            "gallo",
+            "spi",
+            "batch",
+            "--cs",
+            "0",
+            "--op",
+            "write:0x9F",
+            "--op",
+            "read:3",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Spi {
+                command: SpiCommands::Batch { cs, op },
+            } => {
+                assert_eq!(cs, 0);
+                assert_eq!(op, vec!["write:0x9F", "read:3"]);
+            }
+            _ => panic!("expected Spi Batch command"),
+        }
+    }
+
+    #[test]
+    fn cli_spi_batch_with_transfer_and_delay() {
+        let cli = Cli::try_parse_from([
+            "gallo",
+            "spi",
+            "batch",
+            "--cs",
+            "1",
+            "--op",
+            "transfer:0x01,0x02",
+            "--op",
+            "delay:1000",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Spi {
+                command: SpiCommands::Batch { cs, op },
+            } => {
+                assert_eq!(cs, 1);
+                assert_eq!(op, vec!["transfer:0x01,0x02", "delay:1000"]);
+            }
+            _ => panic!("expected Spi Batch command"),
+        }
+    }
+
+    #[test]
+    fn cli_spi_batch_requires_ops() {
+        let result = Cli::try_parse_from(["gallo", "spi", "batch", "--cs", "0"]);
+        assert!(result.is_err());
+    }
+
+    // ----------------------------- batch op parser tests -----------------------------
+
+    #[test]
+    fn parse_i2c_batch_ops_read() {
+        let ops = vec!["read:16".to_string()];
+        let parsed = parse_i2c_batch_ops(&ops).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(matches!(parsed[0].0, I2cBatchKind::Read(16)));
+    }
+
+    #[test]
+    fn parse_i2c_batch_ops_write() {
+        let ops = vec!["write:0xDE,0xAD".to_string()];
+        let parsed = parse_i2c_batch_ops(&ops).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(matches!(parsed[0].0, I2cBatchKind::Write));
+        assert_eq!(parsed[0].1, vec![0xDE, 0xAD]);
+    }
+
+    #[test]
+    fn parse_i2c_batch_ops_mixed() {
+        let ops = vec!["write:0x00,0x10".to_string(), "read:32".to_string()];
+        let parsed = parse_i2c_batch_ops(&ops).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn parse_i2c_batch_ops_invalid() {
+        let ops = vec!["transfer:0x01".to_string()];
+        assert!(parse_i2c_batch_ops(&ops).is_err());
+    }
+
+    #[test]
+    fn parse_spi_batch_ops_all_types() {
+        let ops = vec![
+            "read:4".to_string(),
+            "write:0x9F".to_string(),
+            "transfer:0x01,0x02".to_string(),
+            "delay:1000".to_string(),
+        ];
+        let parsed = parse_spi_batch_ops(&ops).unwrap();
+        assert_eq!(parsed.len(), 4);
+    }
+
+    #[test]
+    fn parse_spi_batch_ops_invalid() {
+        let ops = vec!["nope:1".to_string()];
+        assert!(parse_spi_batch_ops(&ops).is_err());
+    }
+
+    #[test]
+    fn parse_byte_list_hex_and_decimal() {
+        let result = parse_byte_list("0x0A,20,0xFF").unwrap();
+        assert_eq!(result, vec![0x0A, 20, 0xFF]);
+    }
+
+    #[test]
+    fn print_hex_dump_does_not_panic() {
+        print_hex_dump(&[0x00, 0x41, 0x42, 0x7F, 0x80, 0xFF]);
     }
 }

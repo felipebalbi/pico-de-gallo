@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **firmware**: I2C handlers now map embassy-rp `AbortReason` variants to rich
   error types. SPI `set-config` validates frequency before applying (prevents
   panic on zero frequency).
+- **hal**: `I2c::transaction()` and `SpiDevice::transaction()` now use batch
+  endpoints under the hood — one USB round-trip per transaction instead of
+  one per operation. This is a behavioral change: previously each operation
+  in a transaction was an independent USB transfer.
 
 ### Added
 
@@ -56,6 +60,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GpioUnsubscribeFailed` (-57).
 - **app**: `gallo gpio monitor --pin N --edge rising|falling|any` command.
   Subscribes, prints edge events with timestamps, unsubscribes on Ctrl+C.
+- **internal**: `I2cBatch` and `SpiBatch` endpoints, `I2cBatchOp`/`SpiBatchOp`
+  enums, `I2cBatchRequest`/`SpiBatchRequest`/`I2cBatchError`/`SpiBatchError`
+  types, `encode_i2c_batch_ops`/`encode_spi_batch_ops` helpers,
+  `i2c_batch_response_len`/`spi_batch_response_len`/`count_i2c_batch_ops`/
+  `count_spi_batch_ops` parsing helpers. Constants: `MAX_BATCH_OPS`,
+  `BATCH_OP_READ`, `BATCH_OP_WRITE`, `BATCH_OP_TRANSFER`, `BATCH_OP_DELAY_NS`.
+- **firmware**: `i2c_batch_handler` and `spi_batch_handler` with pre-validation,
+  CS assertion/deassertion for SPI batches. SPI batch executes atomically
+  under chip-select.
+- **lib**: `i2c_batch(address, ops)` and `spi_batch(cs, ops)` async methods.
+  Re-exported `I2cBatchOp`, `SpiBatchOp`, `encode_i2c_batch_ops`,
+  `encode_spi_batch_ops`, `I2cBatchError`, `SpiBatchError`.
+- **hal**: `I2c::transaction()` and `SpiDevice::transaction()` (blocking and
+  async) rewritten to use batch endpoints — 10–50× fewer USB round-trips for
+  multi-operation transactions.
+- **app**: `gallo i2c batch` and `gallo spi batch` CLI commands for executing
+  batched operations (e.g., `--op write:0x00,0x10 --op read:16`).
 - **internal**: 6 PWM endpoints (`pwm/set-duty-cycle`, `pwm/get-duty-cycle`,
   `pwm/enable`, `pwm/disable`, `pwm/set-config`, `pwm/get-config`), `PwmError`
   enum (4 variants), request/response types, `PwmDutyCycleInfo` and

@@ -31,7 +31,7 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 |-------|--------------------|-------|------|----------------|
 | **1** | Polish What Exists | 6     | 6    | ✅ Complete    |
 | **2** | New Protocols      | 6     | 3    | 🟡 In progress |
-| **3** | Advanced Features  | 6     | 1    | 🟡 In progress |
+| **3** | Advanced Features  | 6     | 2    | 🟡 In progress |
 | **4** | Hardware Rev 2     | 6     | 0    | 🔴 Not started |
 
 ---
@@ -43,7 +43,7 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 | **I2C**         | 1 bus (I2C1), 7-bit addressing, read/write/write-read/scan, configurable frequency (Standard/Fast/Fast+)                                                       |
 | **SPI**         | 1 bus (SPI0), read/write/flush/transfer, configurable polarity/phase, DMA-backed                                                                               |
 | **UART**        | 1 bus (UART0), read/write/flush, configurable baud rate, interrupt-driven with 1024-byte TX/RX buffers                                                         |
-| **GPIO**        | 8 pins (GPIO8–15), input/output/wait-for-edge                                                                                                                  |
+| **GPIO**        | 4 pins (GPIO8–11), input/output/wait-for-edge, push-based edge event monitoring                                                                                |
 | **USB**         | Full Speed (12 Mbps), postcard-rpc over raw USB bulk                                                                                                           |
 | **HAL traits**  | `I2c`, `SpiBus`, `InputPin`, `OutputPin`, `StatefulOutputPin`, `Wait`, `DelayNs`, `embedded_io::{Read,Write}` (sync + async)                                   |
 | **Hardware**    | Bare landing board — Pico 2 module + pin headers + mounting holes. No level shifters, no ESD protection, no voltage regulation beyond what the Pico 2 provides |
@@ -313,7 +313,7 @@ architecture changes.*
 |   | Item                                                              | Tracking |
 |---|-------------------------------------------------------------------|----------|
 | ☑ | [3.1 GPIO Event Topics](#31-gpio-event-topics-push-notifications) | [#13](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/13) |
-| ☐ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       | [#14](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/14) |
+| ☑ | [3.2 Transaction Batching](#32-i2cspi-transaction-batching)       | [#14](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/14) |
 | ☐ | [3.3 1-Wire via PIO](#33-1-wire-support-via-pio)                  | [#15](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/15) |
 | ☐ | [3.4 Protocol Sniffing](#34-protocol-sniffing--logic-capture)     | [#16](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/16) |
 | ☐ | [3.5 Config Persistence](#35-configuration-persistence)           | [#17](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/17) |
