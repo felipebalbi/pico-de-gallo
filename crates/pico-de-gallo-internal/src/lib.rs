@@ -2667,6 +2667,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn i2c_batch_ops_take_from_bytes() {
         let ops = [
@@ -2688,6 +2689,7 @@ mod tests {
         assert_eq!(decoded[1], ops[1]);
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn spi_batch_ops_take_from_bytes() {
         let ops = [
@@ -2712,6 +2714,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn i2c_batch_request_round_trip() {
         let ops = encode_i2c_batch_ops(&[
@@ -2730,6 +2733,7 @@ mod tests {
         assert_eq!(decoded, req);
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn spi_batch_request_round_trip() {
         let ops = encode_spi_batch_ops(&[
@@ -2772,6 +2776,7 @@ mod tests {
         assert_eq!(decoded, err);
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn encode_i2c_empty_batch() {
         let ops = encode_i2c_batch_ops(&[]);
@@ -2779,6 +2784,7 @@ mod tests {
         assert_eq!(i2c_batch_response_len(&[]), 0);
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn encode_spi_empty_batch() {
         let ops = encode_spi_batch_ops(&[]);
@@ -2815,6 +2821,7 @@ mod tests {
         assert_eq!(spi_batch_response_len(&ops), 12);
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     #[should_panic(expected = "too many batch operations")]
     fn encode_i2c_batch_ops_panics_over_limit() {
@@ -2824,6 +2831,7 @@ mod tests {
         encode_i2c_batch_ops(&ops);
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     #[should_panic(expected = "too many batch operations")]
     fn encode_spi_batch_ops_panics_over_limit() {
@@ -2833,6 +2841,7 @@ mod tests {
         encode_spi_batch_ops(&ops);
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn i2c_batch_ops_at_max_limit() {
         let ops: Vec<I2cBatchOp> = (0..MAX_BATCH_OPS)
@@ -2851,6 +2860,7 @@ mod tests {
         assert_eq!(i2c_batch_response_len(&ops), MAX_BATCH_OPS);
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn spi_batch_ops_at_max_limit() {
         let ops: Vec<SpiBatchOp> = (0..MAX_BATCH_OPS)
