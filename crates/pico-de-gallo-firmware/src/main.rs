@@ -48,34 +48,18 @@ use embassy_rp::adc::{self, Adc};
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio::{Flex, Level, Pull};
+use embassy_rp::i2c::{self, I2c};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, SPI0, UART0, USB};
 use embassy_rp::pwm::{self, Pwm};
+use embassy_rp::spi::{self, Phase, Polarity, Spi};
+use embassy_rp::uart::{self, BufferedUart};
+use embassy_rp::usb::Driver;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, with_timeout};
-use fixed::traits::ToFixed;
-
-/// Per-pin direction mode tracked by firmware.
-///
-/// Pins start in `LegacyAuto` mode, which preserves backward-compatible
-/// behavior: `gpio_get` auto-switches to input, `gpio_put` auto-switches
-/// to output. Once configured via `gpio/set-config`, the pin enters an
-/// explicit mode and direction changes are no longer automatic.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PinMode {
-    /// Default: auto-switch direction on get/put (backward compatible).
-    LegacyAuto,
-    /// Explicitly configured as input via `gpio/set-config`.
-    ExplicitInput,
-    /// Explicitly configured as output via `gpio/set-config`.
-    ExplicitOutput,
-}
-use embassy_rp::i2c::{self, I2c};
-use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, I2C1, SPI0, UART0, USB};
-use embassy_rp::spi::{self, Phase, Polarity, Spi};
-use embassy_rp::uart::{self, BufferedUart};
-use embassy_rp::usb::Driver;
 use embedded_io_async::{Read as AsyncRead, Write as AsyncWrite};
+use fixed::traits::ToFixed;
 // Direct embassy-sync dep required: postcard-rpc's WireStorage is generic over
 // embassy_sync_0_7::blocking_mutex::raw::RawMutex, which is the same type as
 // embassy-sync 0.7's RawMutex (they share the same crate version).
@@ -122,6 +106,22 @@ use postcard_rpc::{
 use static_cell::ConstStaticCell;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
+
+/// Per-pin direction mode tracked by firmware.
+///
+/// Pins start in `LegacyAuto` mode, which preserves backward-compatible
+/// behavior: `gpio_get` auto-switches to input, `gpio_put` auto-switches
+/// to output. Once configured via `gpio/set-config`, the pin enters an
+/// explicit mode and direction changes are no longer automatic.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PinMode {
+    /// Default: auto-switch direction on get/put (backward compatible).
+    LegacyAuto,
+    /// Explicitly configured as input via `gpio/set-config`.
+    ExplicitInput,
+    /// Explicitly configured as output via `gpio/set-config`.
+    ExplicitOutput,
+}
 
 /// Binary info entries for `picotool info` identification.
 ///
@@ -417,33 +417,33 @@ define_dispatch! {
     endpoints: {
         list: ENDPOINT_LIST;
 
-        | EndpointTy          | kind     | handler                       |
-        | ----------          | ----     | -------                       |
-        | PingEndpoint        | blocking | ping_handler                  |
-        | I2cRead             | async    | i2c_read_handler              |
-        | I2cWrite            | async    | i2c_write_handler             |
-        | I2cWriteRead        | async    | i2c_write_read_handler        |
-        | SpiRead             | async    | spi_read_handler              |
-        | SpiWrite            | async    | spi_write_handler             |
-        | SpiFlush            | async    | spi_flush_handler             |
-        | SpiTransfer         | async    | spi_transfer_handler          |
-        | GpioGet             | async    | gpio_get_handler              |
-        | GpioPut             | async    | gpio_put_handler              |
-        | GpioWaitForHigh     | async    | gpio_wait_for_high_handler    |
-        | GpioWaitForLow      | async    | gpio_wait_for_low_handler     |
-        | GpioWaitForRising   | async    | gpio_wait_for_rising_handler  |
-        | GpioWaitForFalling  | async    | gpio_wait_for_falling_handler |
-        | GpioWaitForAny      | async    | gpio_wait_for_any_handler     |
+        | EndpointTy           | kind     | handler                       |
+        | ----------           | ----     | -------                       |
+        | PingEndpoint         | blocking | ping_handler                  |
+        | I2cRead              | async    | i2c_read_handler              |
+        | I2cWrite             | async    | i2c_write_handler             |
+        | I2cWriteRead         | async    | i2c_write_read_handler        |
+        | SpiRead              | async    | spi_read_handler              |
+        | SpiWrite             | async    | spi_write_handler             |
+        | SpiFlush             | async    | spi_flush_handler             |
+        | SpiTransfer          | async    | spi_transfer_handler          |
+        | GpioGet              | async    | gpio_get_handler              |
+        | GpioPut              | async    | gpio_put_handler              |
+        | GpioWaitForHigh      | async    | gpio_wait_for_high_handler    |
+        | GpioWaitForLow       | async    | gpio_wait_for_low_handler     |
+        | GpioWaitForRising    | async    | gpio_wait_for_rising_handler  |
+        | GpioWaitForFalling   | async    | gpio_wait_for_falling_handler |
+        | GpioWaitForAny       | async    | gpio_wait_for_any_handler     |
         | GpioSetConfiguration | async    | gpio_set_config_handler       |
         | GpioSubscribe        | async    | gpio_subscribe_handler        |
         | GpioUnsubscribe      | async    | gpio_unsubscribe_handler      |
         | I2cSetConfiguration  | async    | i2c_set_config_handler        |
-        | I2cScan             | async    | i2c_scan_handler              |
-        | I2cBatch            | async    | i2c_batch_handler             |
+        | I2cScan              | async    | i2c_scan_handler              |
+        | I2cBatch             | async    | i2c_batch_handler             |
         | SpiSetConfiguration  | async    | spi_set_config_handler        |
         | I2cGetConfiguration  | blocking | i2c_get_config_handler        |
         | SpiGetConfiguration  | blocking | spi_get_config_handler        |
-        | SpiBatch            | async    | spi_batch_handler             |
+        | SpiBatch             | async    | spi_batch_handler             |
         | UartRead             | async    | uart_read_handler             |
         | UartWrite            | async    | uart_write_handler            |
         | UartFlush            | async    | uart_flush_handler            |
@@ -458,13 +458,13 @@ define_dispatch! {
         | AdcRead              | blocking | adc_read_handler              |
         | AdcReadTemperature   | blocking | adc_read_temperature_handler  |
         | AdcGetConfiguration  | blocking | adc_get_config_handler        |
-        | Version             | async    | version_handler               |
+        | Version              | async    | version_handler               |
     };
     topics_in: {
         list: TOPICS_IN_LIST;
 
-        | TopicTy                   | kind      | handler                       |
-        | ----------                | ----      | -------                       |
+        | TopicTy                   | kind      | handler                 |
+        | ----------                | ----      | -------                 |
     };
     topics_out: {
         list: TOPICS_OUT_LIST;
