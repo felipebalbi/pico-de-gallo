@@ -1,6 +1,11 @@
 [![check](https://github.com/OpenDevicePartnership/pico-de-gallo/actions/workflows/check.yml/badge.svg)](https://github.com/OpenDevicePartnership/pico-de-gallo/actions/workflows/check.yml)
 [![no-std](https://github.com/OpenDevicePartnership/pico-de-gallo/actions/workflows/nostd.yml/badge.svg)](https://github.com/OpenDevicePartnership/pico-de-gallo/actions/workflows/nostd.yml)
 [![book](https://github.com/OpenDevicePartnership/pico-de-gallo/actions/workflows/gh-pages.yml/badge.svg)](https://github.com/OpenDevicePartnership/pico-de-gallo/actions/workflows/gh-pages.yml)
+[![crates.io](https://img.shields.io/crates/v/pico-de-gallo-internal)](https://crates.io/crates/pico-de-gallo-internal)
+[![crates.io](https://img.shields.io/crates/v/pico-de-gallo-lib)](https://crates.io/crates/pico-de-gallo-lib)
+[![crates.io](https://img.shields.io/crates/v/pico-de-gallo-hal)](https://crates.io/crates/pico-de-gallo-hal)
+[![crates.io](https://img.shields.io/crates/v/pico-de-gallo-ffi)](https://crates.io/crates/pico-de-gallo-ffi)
+[![crates.io](https://img.shields.io/crates/v/gallo)](https://crates.io/crates/gallo)
 
 # Pico de Gallo
 
