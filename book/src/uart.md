@@ -1,5 +1,8 @@
 # UART
 
+> **Hardware revision note:** UART requires **hw-rev2** firmware. On v1
+> hardware, UART endpoints return `UartError::Unsupported`.
+
 Pico de Gallo provides UART support through the RP2350's hardware **UART0**
 peripheral. The TX pin is on **GPIO 0** and RX is on **GPIO 1**. The UART
 is buffered and interrupt-driven, so reads and writes do not block the

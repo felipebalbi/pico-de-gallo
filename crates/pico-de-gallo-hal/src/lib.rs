@@ -369,7 +369,7 @@ impl Hal {
             .block_on(gallo.adc_get_config())
             .map_err(|e| match e {
                 PicoDeGalloError::Comms(c) => AdcHalError::Comms(format!("{c:?}")),
-                PicoDeGalloError::Endpoint(never) => match never {},
+                PicoDeGalloError::Endpoint(e) => AdcHalError::Adc(e),
             })
     }
 

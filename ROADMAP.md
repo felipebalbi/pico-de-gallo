@@ -42,14 +42,14 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 |-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **I2C**         | 1 bus (I2C1), 7-bit addressing, read/write/write-read/scan, configurable frequency (Standard/Fast/Fast+)                                                       |
 | **SPI**         | 1 bus (SPI0), read/write/flush/transfer, configurable polarity/phase, DMA-backed                                                                               |
-| **UART**        | 1 bus (UART0), read/write/flush, configurable baud rate, interrupt-driven with 1024-byte TX/RX buffers                                                         |
+| **UART**        | 1 bus (UART0), read/write/flush, configurable baud rate, interrupt-driven with 1024-byte TX/RX buffers. **hw-rev2 only.**                                      |
 | **GPIO**        | 4 pins (GPIO8–11), input/output/wait-for-edge, push-based edge event monitoring                                                                                |
 | **USB**         | Full Speed (12 Mbps), postcard-rpc over raw USB bulk                                                                                                           |
 | **HAL traits**  | `I2c`, `SpiBus`, `InputPin`, `OutputPin`, `StatefulOutputPin`, `Wait`, `DelayNs`, `embedded_io::{Read,Write}` (sync + async)                                   |
-| **Hardware**    | Bare landing board — Pico 2 module + pin headers + mounting holes. No level shifters, no ESD protection, no voltage regulation beyond what the Pico 2 provides |
+| **Hardware**    | v1 landing board — Pico 2 module + pin headers + mounting holes. `hw-rev1`/`hw-rev2` feature flags gate peripheral availability. No level shifters, no ESD.    |
 | **Host crates** | internal (protocol), lib (high-level API), hal (embedded-hal bridge), ffi (C bindings), app (CLI)                                                              |
-| **Endpoints**   | 27 total (ping, version, I2C×5, SPI×5, UART×5, GPIO×8, config×4)                                                                                               |
-| **Tests**       | 115 unit + 3 doctests, CI on every push                                                                                                                        |
+| **Endpoints**   | 27 total (ping, version, I2C×5, SPI×5, UART×5, GPIO×8, config×4). UART/ADC/1-Wire return `Unsupported` on hw-rev1.                                            |
+| **Tests**       | 298 unit + 5 doctests, CI on every push (both hardware revisions)                                                                                              |
 
 ### What's Missing
 

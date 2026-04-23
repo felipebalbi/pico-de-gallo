@@ -1,5 +1,8 @@
 # ADC (Analog-to-Digital Converter)
 
+> **Hardware revision note:** ADC requires **hw-rev2** firmware. On v1
+> hardware, ADC endpoints return `AdcError::Unsupported`.
+
 Pico de Gallo exposes the RP2350's ADC peripheral for single-shot analog
 reads. Four GPIO-based channels are available, each providing 12-bit
 resolution over a 0–3.3 V nominal input range.

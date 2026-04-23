@@ -1,5 +1,8 @@
 # 1-Wire Bus
 
+> **Hardware revision note:** 1-Wire requires **hw-rev2** firmware. On v1
+> hardware, 1-Wire endpoints return `OneWireError::Unsupported`.
+
 Pico de Gallo provides 1-Wire bus support through the RP2350's PIO (Programmable
 I/O) state machine hardware. The 1-Wire data pin is on **GPIO 16**, configured
 in open-drain mode.

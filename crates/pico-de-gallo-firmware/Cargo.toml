@@ -10,6 +10,11 @@ categories = ["embedded", "hardware-support", "no-std"]
 keywords = ["embassy", "rp2350", "pico-de-gallo", "firmware"]
 repository = "https://github.com/OpenDevicePartnership/pico-de-gallo"
 
+[features]
+default = ["hw-rev1"]
+hw-rev1 = []
+hw-rev2 = []
+
 [dependencies]
 cortex-m = { version = "0.7.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7.5"
