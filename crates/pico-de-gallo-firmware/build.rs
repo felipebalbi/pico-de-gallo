@@ -28,9 +28,9 @@ fn main() {
         .write_all(
             format!(
                 r##"
-const VERSION_MAJOR: u16 = {};
-const VERSION_MINOR: u16 = {};
-const VERSION_PATCH: u32 = {};
+pub(crate) const VERSION_MAJOR: u16 = {};
+pub(crate) const VERSION_MINOR: u16 = {};
+pub(crate) const VERSION_PATCH: u32 = {};
 "##,
                 major, minor, patch
             )
