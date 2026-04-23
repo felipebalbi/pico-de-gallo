@@ -77,8 +77,9 @@ and response types, and constants. Used by both firmware and host crates.
 
 ## Hardware
 
-KiCAD schematic and PCB design for a Pico 2 daughter board with labeled
-pin headers for I²C, SPI, and GPIO connections.
+KiCAD schematic and PCB design for a Pico 2 daughter board. The v1.1
+board features a single keyed 2x12 shrouded header that routes all 20
+firmware signals with on-board I²C pull-ups and ADC input protection.
 
 ## Case
 

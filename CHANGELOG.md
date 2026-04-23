@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **hardware**: v1.1 landing board — single keyed 2×12 (0.1″ pitch)
+  shrouded header replacing the seven individual connectors of v1.0.
+  Routes all 20 firmware signals (UART, SPI CS, 1-Wire, ADC now
+  connected). On-board passives: 4.7 kΩ I²C pull-ups (R1/R2), 100 Ω ADC
+  series resistors (R3–R5), 100 nF decoupling capacitor (C1). VREF pin
+  hardwired to 3.3 V. Uses `hw-rev2` firmware.
+
 - **internal**: `GetDeviceInfo` endpoint (`"device/info"`), `DeviceInfo` struct,
   `Capabilities` bitflag newtype (`u64`) with named constants (`I2C`, `SPI`,
   `UART`, `GPIO`, `PWM`, `ADC`, `ONEWIRE`). Schema version constants

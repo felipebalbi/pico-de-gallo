@@ -29,14 +29,19 @@ interface, writing device drivers, and the FFI/C bindings.
 ## The Hardware
 
 At its most basic, *Pico de Gallo* is merely a landing board
-containing Pico 2 castelated pads where a Pico 2 can be soldered
+containing Pico 2 castellated pads where a Pico 2 can be soldered
 directly. This means that anything *Pico de Gallo* can do, can also be
 achieved without *Pico de Gallo*'s landing board; however, the landing
 board is a lot easier to work with, especially when it comes to
 tracking which pins the Firmware expects you to use.
 
-The assembled landing board also contains headers which allows for
-connecting peripherals using DuPont wires.
+The original **v1.0** board uses seven individual pin headers for I²C,
+SPI, GPIO, and power. The newer **v1.1** board consolidates everything
+into a single keyed 2×12 shrouded header that routes all 20 firmware
+signals — including UART, ADC, and 1-Wire — with on-board I²C pull-ups
+and ADC input protection. See the
+[Getting Started](getting-started.md#hardware-revisions) chapter for
+the full pinout and revision comparison.
 
 You can get a feeling for how the board looks from the rendering
 below:
