@@ -1,6 +1,6 @@
 # Pico de Gallo — Roadmap to 1.0
 
-> Last updated: 2026-04-23
+> Last updated: 2026-04-24
 
 This document lays out the path to a 1.0 release of the pico-de-gallo
 project. Changes are grouped into phases and listed in ascending order of
@@ -30,7 +30,7 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 | Phase | Description        | Items | Done | Status                            |
 |-------|--------------------|-------|------|-----------------------------------|
 | **1** | Polish What Exists | 6     | 6    | ✅ Complete                       |
-| **2** | New Protocols      | 6     | 3    | 🟡 In progress                    |
+| **2** | New Protocols      | 4     | 3    | 🟡 In progress (2.6 blocked)      |
 | **3** | Advanced Features  | 6     | 3    | 🟡 In progress (3.4–3.6 deferred) |
 | **4** | Hardware Rev 2     | 6     | 1    | 🟡 In progress                    |
 
@@ -54,21 +54,11 @@ complexity. Each entry explains *what*, *why*, and *what it unlocks*.
 ### What's Missing
 
 Compared to what embedded developers routinely need, pico-de-gallo is
-missing:
+still missing:
 
-- **UART** — the single most common debug/console interface
-- **PWM** — needed by motor drivers, LED controllers, servos
-- **ADC** — needed for voltage monitoring, analog sensors
-- **SpiDevice** — most crates.io SPI drivers use `SpiDevice` (with CS
-  management), not raw `SpiBus`
-- **10-bit I2C** — some devices use extended addressing
-- **I2C bus scan** — the first thing anyone does when debugging I2C
-- **Rich errors** — current failure types are unit structs with no detail
-- **UART/serial traits** — `embedded-io` Read/Write for serial drivers
+- **10-bit I2C** — some devices use extended addressing (blocked on upstream embassy-rp)
 - **Voltage flexibility** — hardware is 3.3 V only; no path to 1.8 V or 5 V
 - **Target power** — users must externally power their target
-- **Event notifications** — no way for firmware to push GPIO changes or
-  bus events to the host
 
 ---
 
@@ -90,11 +80,11 @@ The priority order for trait implementations is driven by how commonly
 each trait appears in crates.io drivers:
 
 1. `I2c` — ✅ done
-2. `SpiDevice` / `SpiBus` — `SpiBus` done, **`SpiDevice` missing**
+2. `SpiDevice` / `SpiBus` — ✅ done
 3. `OutputPin` / `InputPin` — ✅ done
 4. `DelayNs` — ✅ done
 5. `embedded-io Read/Write` (UART) — ✅ done
-6. `SetDutyCycle` (PWM) — **implemented** (Phase 2.2)
+6. `SetDutyCycle` (PWM) — ✅ done
 
 ---
 
@@ -195,9 +185,7 @@ endpoint families.*
 | ☑ | [2.1 UART Support](#21-uart-support)                   | [#7](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/7)   |
 | ☑ | [2.2 PWM Support](#22-pwm-support)                     | [#8](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/8)   |
 | ☑ | [2.3 ADC Support](#23-adc-support)                     | [#9](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/9)   |
-| ☐ | [2.4 Second I2C Bus](#24-second-i2c-bus)               | [#10](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/10) |
-| ☐ | [2.5 Second SPI Bus](#25-second-spi-bus)               | [#11](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/11) |
-| ☐ | [2.6 10-Bit I2C Addressing](#26-10-bit-i2c-addressing) | [#12](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/12) |
+| ☐ | [2.4 10-Bit I2C Addressing](#24-10-bit-i2c-addressing) | [#12](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/12) |
 
 ### 2.1 UART Support
 
@@ -271,29 +259,7 @@ USB FS bandwidth limits for high sample rates.
 change needed, but a future revision should break these out to dedicated
 ADC-labeled headers.
 
-### 2.4 Second I2C Bus
-
-**What:** Enable I2C0 in addition to the existing I2C1. Extend all I2C
-endpoints to accept a bus identifier.
-
-**Why:** Many real-world designs use two I2C buses — one for sensors, one
-for EEPROMs/PMICs, or separate buses to avoid address conflicts. Two buses
-also enable bus isolation testing.
-
-**Pin assignment:** I2C0 on GPIO20/21 (available on Pico 2 header).
-
-### 2.5 Second SPI Bus
-
-**What:** Enable SPI1 in addition to SPI0. Extend all SPI endpoints to
-accept a bus identifier.
-
-**Why:** Less critical than second I2C (SPI uses CS pins for device
-selection), but useful for testing multi-bus designs or when different SPI
-devices need different clock/polarity settings.
-
-**Pin assignment:** SPI1 on GPIO16–19 (available on Pico 2 header).
-
-### 2.6 10-Bit I2C Addressing
+### 2.4 10-Bit I2C Addressing
 
 **What:** Support `TenBitAddress` in addition to `SevenBitAddress` for I2C
 operations.
@@ -548,18 +514,18 @@ there, not here.
 
 ### Must Have (1.0 blockers)
 
-| Requirement                                                        | Phase Item    |
-|--------------------------------------------------------------------|---------------|
-| All `embedded-hal` 1.0 sync + async traits implemented             | 1.2, 2.2, 2.6 |
-| `embedded-io` Read/Write for UART                                  | 2.1           |
-| Rich error types mapping firmware errors to `ErrorKind`            | 1.1           |
-| I2C bus scan                                                       | 1.3           |
-| GPIO direction + pull configuration                                | 1.4           |
-| UART support (at least one UART)                                   | 2.1           |
-| Configuration query endpoints                                      | 1.5           |
-| All public API types documented with rustdoc                       | — (ongoing)   |
-| Book updated with all interfaces and examples                      | — (ongoing)   |
-| Stable wire protocol (no breaking serialization changes after 1.0) | — (policy)    |
+| Requirement                                                        | Phase Item |
+|--------------------------------------------------------------------|------------|
+| All `embedded-hal` 1.0 sync + async traits implemented             | 1.2, 2.2   |
+| `embedded-io` Read/Write for UART                                  | 2.1        |
+| Rich error types mapping firmware errors to `ErrorKind`            | 1.1        |
+| I2C bus scan                                                       | 1.3        |
+| GPIO direction + pull configuration                                | 1.4        |
+| UART support (at least one UART)                                   | 2.1        |
+| Configuration query endpoints                                      | 1.5        |
+| All public API types documented with rustdoc                       | — (ongoing)|
+| Book updated with all interfaces and examples                      | — (ongoing)|
+| Stable wire protocol (no breaking serialization changes after 1.0) | — (policy) |
 
 ### Should Have (target for 1.0, can slip)
 
@@ -569,7 +535,7 @@ there, not here.
 | ADC support (at least single-shot reads)               | 2.3          |
 | GPIO event topics                                      | 3.1          |
 | I2C transaction batching                               | 3.2          |
-| Second I2C bus                                         | 2.4          |
+| 10-bit I2C addressing                                  | 2.4          |
 | CLI app with bus scan, UART terminal, interactive GPIO | — (app work) |
 
 ### Nice to Have (post-1.0)
@@ -660,7 +626,7 @@ but that's a separate product, not a replacement.
 | Trait                  | Crate                | Blocking | Async | Status    |
 |------------------------|----------------------|----------|-------|-----------|
 | `I2c<SevenBitAddress>` | `embedded-hal`       | ✅       | ✅    | Done      |
-| `I2c<TenBitAddress>`   | `embedded-hal`       | ❌       | ❌    | Phase 2.6 |
+| `I2c<TenBitAddress>`   | `embedded-hal`       | ❌       | ❌    | Phase 2.4 |
 | `SpiBus`               | `embedded-hal`       | ✅       | ✅    | Done      |
 | `SpiDevice`            | `embedded-hal`       | ✅       | ✅    | Done      |
 | `InputPin`             | `embedded-hal`       | ✅       | —     | Done      |
@@ -668,11 +634,11 @@ but that's a separate product, not a replacement.
 | `StatefulOutputPin`    | `embedded-hal`       | ✅       | —     | Done      |
 | `Wait`                 | `embedded-hal-async` | —        | ✅    | Done      |
 | `DelayNs`              | `embedded-hal`       | ✅       | ✅    | Done      |
-| `SetDutyCycle`         | `embedded-hal`       | ✅       | 2.2   | — |
-| `Read`                 | `embedded-io`        | ❌       | ❌    | Phase 2.1 |
-| `Write`                | `embedded-io`        | ❌       | ❌    | Phase 2.1 |
-| `ReadReady`            | `embedded-io`        | ❌       | —     | Phase 2.1 |
-| `WriteReady`           | `embedded-io`        | ❌       | —     | Phase 2.1 |
+| `SetDutyCycle`         | `embedded-hal`       | ✅       | —     | Done      |
+| `Read`                 | `embedded-io`        | ✅       | ✅    | Done      |
+| `Write`                | `embedded-io`        | ✅       | ✅    | Done      |
+| `ReadReady`            | `embedded-io`        | ❌       | —     | Future    |
+| `WriteReady`           | `embedded-io`        | ❌       | —     | Future    |
 
 **At 1.0:** every cell should be ✅ or have a documented reason for
 exclusion.
@@ -683,13 +649,13 @@ exclusion.
 
 | Feature          | Pico de Gallo (current) | Pico de Gallo (1.0 target) | Total Phase Aardvark ($375) | FTDI FT2232H (~$30) | Bus Pirate (~$40) | MCP2221A (~$5) |
 |------------------|-------------------------|----------------------------|-----------------------------|---------------------|-------------------|----------------|
-| **I2C**          | ✅                      | ✅ (+ scan, batch)         | ✅ (+ slave)                | ✅ (MPSSE)          | ✅                | ✅             |
-| **SPI**          | ✅                      | ✅ (+ SpiDevice)           | ✅ (+ slave)                | ✅ (MPSSE)          | ✅                | ❌             |
-| **UART**         | ❌                      | ✅                         | ❌                          | ✅ (dual)           | ✅                | ✅             |
-| **GPIO**         | ✅ (8 pins)             | ✅ (+ direction ctrl)      | ✅ (6 pins)                 | ✅ (limited)        | ✅                | ✅ (4 pins)    |
+| **I2C**          | ✅ (+ scan, batch)      | ✅ (+ 10-bit)              | ✅ (+ slave)                | ✅ (MPSSE)          | ✅                | ✅             |
+| **SPI**          | ✅ (+ SpiDevice)        | ✅                         | ✅ (+ slave)                | ✅ (MPSSE)          | ✅                | ❌             |
+| **UART**         | ✅                      | ✅                         | ❌                          | ✅ (dual)           | ✅                | ✅             |
+| **GPIO**         | ✅ (8 pins)             | ✅                         | ✅ (6 pins)                 | ✅ (limited)        | ✅                | ✅ (4 pins)    |
 | **PWM**          | ✅                      | ✅                         | ✅                          | ✅                  | ✅                | ✅             |
-| **ADC**          | ❌                      | ✅                         | ❌                          | ❌                  | ✅                | ✅ (3-ch)      |
-| **1-Wire**       | ❌                      | Post-1.0                   | ❌                          | ❌                  | ✅                | ❌             |
+| **ADC**          | ✅ (4-ch, 12-bit)       | ✅                         | ❌                          | ❌                  | ✅                | ✅ (3-ch)      |
+| **1-Wire**       | ✅ (PIO)                | ✅                         | ❌                          | ❌                  | ✅                | ❌             |
 | **Level shift**  | ❌                      | Rev 2                      | ❌ (accessory)              | ❌ (5V tolerant)    | ✅                | ❌             |
 | **Target power** | ❌                      | Rev 2                      | ✅                          | ❌                  | ✅                | ❌             |
 | **embedded-hal** | ✅                      | ✅ (complete)              | ❌                          | ❌                  | ❌                | ❌             |
@@ -714,13 +680,13 @@ shows current usage and planned allocation:
 
 | Peripheral | Total Available   | Currently Used                        | Planned (1.0)    | Notes                                     |
 |------------|-------------------|---------------------------------------|------------------|-------------------------------------------|
-| **I2C**    | 2 (I2C0, I2C1)    | 1 (I2C1)                              | 2                | I2C0 on GPIO20/21                         |
-| **SPI**    | 2 (SPI0, SPI1)    | 1 (SPI0)                              | 2                | SPI1 on GPIO16–19                         |
-| **UART**   | 2 (UART0, UART1)  | 0                                     | 1 (UART0)        | GPIO0/1                                   |
-| **PWM**    | 12 slices (24 ch) | 0                                     | 2–4 slices       | Repurpose GPIO pins or use dedicated pins |
-| **ADC**    | 4 GPIO            | 0                                     | 4 GPIO           | GPIO26–29                                 |
-| **PIO**    | 3 (PIO0–2)        | 0                                     | 1–2              | 1-Wire, sniffing                          |
-| **DMA**    | 16 channels       | 2 (SPI)                               | 4–6              | ADC continuous, UART, SPI1                |
+| **I2C**    | 2 (I2C0, I2C1)    | 1 (I2C1)                              | 1                | Second bus dropped                        |
+| **SPI**    | 2 (SPI0, SPI1)    | 1 (SPI0)                              | 1                | Second bus dropped                        |
+| **UART**   | 2 (UART0, UART1)  | 1 (UART0)                             | 1 (UART0)        | GPIO0/1                                   |
+| **PWM**    | 12 slices (24 ch) | 4 slices                              | 4 slices         | GPIO8–15, PWM slices 4–7                  |
+| **ADC**    | 4 GPIO            | 4 (GPIO26–29)                         | 4 GPIO           | GPIO26–29                                 |
+| **PIO**    | 3 (PIO0–2)        | 1 (1-Wire)                            | 1–2              | 1-Wire, sniffing                          |
+| **DMA**    | 16 channels       | 2 (SPI)                               | 4–6              | ADC continuous, UART, SPI                 |
 | **GPIO**   | 30 (on Pico 2)    | 10 (I2C: 2, SPI: 3, user: 8, USB: ~0) | ~24              | Plenty of headroom                        |
 | **USB**    | 1 (FS)            | 1                                     | 1                | Fully committed                           |
 | **Flash**  | 4 MB (on Pico 2)  | ~256 KB firmware                      | ~256 KB + config | Config persistence in reserved sector     |
