@@ -15,3 +15,6 @@ fp-info-cache
 
 # FFI headers
 *.h
+
+# python environment
+.env

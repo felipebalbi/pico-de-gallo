@@ -3,6 +3,7 @@ on:
  push:
    tags:
      - "application-v*"
+ workflow_dispatch:
 
 permissions:
  contents: write

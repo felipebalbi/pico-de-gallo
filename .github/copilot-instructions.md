@@ -3,18 +3,20 @@
 ## Project Overview
 
 pico-de-gallo is a USB bridge device built on Embassy-rs (RP2350/Pico
-2) that exposes I2C, SPI, and GPIO over USB using postcard-rpc.
+2) that exposes I2C, SPI, UART, GPIO, PWM, ADC, and 1-Wire over USB
+using postcard-rpc.
 
 ## Project Structure
 
 ```
 crates/
-├── Cargo.toml                    # Host workspace (5 crates)
+├── Cargo.toml                    # Host workspace (6 crates)
 ├── pico-de-gallo-internal/       # Shared wire-protocol types (postcard-rpc endpoints)
 ├── pico-de-gallo-lib/            # Host-side async library (nusb + tokio)
 ├── pico-de-gallo-hal/            # embedded-hal trait impls wrapping lib
 ├── pico-de-gallo-ffi/            # C FFI bindings (cdylib + cbindgen)
 ├── pico-de-gallo-app/            # CLI application — binary name is `gallo`
+├── pyco-de-gallo/                # Python bindings (PyO3 + maturin, cdylib)
 └── pico-de-gallo-firmware/       # no_std Embassy firmware (SEPARATE workspace)
 book/                             # mdBook documentation
 hardware/                         # KiCad landing board PCB (not required, but makes wiring easier)
@@ -23,11 +25,16 @@ case/                             # 3D-printable enclosure (FreeCAD)
 
 **Key facts:**
 
-- Host crates share a Cargo workspace at `crates/Cargo.toml`
+- Host crates share a Cargo workspace at `crates/Cargo.toml` (members:
+  `pico-de-gallo-{app,ffi,hal,internal,lib}` and `pyco-de-gallo`;
+  `pico-de-gallo-firmware` is excluded).
 - Firmware is in a **separate Cargo workspace**
   (`crates/pico-de-gallo-firmware/`) because it targets
   `thumbv8m.main-none-eabihf`. It cannot share a workspace with host
   crates. **Firmware must still compile cleanly and pass clippy.**
+- `pyco-de-gallo` is a **PyO3 cdylib** built with `maturin`. It is
+  `publish = false` on crates.io — wheels are published to PyPI via the
+  release workflow.
 - All crates use **Rust 2024 edition**
 - MSRV: **1.90**
 
@@ -43,9 +50,11 @@ case/                             # 3D-printable enclosure (FreeCAD)
 | Firmware format   | `cd crates/pico-de-gallo-firmware && cargo fmt`                                                      |
 | Host clippy       | `cd crates && cargo clippy --all-targets -- -D warnings`                                             |
 | Docs (per crate)  | `cargo doc --no-deps --all-features`                                                                 |
+| Python wheel (dev) | `cd crates/pyco-de-gallo && maturin develop --release`                                              |
 
-**Current test baseline:** 115 tests + 3 doctests across 5 host
-crates.
+**Current test baseline:** ~300 unit tests + 3 doctests across the
+host workspace (the bulk live in `pico-de-gallo-internal` and
+`pico-de-gallo-lib`). `pyco-de-gallo` currently has no Rust-side tests.
 
 > **Note:** `pico-de-gallo-internal` without the `use-std` feature
 > fails on `vec!` macro. Test it via the workspace or with `--features
@@ -72,28 +81,68 @@ Endpoints use the `endpoints!` macro with path strings. Response types
 use `#[cfg(feature = "use-std")]` to switch between `Vec<u8>` (host)
 and `&[u8]` (firmware).
 
+The schema version is tracked by `SCHEMA_VERSION_MINOR` in
+`pico-de-gallo-internal`. Pre-1.0 the **minor** version is treated as
+the breaking-change axis — bump it whenever the wire protocol changes
+(new endpoints, reordered enum variants, changed request/response
+types). `PicoDeGallo::validate()` checks this at runtime.
+
 ### Current Endpoints
 
-| Path                  | Description                                |
-|-----------------------|--------------------------------------------|
-| `"ping"`              | Echo a u32                                 |
-| `"i2c/read"`          | I2C read                                   |
-| `"i2c/write"`         | I2C write                                  |
-| `"i2c/write-read"`    | I2C write-then-read                        |
-| `"i2c/set-config"`    | Configure I2C (I2cFrequency enum)          |
-| `"spi/read"`          | SPI read                                   |
-| `"spi/write"`         | SPI write                                  |
-| `"spi/flush"`         | SPI flush                                  |
-| `"spi/transfer"`      | SPI full-duplex transfer                   |
-| `"spi/set-config"`    | Configure SPI (frequency, phase, polarity) |
-| `"gpio/get"`          | Read GPIO pin                              |
-| `"gpio/put"`          | Set GPIO pin                               |
-| `"gpio/wait-high"`    | Wait for GPIO high                         |
-| `"gpio/wait-low"`     | Wait for GPIO low                          |
-| `"gpio/wait-rising"`  | Wait for rising edge                       |
-| `"gpio/wait-falling"` | Wait for falling edge                      |
-| `"gpio/wait-any"`     | Wait for any edge                          |
-| `"version"`           | Get firmware version                       |
+| Path                     | Description                                           |
+|--------------------------|-------------------------------------------------------|
+| `"ping"`                 | Echo a u32 (testing)                                  |
+| `"version"`              | Get firmware version                                  |
+| `"device/info"`          | Get firmware version, schema version, capabilities    |
+| `"i2c/read"`             | I2C read                                              |
+| `"i2c/write"`            | I2C write                                             |
+| `"i2c/write-read"`       | I2C write-then-read                                   |
+| `"i2c/scan"`             | Scan I2C bus for responding addresses                 |
+| `"i2c/batch"`            | Execute a batch of I2C operations                     |
+| `"i2c/set-config"`       | Configure I2C (`I2cFrequency` enum)                   |
+| `"i2c/get-config"`       | Query current I2C frequency                           |
+| `"spi/read"`             | SPI read                                              |
+| `"spi/write"`            | SPI write                                             |
+| `"spi/flush"`            | SPI flush                                             |
+| `"spi/transfer"`         | SPI full-duplex transfer                              |
+| `"spi/batch"`            | SPI batch under chip-select (read/write/transfer/delay) |
+| `"spi/set-config"`       | Configure SPI (frequency, phase, polarity)            |
+| `"spi/get-config"`       | Query current SPI configuration                       |
+| `"uart/read"`            | UART read with timeout                                |
+| `"uart/write"`           | UART write                                            |
+| `"uart/flush"`           | Flush UART TX buffer                                  |
+| `"uart/set-config"`      | Configure UART (baud rate)                            |
+| `"uart/get-config"`      | Query current UART configuration                      |
+| `"gpio/get"`             | Read GPIO pin                                         |
+| `"gpio/put"`             | Set GPIO pin                                          |
+| `"gpio/wait-high"`       | Wait for GPIO high                                    |
+| `"gpio/wait-low"`        | Wait for GPIO low                                     |
+| `"gpio/wait-rising"`     | Wait for rising edge                                  |
+| `"gpio/wait-falling"`    | Wait for falling edge                                 |
+| `"gpio/wait-any"`        | Wait for any edge                                     |
+| `"gpio/set-config"`      | Configure GPIO direction and pull                     |
+| `"gpio/subscribe"`       | Subscribe to push-based GPIO edge events              |
+| `"gpio/unsubscribe"`     | Unsubscribe from GPIO edge events                     |
+| `"pwm/set-duty-cycle"`   | Set raw PWM compare value                             |
+| `"pwm/get-duty-cycle"`   | Query current duty cycle and max                      |
+| `"pwm/enable"`           | Enable PWM slice owning the channel                   |
+| `"pwm/disable"`          | Disable PWM slice owning the channel                  |
+| `"pwm/set-config"`       | Configure PWM frequency / phase-correct               |
+| `"pwm/get-config"`       | Query PWM configuration                               |
+| `"adc/read"`             | Single-shot ADC read                                  |
+| `"adc/get-config"`       | Query ADC capabilities                                |
+| `"onewire/reset"`        | 1-Wire reset + presence detection                     |
+| `"onewire/read"`         | 1-Wire read                                           |
+| `"onewire/write"`        | 1-Wire write                                          |
+| `"onewire/write-pullup"` | 1-Wire write + strong pullup (parasitic power)        |
+| `"onewire/search"`       | Start 1-Wire ROM search                               |
+| `"onewire/search-next"`  | Continue 1-Wire ROM search                            |
+
+### Topics
+
+| Path           | Direction         | Message    | Description                  |
+|----------------|-------------------|------------|------------------------------|
+| `"gpio/event"` | server → client   | `GpioEvent` | Push stream of GPIO edges   |
 
 ## Dependency Constraints
 
@@ -102,6 +151,7 @@ and `&[u8]` (firmware).
 | `embassy-usb` must be **0.5** (not 0.6) | postcard-rpc 0.12's `embassy-usb-0_5-server` feature requires it |
 | `embassy-sync` must stay at **0.7.2**   | Compatibility lock                                               |
 | `nusb` must stay at **0.1.x**           | postcard-rpc host-client dependency                              |
+| `pyo3` is on **0.28.x**                 | Used by `pyco-de-gallo` via `maturin`                            |
 
 ## FFI Conventions
 
@@ -117,6 +167,29 @@ and `&[u8]` (firmware).
   FastPlus`) with validation
 - cbindgen generates `pico_de_gallo.h` automatically during build
 
+## Python Bindings (pyco-de-gallo) Conventions
+
+- Built with **PyO3 + maturin**; `pyproject.toml` lives in the crate
+  root and declares `requires-python = ">=3.8"`.
+- Module name in Python: `pyco_de_gallo`. Public types are exposed
+  **without** a `Py` prefix (e.g. `I2cFrequency`, `SpiBatchOp`,
+  `DeviceInfo`). The host-side `pico_de_gallo_lib` types are imported
+  with a `Lib` prefix internally (`LibI2cFrequency`, etc.) to avoid
+  collisions with the wrapper types of the same name.
+- The `PycoDeGallo` class owns its own Tokio `Runtime`; all async
+  methods are exposed as **synchronous** Python methods that internally
+  `block_on` the underlying future.
+- For `#[pyclass]` enums passed by value (e.g. as `Vec<T>` arguments),
+  derive `Clone` and use `#[pyclass(from_py_object)]` so PyO3 can
+  extract them — `Vec<MyEnum>` does **not** work without `Clone`.
+- All `#[pyfunction]`, `#[pymethods]`, and `#[pyclass]` items must
+  carry rustdoc comments — they become the Python `__doc__` attribute
+  surfaced by `help()` and IDE tooltips. Prefer Google-style
+  `Args:`/`Returns:`/`Raises:` sections so Sphinx napoleon and Pyright
+  render them well.
+- Errors from the underlying lib are converted to Python `RuntimeError`
+  via `PyRuntimeError::new_err(format!("{e}"))`.
+
 ## Testing Conventions
 
 - Tests are organized as `#[cfg(test)] mod tests` inline in each
@@ -129,11 +202,15 @@ and `&[u8]` (firmware).
 - FFI tests check null pointers, status code invariants, argument
   validation
 - CLI tests verify clap argument parsing
+- `pyco-de-gallo` is currently exercised by hand from Python; behavior
+  is covered transitively by `pico-de-gallo-lib` tests.
 
 ## Documentation Requirements
 
 - All public items must have **rustdoc documentation**
 - Crate-level `//!` docs are required for every crate
+- For `pyco-de-gallo`, doc comments double as Python docstrings — write
+  them in a style Python users will actually read.
 - Update `book/` when adding new endpoints or changing CLI behavior
 - `README.md` at repo root should reflect the high-level project
   overview
@@ -154,11 +231,14 @@ and `&[u8]` (firmware).
 
 ## CI Workflows
 
-| Workflow                  | Trigger               | What it does                                          |
-|---------------------------|-----------------------|-------------------------------------------------------|
-| `check.yml`               | Push to `main`, PRs   | fmt, clippy, doc, hack (feature powerset), test, msrv |
-| `nostd.yml`               | Push to `main`, PRs   | Firmware compiles for `thumbv8m.main-none-eabihf`     |
-| `release-application.yml` | `application-v*` tags | Builds `gallo` for Linux/Windows/macOS                |
-| `release-ffi.yml`         | `ffi-v*` tags         | Builds .so/.dll/.dylib + C header                     |
-| `release-firmware.yml`    | `firmware-v*` tags    | Builds .uf2 and .elf                                  |
-| `release-hardware.yml`    | `hardware-v*` tags    | KiCad ERC/DRC, gerbers, schematic PDF                 |
+| Workflow                  | Trigger               | What it does                                              |
+|---------------------------|-----------------------|-----------------------------------------------------------|
+| `check.yml`               | Push to `main`, PRs   | fmt, clippy, doc, hack (feature powerset), test, msrv     |
+| `nostd.yml`               | Push to `main`, PRs   | Firmware compiles for `thumbv8m.main-none-eabihf`         |
+| `gh-pages.yml`            | Push to `main`        | Builds and deploys the mdBook docs to GitHub Pages        |
+| `release-application.yml` | `application-v*` tags | Builds `gallo` for Linux/Windows/macOS                    |
+| `release-ffi.yml`         | `ffi-v*` tags         | Builds .so/.dll/.dylib + C header                         |
+| `release-firmware.yml`    | `firmware-v*` tags    | Builds .uf2 and .elf                                      |
+| `release-hardware.yml`    | `hardware-v*` tags    | KiCad ERC/DRC, gerbers, schematic PDF                     |
+| `release-pyco.yml`        | `pyco-v*` tags        | Builds Python wheels (CPython 3.8–3.14, Linux/Win/macOS), attaches to GitHub Release |
+
