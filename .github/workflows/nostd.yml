@@ -27,7 +27,7 @@ jobs:
           - hw-rev: hw-rev2
             feature-flags: "--no-default-features --features hw-rev2"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
       - name: Install stable

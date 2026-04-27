@@ -32,10 +32,10 @@ jobs:
         libc: [manylinux, musllinux]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Python interpreters
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: |
             3.8
@@ -56,7 +56,7 @@ jobs:
           args: --release --out dist --find-interpreter
 
       - name: Upload wheels artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-${{ matrix.libc }}-${{ matrix.target }}
           path: crates/pyco-de-gallo/dist
@@ -73,10 +73,10 @@ jobs:
         target: [x64, x86]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Python interpreters
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: |
             3.8
@@ -97,7 +97,7 @@ jobs:
           args: --release --out dist --find-interpreter
 
       - name: Upload wheels artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ matrix.target }}
           path: crates/pyco-de-gallo/dist
@@ -111,10 +111,10 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Python interpreters
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: |
             3.8
@@ -134,7 +134,7 @@ jobs:
           args: --release --out dist --find-interpreter
 
       - name: Upload wheels artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-aarch64
           path: crates/pyco-de-gallo/dist
@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Build sdist
         uses: PyO3/maturin-action@v1
@@ -157,7 +157,7 @@ jobs:
           args: --out dist
 
       - name: Upload sdist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-sdist
           path: crates/pyco-de-gallo/dist
@@ -186,10 +186,10 @@ jobs:
       # id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: wheels-*
@@ -206,7 +206,7 @@ jobs:
           prefix: "pyco"
 
       - name: Attach wheels and sdist to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           token: ${{ secrets.GITHUB_TOKEN }}

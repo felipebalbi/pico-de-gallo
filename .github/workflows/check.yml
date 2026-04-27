@@ -37,7 +37,7 @@ jobs:
     name: stable / fmt
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
@@ -68,7 +68,7 @@ jobs:
         pico-de-gallo-ffi, pico-de-gallo-hal, pico-de-gallo-lib]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
@@ -89,7 +89,7 @@ jobs:
   #   strategy:
   #     fail-fast: false
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v6
   #       with:
   #         submodules: true
   #     - name: Install stable
@@ -113,7 +113,7 @@ jobs:
         pico-de-gallo-ffi, pico-de-gallo-hal, pico-de-gallo-lib]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
@@ -139,7 +139,7 @@ jobs:
         pico-de-gallo-ffi, pico-de-gallo-hal, pico-de-gallo-lib]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
@@ -166,7 +166,7 @@ jobs:
         pico-de-gallo-hal, pico-de-gallo-lib, pico-de-gallo-app]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
@@ -194,7 +194,7 @@ jobs:
     name: ubuntu / ${{ matrix.msrv }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
