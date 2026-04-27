@@ -7,7 +7,9 @@
 //!
 //! All methods are synchronous from Python's perspective: the underlying
 //! async calls are driven by an internal Tokio runtime owned by each
-//! `PycoDeGallo` instance.
+//! `PycoDeGallo` instance. The Python GIL is released around every
+//! blocking I/O call, so other Python threads keep running while a USB
+//! round-trip is in flight.
 //!
 //! Example:
 //!
@@ -25,14 +27,22 @@
 //! Errors from the underlying library are surfaced as Python `RuntimeError`
 //! exceptions.
 
+use std::future::Future;
+use std::time::Duration;
+
 use pico_de_gallo_lib::{
-    AdcChannel, GpioDirection, GpioPull, GpioState,
-    I2cBatchOp as LibI2cBatchOp, I2cFrequency as LibI2cFrequency, PicoDeGallo,
-    SpiBatchOp as LibSpiBatchOp, SpiPhase as LibSpiPhase, SpiPolarity as LibSpiPolarity,
+    AdcChannel, AdcConfigurationInfo as LibAdcConfigurationInfo, DeviceInfo as LibDeviceInfo,
+    GpioDirection as LibGpioDirection, GpioEdge as LibGpioEdge, GpioEvent as LibGpioEvent,
+    GpioPull as LibGpioPull, GpioState, I2cBatchOp as LibI2cBatchOp,
+    I2cFrequency as LibI2cFrequency, MultiSubscription, PicoDeGallo,
+    PwmConfigurationInfo as LibPwmConfigurationInfo, PwmDutyCycleInfo as LibPwmDutyCycleInfo,
+    SpiBatchOp as LibSpiBatchOp, SpiConfigurationInfo as LibSpiConfigurationInfo,
+    SpiPhase as LibSpiPhase, SpiPolarity as LibSpiPolarity,
+    UartConfigurationInfo as LibUartConfigurationInfo, VersionInfo as LibVersionInfo,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use tokio::runtime::Runtime;
+use tokio::runtime::{Handle, Runtime};
 
 /// List all Pico de Gallo devices currently connected to the system.
 ///
@@ -108,12 +118,32 @@ fn pyco_de_gallo(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open, m)?)?;
     m.add_function(wrap_pyfunction!(open_with_serial_number, m)?)?;
 
+    m.add_class::<AdcConfigurationInfo>()?;
+    m.add_class::<DeviceDescription>()?;
+    m.add_class::<DeviceInfo>()?;
+    m.add_class::<GpioDirection>()?;
+    m.add_class::<GpioEdge>()?;
+    m.add_class::<GpioEvent>()?;
+    m.add_class::<GpioEventSubscription>()?;
+    m.add_class::<GpioPull>()?;
+    m.add_class::<I2cBatchOp>()?;
+    m.add_class::<I2cFrequency>()?;
+    m.add_class::<PwmConfigurationInfo>()?;
+    m.add_class::<PwmDutyCycleInfo>()?;
+    m.add_class::<PycoDeGallo>()?;
+    m.add_class::<SpiBatchOp>()?;
+    m.add_class::<SpiConfigurationInfo>()?;
+    m.add_class::<SpiPhase>()?;
+    m.add_class::<SpiPolarity>()?;
+    m.add_class::<UartConfigurationInfo>()?;
+    m.add_class::<VersionInfo>()?;
+
     Ok(())
 }
 
 /// SPI clock phase (when the bus samples data relative to the clock edge).
-#[pyclass(from_py_object)]
-#[derive(Clone)]
+#[pyclass(from_py_object, eq, eq_int)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SpiPhase {
     /// Sample on the first clock transition (CPHA = 0).
     CaptureOnFirstTransition = 0,
@@ -121,9 +151,27 @@ enum SpiPhase {
     CaptureOnSecondTransition = 1,
 }
 
+impl From<LibSpiPhase> for SpiPhase {
+    fn from(p: LibSpiPhase) -> Self {
+        match p {
+            LibSpiPhase::CaptureOnFirstTransition => Self::CaptureOnFirstTransition,
+            LibSpiPhase::CaptureOnSecondTransition => Self::CaptureOnSecondTransition,
+        }
+    }
+}
+
+impl From<SpiPhase> for LibSpiPhase {
+    fn from(p: SpiPhase) -> Self {
+        match p {
+            SpiPhase::CaptureOnFirstTransition => Self::CaptureOnFirstTransition,
+            SpiPhase::CaptureOnSecondTransition => Self::CaptureOnSecondTransition,
+        }
+    }
+}
+
 /// SPI clock polarity (the idle level of the SCK line).
-#[pyclass(from_py_object)]
-#[derive(Clone)]
+#[pyclass(from_py_object, eq, eq_int)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SpiPolarity {
     /// Clock idles low (CPOL = 0).
     IdleLow = 0,
@@ -131,9 +179,27 @@ enum SpiPolarity {
     IdleHigh = 1,
 }
 
+impl From<LibSpiPolarity> for SpiPolarity {
+    fn from(p: LibSpiPolarity) -> Self {
+        match p {
+            LibSpiPolarity::IdleLow => Self::IdleLow,
+            LibSpiPolarity::IdleHigh => Self::IdleHigh,
+        }
+    }
+}
+
+impl From<SpiPolarity> for LibSpiPolarity {
+    fn from(p: SpiPolarity) -> Self {
+        match p {
+            SpiPolarity::IdleLow => Self::IdleLow,
+            SpiPolarity::IdleHigh => Self::IdleHigh,
+        }
+    }
+}
+
 /// Supported I2C bus frequencies. Discriminant values are the bus rate in Hz.
-#[pyclass(from_py_object)]
-#[derive(Clone)]
+#[pyclass(from_py_object, eq, eq_int)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum I2cFrequency {
     /// Standard mode — 100 kHz.
     Standard = 100_000,
@@ -141,6 +207,26 @@ enum I2cFrequency {
     Fast = 400_000,
     /// Fast-Plus mode — 1 MHz.
     FastPlus = 1_000_000,
+}
+
+impl From<LibI2cFrequency> for I2cFrequency {
+    fn from(f: LibI2cFrequency) -> Self {
+        match f {
+            LibI2cFrequency::Standard => Self::Standard,
+            LibI2cFrequency::Fast => Self::Fast,
+            LibI2cFrequency::FastPlus => Self::FastPlus,
+        }
+    }
+}
+
+impl From<I2cFrequency> for LibI2cFrequency {
+    fn from(f: I2cFrequency) -> Self {
+        match f {
+            I2cFrequency::Standard => Self::Standard,
+            I2cFrequency::Fast => Self::Fast,
+            I2cFrequency::FastPlus => Self::FastPlus,
+        }
+    }
 }
 
 /// A single operation in an I2C batch sequence.
@@ -154,6 +240,15 @@ enum I2cBatchOp {
     Read { read_count: u16 },
     /// Write ``write_data`` to the target address.
     Write { write_data: Vec<u8> },
+}
+
+impl<'a> From<&'a I2cBatchOp> for LibI2cBatchOp<'a> {
+    fn from(op: &'a I2cBatchOp) -> Self {
+        match op {
+            I2cBatchOp::Read { read_count } => LibI2cBatchOp::Read { len: *read_count },
+            I2cBatchOp::Write { write_data } => LibI2cBatchOp::Write { data: write_data },
+        }
+    }
 }
 
 /// A single operation in an SPI batch sequence.
@@ -171,6 +266,117 @@ enum SpiBatchOp {
     Transfer { write_data: Vec<u8> },
     /// Insert a delay of ``duration_ns`` nanoseconds between operations.
     DelayNs { duration_ns: u32 },
+}
+
+impl<'a> From<&'a SpiBatchOp> for LibSpiBatchOp<'a> {
+    fn from(op: &'a SpiBatchOp) -> Self {
+        match op {
+            SpiBatchOp::Read { read_count } => LibSpiBatchOp::Read { len: *read_count },
+            SpiBatchOp::Write { write_data } => LibSpiBatchOp::Write { data: write_data },
+            SpiBatchOp::Transfer { write_data } => LibSpiBatchOp::Transfer { data: write_data },
+            SpiBatchOp::DelayNs { duration_ns } => LibSpiBatchOp::DelayNs { ns: *duration_ns },
+        }
+    }
+}
+
+/// Edge direction selector for :meth:`PycoDeGallo.gpio_subscribe`.
+///
+/// Picks which transitions on a monitored pin produce a :class:`GpioEvent`.
+#[pyclass(from_py_object, eq, eq_int)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GpioEdge {
+    /// Notify on low-to-high transitions only.
+    Rising = 0,
+    /// Notify on high-to-low transitions only.
+    Falling = 1,
+    /// Notify on any (rising or falling) transition.
+    Any = 2,
+}
+
+impl From<LibGpioEdge> for GpioEdge {
+    fn from(e: LibGpioEdge) -> Self {
+        match e {
+            LibGpioEdge::Rising => Self::Rising,
+            LibGpioEdge::Falling => Self::Falling,
+            LibGpioEdge::Any => Self::Any,
+        }
+    }
+}
+
+impl From<GpioEdge> for LibGpioEdge {
+    fn from(e: GpioEdge) -> Self {
+        match e {
+            GpioEdge::Rising => Self::Rising,
+            GpioEdge::Falling => Self::Falling,
+            GpioEdge::Any => Self::Any,
+        }
+    }
+}
+
+/// Direction selector for :meth:`PycoDeGallo.gpio_set_config`.
+///
+/// Determines whether a pin drives the line (output) or samples it (input).
+#[pyclass(from_py_object, eq, eq_int)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GpioDirection {
+    /// Configure the pin as an input.
+    Input = 0,
+    /// Configure the pin as an output.
+    Output = 1,
+}
+
+impl From<LibGpioDirection> for GpioDirection {
+    fn from(d: LibGpioDirection) -> Self {
+        match d {
+            LibGpioDirection::Input => Self::Input,
+            LibGpioDirection::Output => Self::Output,
+        }
+    }
+}
+
+impl From<GpioDirection> for LibGpioDirection {
+    fn from(d: GpioDirection) -> Self {
+        match d {
+            GpioDirection::Input => Self::Input,
+            GpioDirection::Output => Self::Output,
+        }
+    }
+}
+
+/// Internal pull resistor selector for :meth:`PycoDeGallo.gpio_set_config`.
+///
+/// On the RP2350, each GPIO has internal pull-up and pull-down resistors
+/// that can be enabled independently to set a default state when the pin
+/// is left floating.
+#[pyclass(from_py_object, eq, eq_int)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GpioPull {
+    /// No pull resistor enabled (high-impedance input when used as input).
+    Disabled = 0,
+    /// Internal pull-up resistor enabled.
+    Up = 1,
+    /// Internal pull-down resistor enabled.
+    Down = 2,
+}
+
+impl From<LibGpioPull> for GpioPull {
+    fn from(p: LibGpioPull) -> Self {
+        match p {
+            LibGpioPull::None => Self::Disabled,
+            LibGpioPull::Up => Self::Up,
+            LibGpioPull::Down => Self::Down,
+        }
+    }
+}
+
+impl From<GpioPull> for LibGpioPull {
+    fn from(p: GpioPull) -> Self {
+        match p {
+            GpioPull::Disabled => Self::None,
+            GpioPull::Up => Self::Up,
+            GpioPull::Down => Self::Down,
+        }
+    }
 }
 
 /// USB descriptor of a connected Pico de Gallo device. Returned by
@@ -200,6 +406,16 @@ struct VersionInfo {
     /// Patch version.
     #[pyo3(get)]
     patch: u32,
+}
+
+impl From<LibVersionInfo> for VersionInfo {
+    fn from(v: LibVersionInfo) -> Self {
+        Self {
+            major: v.major,
+            minor: v.minor,
+            patch: v.patch,
+        }
+    }
 }
 
 /// Extended device information returned by :meth:`PycoDeGallo.device_info`
@@ -232,12 +448,35 @@ struct DeviceInfo {
     capabilities: u64,
 }
 
+impl From<LibDeviceInfo> for DeviceInfo {
+    fn from(info: LibDeviceInfo) -> Self {
+        Self {
+            fw_major: info.fw_major,
+            fw_minor: info.fw_minor,
+            fw_patch: info.fw_patch,
+            schema_major: info.schema_major,
+            schema_minor: info.schema_minor,
+            schema_patch: info.schema_patch,
+            hw_version: info.hw_version,
+            capabilities: info.capabilities.0,
+        }
+    }
+}
+
 /// Current UART configuration returned by :meth:`PycoDeGallo.uart_get_config`.
 #[pyclass]
 struct UartConfigurationInfo {
     /// Active UART baud rate, in bits per second.
     #[pyo3(get)]
     baud_rate: u32,
+}
+
+impl From<LibUartConfigurationInfo> for UartConfigurationInfo {
+    fn from(c: LibUartConfigurationInfo) -> Self {
+        Self {
+            baud_rate: c.baud_rate,
+        }
+    }
 }
 
 /// Current SPI configuration returned by :meth:`PycoDeGallo.spi_get_config`.
@@ -254,6 +493,16 @@ struct SpiConfigurationInfo {
     spi_polarity: SpiPolarity,
 }
 
+impl From<LibSpiConfigurationInfo> for SpiConfigurationInfo {
+    fn from(c: LibSpiConfigurationInfo) -> Self {
+        Self {
+            spi_frequency: c.spi_frequency,
+            spi_phase: c.spi_phase.into(),
+            spi_polarity: c.spi_polarity.into(),
+        }
+    }
+}
+
 /// PWM duty-cycle information returned by :meth:`PycoDeGallo.pwm_get_duty_cycle`.
 #[pyclass]
 struct PwmDutyCycleInfo {
@@ -263,6 +512,15 @@ struct PwmDutyCycleInfo {
     /// Current raw compare value, in ``0..=max_duty``.
     #[pyo3(get)]
     current_duty: u16,
+}
+
+impl From<LibPwmDutyCycleInfo> for PwmDutyCycleInfo {
+    fn from(c: LibPwmDutyCycleInfo) -> Self {
+        Self {
+            max_duty: c.max_duty,
+            current_duty: c.current_duty,
+        }
+    }
 }
 
 /// PWM slice configuration returned by :meth:`PycoDeGallo.pwm_get_config`.
@@ -279,6 +537,16 @@ struct PwmConfigurationInfo {
     enabled: bool,
 }
 
+impl From<LibPwmConfigurationInfo> for PwmConfigurationInfo {
+    fn from(c: LibPwmConfigurationInfo) -> Self {
+        Self {
+            frequency_hz: c.frequency_hz,
+            phase_correct: c.phase_correct,
+            enabled: c.enabled,
+        }
+    }
+}
+
 /// ADC configuration returned by :meth:`PycoDeGallo.adc_get_config`.
 #[pyclass]
 struct AdcConfigurationInfo {
@@ -293,23 +561,180 @@ struct AdcConfigurationInfo {
     num_gpio_channels: u8,
 }
 
+impl From<LibAdcConfigurationInfo> for AdcConfigurationInfo {
+    fn from(c: LibAdcConfigurationInfo) -> Self {
+        Self {
+            resolution_bits: c.resolution_bits,
+            nominal_reference_mv: c.nominal_reference_mv,
+            num_gpio_channels: c.num_gpio_channels,
+        }
+    }
+}
+
+/// A single GPIO edge event delivered by :meth:`GpioEventSubscription.poll`.
+#[pyclass]
+struct GpioEvent {
+    /// GPIO pin (0–3) that triggered the event.
+    #[pyo3(get)]
+    pin: u8,
+    /// Edge type that was detected.
+    #[pyo3(get)]
+    edge: GpioEdge,
+    /// Pin level sampled immediately after the edge. May differ from the
+    /// triggering edge if the input bounced.
+    #[pyo3(get)]
+    state: bool,
+    /// Monotonic timestamp in microseconds since firmware boot.
+    #[pyo3(get)]
+    timestamp_us: u64,
+}
+
+impl From<LibGpioEvent> for GpioEvent {
+    fn from(e: LibGpioEvent) -> Self {
+        Self {
+            pin: e.pin,
+            edge: e.edge.into(),
+            state: matches!(e.state, GpioState::High),
+            timestamp_us: e.timestamp_us,
+        }
+    }
+}
+
+/// A live subscription to firmware-pushed GPIO edge events.
+///
+/// Returned by :meth:`PycoDeGallo.subscribe_gpio_events`. Use
+/// :meth:`poll` to wait for individual events, or iterate over the
+/// subscription to consume a stream of events::
+///
+///     with gallo.subscribe_gpio_events() as events:
+///         gallo.gpio_subscribe(pin=8, edge=pyco_de_gallo.GpioEdge.Falling)
+///         for event in events:
+///             print(event.pin, event.edge, event.state, event.timestamp_us)
+///
+/// The subscription must be live before the firmware will buffer events;
+/// any events delivered while no subscription exists are dropped.
+///
+/// The Python GIL is released while waiting for events, so other Python
+/// threads keep running.
+#[pyclass]
+struct GpioEventSubscription {
+    inner: Option<MultiSubscription<LibGpioEvent>>,
+    handle: Handle,
+}
+
+impl GpioEventSubscription {
+    fn recv_blocking(&mut self, py: Python<'_>, timeout: Option<Duration>) -> Option<GpioEvent> {
+        let sub = self.inner.as_mut()?;
+        let handle = self.handle.clone();
+        py.detach(|| {
+            handle.block_on(async {
+                match timeout {
+                    Some(d) => match tokio::time::timeout(d, sub.recv()).await {
+                        Ok(Ok(ev)) => Some(ev.into()),
+                        Ok(Err(_)) => None,
+                        Err(_) => None,
+                    },
+                    None => match sub.recv().await {
+                        Ok(ev) => Some(ev.into()),
+                        Err(_) => None,
+                    },
+                }
+            })
+        })
+    }
+}
+
+#[pymethods]
+impl GpioEventSubscription {
+    /// Wait for the next GPIO event.
+    ///
+    /// Args:
+    ///     timeout (float | None): Maximum time to wait, in seconds. ``None``
+    ///         (the default) blocks until an event arrives or the
+    ///         subscription is closed.
+    ///
+    /// Returns:
+    ///     GpioEvent | None: The next event, or ``None`` if the timeout
+    ///     elapsed without an event, or if the subscription has been closed.
+    #[pyo3(signature = (timeout=None))]
+    fn poll(&mut self, py: Python<'_>, timeout: Option<f64>) -> PyResult<Option<GpioEvent>> {
+        let dur = match timeout {
+            Some(t) if t.is_finite() && t >= 0.0 => Some(Duration::from_secs_f64(t)),
+            Some(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "timeout must be a non-negative finite number or None",
+                ));
+            }
+            None => None,
+        };
+        Ok(self.recv_blocking(py, dur))
+    }
+
+    /// Close the subscription and release any buffered events.
+    ///
+    /// Subsequent calls to :meth:`poll` return ``None`` and iteration
+    /// terminates. Calling :meth:`close` more than once is a no-op.
+    fn close(&mut self) {
+        self.inner.take();
+    }
+
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
+    fn __exit__(
+        &mut self,
+        _exc_type: Option<Py<PyAny>>,
+        _exc_val: Option<Py<PyAny>>,
+        _exc_tb: Option<Py<PyAny>>,
+    ) -> bool {
+        self.close();
+        false
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<GpioEvent> {
+        match self.recv_blocking(py, None) {
+            Some(ev) => Ok(ev),
+            None => Err(pyo3::exceptions::PyStopIteration::new_err(())),
+        }
+    }
+}
+
 /// A connected Pico de Gallo device handle.
 ///
 /// Construct with :func:`open` or :func:`open_with_serial_number`. All methods
 /// on this class are synchronous; the underlying async client is driven by an
-/// internal Tokio runtime owned by the instance.
+/// internal Tokio runtime owned by the instance. The Python GIL is released
+/// while the runtime is blocked on USB I/O so other Python threads can run.
 #[pyclass]
 struct PycoDeGallo {
     inner: PicoDeGallo,
     runtime: Runtime,
 }
 
+impl PycoDeGallo {
+    /// Run an async future on the owned runtime, releasing the Python GIL
+    /// for the duration of the wait so other Python threads can make
+    /// progress.
+    fn block<F>(&self, py: Python<'_>, fut: F) -> F::Output
+    where
+        F: Future + Send,
+        F::Output: Send,
+    {
+        py.detach(|| self.runtime.block_on(fut))
+    }
+}
+
 #[pymethods]
 impl PycoDeGallo {
     /// Block until the underlying USB connection is closed.
-    fn wait_closed(&self) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime.block_on(gallo.wait_closed());
+    fn wait_closed(&self, py: Python<'_>) -> PyResult<()> {
+        self.block(py, self.inner.wait_closed());
         Ok(())
     }
 
@@ -323,10 +748,8 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     int: The same integer the firmware received.
-    fn ping(&self, id: u32) -> PyResult<u32> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.ping(id))
+    fn ping(&self, py: Python<'_>, id: u32) -> PyResult<u32> {
+        self.block(py, self.inner.ping(id))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -341,10 +764,8 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     bytes: The bytes read from the bus.
-    fn i2c_read(&self, address: u8, count: u16) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.i2c_read(address, count))
+    fn i2c_read(&self, py: Python<'_>, address: u8, count: u16) -> PyResult<Vec<u8>> {
+        self.block(py, self.inner.i2c_read(address, count))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -353,10 +774,8 @@ impl PycoDeGallo {
     /// Args:
     ///     address (int): 7-bit I2C target address.
     ///     data (bytes | list[int]): Bytes to write.
-    fn i2c_write(&self, address: u8, data: Vec<u8>) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.i2c_write(address, &data))
+    fn i2c_write(&self, py: Python<'_>, address: u8, data: Vec<u8>) -> PyResult<()> {
+        self.block(py, self.inner.i2c_write(address, &data))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -376,14 +795,16 @@ impl PycoDeGallo {
     ///     bytes: The bytes read from the bus.
     fn i2c_write_read(
         &self,
+        py: Python<'_>,
         address: u8,
         write_data: Vec<u8>,
         read_count: u16,
     ) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.i2c_write_read(address, &write_data, read_count))
-            .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+        self.block(
+            py,
+            self.inner.i2c_write_read(address, &write_data, read_count),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Scan the I2C bus and return the addresses of all responding devices.
@@ -398,10 +819,8 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     list[int]: 7-bit addresses that responded, ascending.
-    fn i2c_scan(&self, include_reserved: bool) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.i2c_scan(include_reserved))
+    fn i2c_scan(&self, py: Python<'_>, include_reserved: bool) -> PyResult<Vec<u8>> {
+        self.block(py, self.inner.i2c_scan(include_reserved))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -416,17 +835,9 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     bytes: Concatenated read data from all ``Read`` operations, in order.
-    fn i2c_batch(&self, address: u8, ops: Vec<I2cBatchOp>) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        let ops = ops
-            .iter()
-            .map(|op| match op {
-                I2cBatchOp::Read { read_count } => LibI2cBatchOp::Read { len: *read_count },
-                I2cBatchOp::Write { write_data } => LibI2cBatchOp::Write { data: write_data },
-            })
-            .collect::<Vec<_>>();
-        self.runtime
-            .block_on(gallo.i2c_batch(address, &ops))
+    fn i2c_batch(&self, py: Python<'_>, address: u8, ops: Vec<I2cBatchOp>) -> PyResult<Vec<u8>> {
+        let lib_ops: Vec<LibI2cBatchOp<'_>> = ops.iter().map(Into::into).collect();
+        self.block(py, self.inner.i2c_batch(address, &lib_ops))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -434,26 +845,20 @@ impl PycoDeGallo {
     ///
     /// The firmware buffer is limited to 4096 bytes; reads exceeding this
     /// limit will be truncated.
-    fn spi_read(&self, count: u16) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.spi_read(count))
+    fn spi_read(&self, py: Python<'_>, count: u16) -> PyResult<Vec<u8>> {
+        self.block(py, self.inner.spi_read(count))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Write ``data`` to the SPI bus.
-    fn spi_write(&self, data: Vec<u8>) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.spi_write(&data))
+    fn spi_write(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        self.block(py, self.inner.spi_write(&data))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Flush the SPI interface.
-    fn spi_flush(&self) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.spi_flush())
+    fn spi_flush(&self, py: Python<'_>) -> PyResult<()> {
+        self.block(py, self.inner.spi_flush())
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -465,10 +870,8 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     bytes: Bytes received during the transfer.
-    fn spi_transfer(&self, write_data: Vec<u8>) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.spi_transfer(&write_data))
+    fn spi_transfer(&self, py: Python<'_>, write_data: Vec<u8>) -> PyResult<Vec<u8>> {
+        self.block(py, self.inner.spi_transfer(&write_data))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -483,19 +886,9 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     bytes: Concatenated data from all ``Read`` and ``Transfer`` ops, in order.
-    fn spi_batch(&self, cs_pin: u8, ops: Vec<SpiBatchOp>) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        let ops = ops
-            .iter()
-            .map(|op| match op {
-                SpiBatchOp::Read { read_count } => LibSpiBatchOp::Read { len: *read_count },
-                SpiBatchOp::Write { write_data } => LibSpiBatchOp::Write { data: write_data },
-                SpiBatchOp::Transfer { write_data } => LibSpiBatchOp::Transfer { data: write_data },
-                SpiBatchOp::DelayNs { duration_ns } => LibSpiBatchOp::DelayNs { ns: *duration_ns },
-            })
-            .collect::<Vec<_>>();
-        self.runtime
-            .block_on(gallo.spi_batch(cs_pin, &ops))
+    fn spi_batch(&self, py: Python<'_>, cs_pin: u8, ops: Vec<SpiBatchOp>) -> PyResult<Vec<u8>> {
+        let lib_ops: Vec<LibSpiBatchOp<'_>> = ops.iter().map(Into::into).collect();
+        self.block(py, self.inner.spi_batch(cs_pin, &lib_ops))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -510,32 +903,20 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     bytes: Bytes received, possibly fewer than ``count``.
-    fn uart_read(&self, count: u16, timeout_ms: u32) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.uart_read(count, timeout_ms))
+    fn uart_read(&self, py: Python<'_>, count: u16, timeout_ms: u32) -> PyResult<Vec<u8>> {
+        self.block(py, self.inner.uart_read(count, timeout_ms))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Write ``data`` to the UART bus.
-    ///
-    /// Returns once all bytes have been queued in the firmware's TX buffer
-    /// (not necessarily transmitted on the wire). Use :meth:`uart_flush` to
-    /// wait for transmission to complete.
-    fn uart_write(&self, data: Vec<u8>) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.uart_write(&data))
+    fn uart_write(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        self.block(py, self.inner.uart_write(&data))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
-    /// Flush the UART transmit buffer.
-    ///
-    /// Blocks until all pending bytes have been transmitted on the wire.
-    fn uart_flush(&self) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.uart_flush())
+    /// Flush any buffered UART transmit data.
+    fn uart_flush(&self, py: Python<'_>) -> PyResult<()> {
+        self.block(py, self.inner.uart_flush())
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -545,10 +926,8 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     bool: True if the pin reads high, False otherwise.
-    fn gpio_get(&self, pin: u8) -> PyResult<bool> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.gpio_get(pin))
+    fn gpio_get(&self, py: Python<'_>, pin: u8) -> PyResult<bool> {
+        self.block(py, self.inner.gpio_get(pin))
             .map(|state| matches!(state, GpioState::High))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
@@ -560,52 +939,39 @@ impl PycoDeGallo {
     /// Args:
     ///     pin (int): GPIO pin number (0–3).
     ///     state (bool): True for high, False for low.
-    fn gpio_put(&self, pin: u8, state: bool) -> PyResult<()> {
-        let gallo = &self.inner;
-        let state = state.into();
-        self.runtime
-            .block_on(gallo.gpio_put(pin, state))
+    fn gpio_put(&self, py: Python<'_>, pin: u8, state: bool) -> PyResult<()> {
+        self.block(py, self.inner.gpio_put(pin, state.into()))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Block until the GPIO numbered by ``pin`` reads high.
-    fn gpio_wait_for_high(&self, pin: u8) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.gpio_wait_for_high(pin))
+    fn gpio_wait_for_high(&self, py: Python<'_>, pin: u8) -> PyResult<()> {
+        self.block(py, self.inner.gpio_wait_for_high(pin))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Block until the GPIO numbered by ``pin`` reads low.
-    fn gpio_wait_for_low(&self, pin: u8) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.gpio_wait_for_low(pin))
+    fn gpio_wait_for_low(&self, py: Python<'_>, pin: u8) -> PyResult<()> {
+        self.block(py, self.inner.gpio_wait_for_low(pin))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Block until a rising edge is detected on the GPIO numbered by ``pin``.
-    fn gpio_wait_for_rising_edge(&self, pin: u8) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.gpio_wait_for_rising_edge(pin))
+    fn gpio_wait_for_rising_edge(&self, py: Python<'_>, pin: u8) -> PyResult<()> {
+        self.block(py, self.inner.gpio_wait_for_rising_edge(pin))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Block until a falling edge is detected on the GPIO numbered by ``pin``.
-    fn gpio_wait_for_falling_edge(&self, pin: u8) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.gpio_wait_for_falling_edge(pin))
+    fn gpio_wait_for_falling_edge(&self, py: Python<'_>, pin: u8) -> PyResult<()> {
+        self.block(py, self.inner.gpio_wait_for_falling_edge(pin))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Block until any (rising or falling) edge is detected on the GPIO
     /// numbered by ``pin``.
-    fn gpio_wait_for_any_edge(&self, pin: u8) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.gpio_wait_for_any_edge(pin))
+    fn gpio_wait_for_any_edge(&self, py: Python<'_>, pin: u8) -> PyResult<()> {
+        self.block(py, self.inner.gpio_wait_for_any_edge(pin))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -616,22 +982,79 @@ impl PycoDeGallo {
     ///
     /// Args:
     ///     pin (int): GPIO pin number (0–3).
-    ///     direction (int): ``0`` = input, anything else = output.
-    ///     pull (int): ``0`` = none, ``1`` = pull-up, ``2`` = pull-down.
-    fn gpio_set_config(&self, pin: u8, direction: u8, pull: u8) -> PyResult<()> {
-        let gallo = &self.inner;
-        let direction = match direction {
-            0 => GpioDirection::Input,
-            _ => GpioDirection::Output,
-        };
-        let pull = match pull {
-            1 => GpioPull::Up,
-            2 => GpioPull::Down,
-            _ => GpioPull::None,
-        };
-        self.runtime
-            .block_on(gallo.gpio_set_config(pin, direction, pull))
+    ///     direction (GpioDirection): Input or output.
+    ///     pull (GpioPull): Internal pull resistor selection.
+    fn gpio_set_config(
+        &self,
+        py: Python<'_>,
+        pin: u8,
+        direction: GpioDirection,
+        pull: GpioPull,
+    ) -> PyResult<()> {
+        self.block(
+            py,
+            self.inner
+                .gpio_set_config(pin, direction.into(), pull.into()),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    }
+
+    /// Subscribe a GPIO pin to firmware-pushed edge events.
+    ///
+    /// Once subscribed, the pin is owned by the firmware monitor task and
+    /// regular GPIO operations on it (:meth:`gpio_get`, :meth:`gpio_put`,
+    /// :meth:`gpio_set_config`, the ``gpio_wait_for_*`` methods) will fail
+    /// until :meth:`gpio_unsubscribe` is called.
+    ///
+    /// Events are delivered through a :class:`GpioEventSubscription` returned
+    /// by :meth:`subscribe_gpio_events`. Call ``subscribe_gpio_events`` first
+    /// (or in parallel) so the host has a place to buffer events.
+    ///
+    /// Args:
+    ///     pin (int): GPIO pin number (0–3).
+    ///     edge (GpioEdge): Which transitions to monitor.
+    fn gpio_subscribe(&self, py: Python<'_>, pin: u8, edge: GpioEdge) -> PyResult<()> {
+        self.block(py, self.inner.gpio_subscribe(pin, edge.into()))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    }
+
+    /// Stop monitoring edge events on a GPIO pin previously passed to
+    /// :meth:`gpio_subscribe`.
+    ///
+    /// Args:
+    ///     pin (int): GPIO pin number (0–3).
+    fn gpio_unsubscribe(&self, py: Python<'_>, pin: u8) -> PyResult<()> {
+        self.block(py, self.inner.gpio_unsubscribe(pin))
+            .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    }
+
+    /// Open a subscription to firmware-pushed GPIO edge events.
+    ///
+    /// Returns a :class:`GpioEventSubscription` that buffers up to ``depth``
+    /// events on the host. Call :meth:`gpio_subscribe` afterwards to tell
+    /// the firmware which pins to monitor. The subscription should be closed
+    /// by calling :meth:`GpioEventSubscription.close` (or by using the
+    /// subscription as a context manager) when no longer needed.
+    ///
+    /// Args:
+    ///     depth (int): Host-side buffer depth in events. Defaults to 16.
+    ///
+    /// Returns:
+    ///     GpioEventSubscription: A handle that yields :class:`GpioEvent` on
+    ///     :meth:`~GpioEventSubscription.poll` or iteration.
+    #[pyo3(signature = (depth=16))]
+    fn subscribe_gpio_events(
+        &self,
+        py: Python<'_>,
+        depth: usize,
+    ) -> PyResult<GpioEventSubscription> {
+        let sub = self
+            .block(py, self.inner.subscribe_gpio_events(depth))
+            .map_err(|e| PyRuntimeError::new_err(format!("{e}")))?;
+        Ok(GpioEventSubscription {
+            inner: Some(sub),
+            handle: self.runtime.handle().clone(),
+        })
     }
 
     /// Set the I2C bus clock frequency.
@@ -641,17 +1064,8 @@ impl PycoDeGallo {
     /// Args:
     ///     frequency_hz (I2cFrequency): One of ``Standard`` (100 kHz),
     ///         ``Fast`` (400 kHz), or ``FastPlus`` (1 MHz).
-    fn i2c_set_config(&self, frequency_hz: I2cFrequency) -> PyResult<()> {
-        let gallo = &self.inner;
-
-        let frequency = match frequency_hz {
-            I2cFrequency::Standard => LibI2cFrequency::Standard,
-            I2cFrequency::Fast => LibI2cFrequency::Fast,
-            I2cFrequency::FastPlus => LibI2cFrequency::FastPlus,
-        };
-
-        self.runtime
-            .block_on(gallo.i2c_set_config(frequency))
+    fn i2c_set_config(&self, py: Python<'_>, frequency_hz: I2cFrequency) -> PyResult<()> {
+        self.block(py, self.inner.i2c_set_config(frequency_hz.into()))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -665,40 +1079,26 @@ impl PycoDeGallo {
     ///     spi_polarity (SpiPolarity): Clock polarity (CPOL).
     fn spi_set_config(
         &self,
+        py: Python<'_>,
         frequency_hz: u32,
         spi_phase: SpiPhase,
         spi_polarity: SpiPolarity,
     ) -> PyResult<()> {
-        let gallo = &self.inner;
-
-        let spi_phase = match spi_phase {
-            SpiPhase::CaptureOnFirstTransition => LibSpiPhase::CaptureOnFirstTransition,
-            SpiPhase::CaptureOnSecondTransition => LibSpiPhase::CaptureOnSecondTransition,
-        };
-
-        let spi_polarity = match spi_polarity {
-            SpiPolarity::IdleLow => LibSpiPolarity::IdleLow,
-            SpiPolarity::IdleHigh => LibSpiPolarity::IdleHigh,
-        };
-
-        self.runtime
-            .block_on(gallo.spi_set_config(frequency_hz, spi_phase, spi_polarity))
-            .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+        self.block(
+            py,
+            self.inner
+                .spi_set_config(frequency_hz, spi_phase.into(), spi_polarity.into()),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Get the firmware version from the connected device.
     ///
     /// Returns:
     ///     VersionInfo: Major / minor / patch version triple.
-    fn version(&self) -> PyResult<VersionInfo> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.version())
-            .map(|v| VersionInfo {
-                major: v.major,
-                minor: v.minor,
-                patch: v.patch,
-            })
+    fn version(&self, py: Python<'_>) -> PyResult<VersionInfo> {
+        self.block(py, self.inner.version())
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -707,20 +1107,9 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     DeviceInfo: Device identity and capability snapshot.
-    fn device_info(&self) -> PyResult<DeviceInfo> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.device_info())
-            .map(|info| DeviceInfo {
-                fw_major: info.fw_major,
-                fw_minor: info.fw_minor,
-                fw_patch: info.fw_patch,
-                schema_major: info.schema_major,
-                schema_minor: info.schema_minor,
-                schema_patch: info.schema_patch,
-                hw_version: info.hw_version,
-                capabilities: info.capabilities.0,
-            })
+    fn device_info(&self, py: Python<'_>) -> PyResult<DeviceInfo> {
+        self.block(py, self.inner.device_info())
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -731,20 +1120,9 @@ impl PycoDeGallo {
     ///     RuntimeError: If the firmware is too old (no ``device/info``
     ///         endpoint), if the schema versions disagree, or on a
     ///         communication failure.
-    fn validate(&self) -> PyResult<DeviceInfo> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.validate())
-            .map(|info| DeviceInfo {
-                fw_major: info.fw_major,
-                fw_minor: info.fw_minor,
-                fw_patch: info.fw_patch,
-                schema_major: info.schema_major,
-                schema_minor: info.schema_minor,
-                schema_patch: info.schema_patch,
-                hw_version: info.hw_version,
-                capabilities: info.capabilities.0,
-            })
+    fn validate(&self, py: Python<'_>) -> PyResult<DeviceInfo> {
+        self.block(py, self.inner.validate())
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -753,15 +1131,9 @@ impl PycoDeGallo {
     /// Returns:
     ///     I2cFrequency: The active I2C frequency. Defaults to ``Standard``
     ///     (100 kHz) on firmware boot.
-    fn i2c_get_config(&self) -> PyResult<I2cFrequency> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.i2c_get_config())
-            .map(|freq| match freq {
-                LibI2cFrequency::Standard => I2cFrequency::Standard,
-                LibI2cFrequency::Fast => I2cFrequency::Fast,
-                LibI2cFrequency::FastPlus => I2cFrequency::FastPlus,
-            })
+    fn i2c_get_config(&self, py: Python<'_>) -> PyResult<I2cFrequency> {
+        self.block(py, self.inner.i2c_get_config())
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -770,21 +1142,9 @@ impl PycoDeGallo {
     /// Returns:
     ///     SpiConfigurationInfo: Active SPI frequency, phase, and polarity.
     ///     Defaults are 1 MHz, ``CaptureOnFirstTransition``, ``IdleLow``.
-    fn spi_get_config(&self) -> PyResult<SpiConfigurationInfo> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.spi_get_config())
-            .map(|config| SpiConfigurationInfo {
-                spi_frequency: config.spi_frequency,
-                spi_phase: match config.spi_phase {
-                    LibSpiPhase::CaptureOnFirstTransition => SpiPhase::CaptureOnFirstTransition,
-                    LibSpiPhase::CaptureOnSecondTransition => SpiPhase::CaptureOnSecondTransition,
-                },
-                spi_polarity: match config.spi_polarity {
-                    LibSpiPolarity::IdleLow => SpiPolarity::IdleLow,
-                    LibSpiPolarity::IdleHigh => SpiPolarity::IdleHigh,
-                },
-            })
+    fn spi_get_config(&self, py: Python<'_>) -> PyResult<SpiConfigurationInfo> {
+        self.block(py, self.inner.spi_get_config())
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -792,10 +1152,8 @@ impl PycoDeGallo {
     ///
     /// Takes effect immediately before the next UART operation. The default
     /// baud rate is 115200.
-    fn uart_set_config(&self, baud_rate: u32) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.uart_set_config(baud_rate))
+    fn uart_set_config(&self, py: Python<'_>, baud_rate: u32) -> PyResult<()> {
+        self.block(py, self.inner.uart_set_config(baud_rate))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -806,13 +1164,9 @@ impl PycoDeGallo {
     ///
     /// Raises:
     ///     RuntimeError: If the firmware's hardware revision does not support UART.
-    fn uart_get_config(&self) -> PyResult<UartConfigurationInfo> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.uart_get_config())
-            .map(|config| UartConfigurationInfo {
-                baud_rate: config.baud_rate,
-            })
+    fn uart_get_config(&self, py: Python<'_>) -> PyResult<UartConfigurationInfo> {
+        self.block(py, self.inner.uart_get_config())
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -826,10 +1180,8 @@ impl PycoDeGallo {
     /// Args:
     ///     channel (int): PWM channel (0–3).
     ///     duty_cycle (int): Raw compare value.
-    fn pwm_set_duty_cycle(&self, channel: u8, duty_cycle: u16) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.pwm_set_duty_cycle(channel, duty_cycle))
+    fn pwm_set_duty_cycle(&self, py: Python<'_>, channel: u8, duty_cycle: u16) -> PyResult<()> {
+        self.block(py, self.inner.pwm_set_duty_cycle(channel, duty_cycle))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -838,14 +1190,9 @@ impl PycoDeGallo {
     /// Returns:
     ///     PwmDutyCycleInfo: ``current_duty`` (raw compare value) and
     ///     ``max_duty`` (full-scale value, equal to ``top + 1``).
-    fn pwm_get_duty_cycle(&self, channel: u8) -> PyResult<PwmDutyCycleInfo> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.pwm_get_duty_cycle(channel))
-            .map(|info| PwmDutyCycleInfo {
-                max_duty: info.max_duty,
-                current_duty: info.current_duty,
-            })
+    fn pwm_get_duty_cycle(&self, py: Python<'_>, channel: u8) -> PyResult<PwmDutyCycleInfo> {
+        self.block(py, self.inner.pwm_get_duty_cycle(channel))
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -853,10 +1200,8 @@ impl PycoDeGallo {
     ///
     /// Because PWM slices drive two channels, enabling channel 0 also enables
     /// channel 1 (and vice versa). Same for channels 2 and 3.
-    fn pwm_enable(&self, channel: u8) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.pwm_enable(channel))
+    fn pwm_enable(&self, py: Python<'_>, channel: u8) -> PyResult<()> {
+        self.block(py, self.inner.pwm_enable(channel))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -864,10 +1209,8 @@ impl PycoDeGallo {
     ///
     /// Because PWM slices drive two channels, disabling channel 0 also
     /// disables channel 1 (and vice versa). Same for channels 2 and 3.
-    fn pwm_disable(&self, channel: u8) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.pwm_disable(channel))
+    fn pwm_disable(&self, py: Python<'_>, channel: u8) -> PyResult<()> {
+        self.block(py, self.inner.pwm_disable(channel))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -884,11 +1227,19 @@ impl PycoDeGallo {
     ///     channel (int): PWM channel (0–3).
     ///     frequency_hz (int): Desired PWM frequency in Hz.
     ///     phase_correct (bool): Whether to enable phase-correct mode.
-    fn pwm_set_config(&self, channel: u8, frequency_hz: u32, phase_correct: bool) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.pwm_set_config(channel, frequency_hz, phase_correct))
-            .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    fn pwm_set_config(
+        &self,
+        py: Python<'_>,
+        channel: u8,
+        frequency_hz: u32,
+        phase_correct: bool,
+    ) -> PyResult<()> {
+        self.block(
+            py,
+            self.inner
+                .pwm_set_config(channel, frequency_hz, phase_correct),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Query the current configuration of the PWM slice behind ``channel``.
@@ -896,15 +1247,9 @@ impl PycoDeGallo {
     /// Returns:
     ///     PwmConfigurationInfo: Effective frequency, phase-correct flag,
     ///     and enabled state.
-    fn pwm_get_config(&self, channel: u8) -> PyResult<PwmConfigurationInfo> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.pwm_get_config(channel))
-            .map(|config| PwmConfigurationInfo {
-                frequency_hz: config.frequency_hz,
-                phase_correct: config.phase_correct,
-                enabled: config.enabled,
-            })
+    fn pwm_get_config(&self, py: Python<'_>, channel: u8) -> PyResult<PwmConfigurationInfo> {
+        self.block(py, self.inner.pwm_get_config(channel))
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -919,8 +1264,7 @@ impl PycoDeGallo {
     /// Raises:
     ///     RuntimeError: If ``channel`` is outside the range 0–3, or if the
     ///         firmware reports an ADC error.
-    fn adc_read(&self, channel: u8) -> PyResult<u16> {
-        let gallo = &self.inner;
+    fn adc_read(&self, py: Python<'_>, channel: u8) -> PyResult<u16> {
         let channel = match channel {
             0 => AdcChannel::Adc0,
             1 => AdcChannel::Adc1,
@@ -932,8 +1276,7 @@ impl PycoDeGallo {
                 ));
             }
         };
-        self.runtime
-            .block_on(gallo.adc_read(channel))
+        self.block(py, self.inner.adc_read(channel))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -944,15 +1287,9 @@ impl PycoDeGallo {
     ///
     /// Raises:
     ///     RuntimeError: If the firmware's hardware revision does not support ADC.
-    fn adc_get_config(&self) -> PyResult<AdcConfigurationInfo> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.adc_get_config())
-            .map(|config| AdcConfigurationInfo {
-                resolution_bits: config.resolution_bits,
-                nominal_reference_mv: config.nominal_reference_mv,
-                num_gpio_channels: config.num_gpio_channels,
-            })
+    fn adc_get_config(&self, py: Python<'_>) -> PyResult<AdcConfigurationInfo> {
+        self.block(py, self.inner.adc_get_config())
+            .map(Into::into)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -960,28 +1297,22 @@ impl PycoDeGallo {
     ///
     /// Returns:
     ///     bool: True if one or more devices responded with a presence pulse.
-    fn onewire_reset(&self) -> PyResult<bool> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.onewire_reset())
+    fn onewire_reset(&self, py: Python<'_>) -> PyResult<bool> {
+        self.block(py, self.inner.onewire_reset())
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Read ``len`` bytes from the 1-Wire bus.
     ///
     /// The firmware sends ``0xFF`` read slots and captures the response bits.
-    fn onewire_read(&self, len: u16) -> PyResult<Vec<u8>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.onewire_read(len))
+    fn onewire_read(&self, py: Python<'_>, len: u16) -> PyResult<Vec<u8>> {
+        self.block(py, self.inner.onewire_read(len))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Write raw bytes to the 1-Wire bus.
-    fn onewire_write(&self, data: Vec<u8>) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.onewire_write(&data))
+    fn onewire_write(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        self.block(py, self.inner.onewire_write(&data))
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -990,11 +1321,17 @@ impl PycoDeGallo {
     /// Required for parasitic-power devices like the DS18B20 during
     /// temperature conversion. The bus is held high for
     /// ``pullup_duration_ms`` milliseconds after the last bit is sent.
-    fn onewire_write_pullup(&self, data: Vec<u8>, pullup_duration_ms: u16) -> PyResult<()> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.onewire_write_pullup(&data, pullup_duration_ms))
-            .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    fn onewire_write_pullup(
+        &self,
+        py: Python<'_>,
+        data: Vec<u8>,
+        pullup_duration_ms: u16,
+    ) -> PyResult<()> {
+        self.block(
+            py,
+            self.inner.onewire_write_pullup(&data, pullup_duration_ms),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Start a new 1-Wire ROM search and return the first device address.
@@ -1003,10 +1340,8 @@ impl PycoDeGallo {
     ///     int | None: The first 64-bit ROM ID found, or ``None`` if no
     ///     devices are on the bus. Call :meth:`onewire_search_next` to
     ///     enumerate the rest.
-    fn onewire_search(&self) -> PyResult<Option<u64>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.onewire_search())
+    fn onewire_search(&self, py: Python<'_>) -> PyResult<Option<u64>> {
+        self.block(py, self.inner.onewire_search())
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
@@ -1015,10 +1350,8 @@ impl PycoDeGallo {
     /// Returns:
     ///     int | None: The next device's 64-bit ROM ID, or ``None`` when
     ///     all devices have been enumerated.
-    fn onewire_search_next(&self) -> PyResult<Option<u64>> {
-        let gallo = &self.inner;
-        self.runtime
-            .block_on(gallo.onewire_search_next())
+    fn onewire_search_next(&self, py: Python<'_>) -> PyResult<Option<u64>> {
+        self.block(py, self.inner.onewire_search_next())
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 }
