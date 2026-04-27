@@ -3,6 +3,7 @@ on:
   push:
     tags:
       - "hardware-v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
