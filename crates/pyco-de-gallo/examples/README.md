@@ -30,3 +30,4 @@ python examples/tmp108_read.py
 | Script             | Peripheral | What it does                                                |
 |--------------------|------------|-------------------------------------------------------------|
 | `tmp108_read.py`   | I2C        | Reads ambient temperature from a TMP108 sensor at `0x48`.   |
+| `tmp108_live.py`   | I2C        | Live scrolling temperature graph (Rich + braille). Needs `pip install rich`. |
