@@ -103,15 +103,12 @@ jobs:
           path: crates/pyco-de-gallo/dist
 
   # ---------------------------------------------------------------------------
-  # macOS, x86_64 and arm64
+  # macOS, arm64 only. Apple has dropped support for x86_64 and GitHub is
+  # retiring the macos-13 (x86_64) runners in 2027.
   # ---------------------------------------------------------------------------
   macos:
-    name: Build wheels (macos ${{ matrix.target }})
-    runs-on: ${{ matrix.target == 'aarch64' && 'macos-14' || 'macos-13' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [x86_64, aarch64]
+    name: Build wheels (macos aarch64)
+    runs-on: macos-14
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -132,14 +129,14 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.target }}
+          target: aarch64
           working-directory: crates/pyco-de-gallo
           args: --release --out dist --find-interpreter
 
       - name: Upload wheels artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-macos-${{ matrix.target }}
+          name: wheels-macos-aarch64
           path: crates/pyco-de-gallo/dist
 
   # ---------------------------------------------------------------------------
