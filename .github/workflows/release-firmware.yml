@@ -3,6 +3,11 @@ on:
  push:
    tags:
      - "firmware-v*"
+ pull_request:
+   paths:
+     - ".github/workflows/release-firmware.yml"
+     - "crates/pico-de-gallo-firmware/**"
+     - "crates/pico-de-gallo-internal/**"
  workflow_dispatch:
 
 permissions:
@@ -10,6 +15,7 @@ permissions:
 
 jobs:
   create-release:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
     steps:
@@ -23,7 +29,11 @@ jobs:
           prefix: "firmware"
 
   upload-firmware:
-    needs: create-release
+    # On PRs this job runs as a build-only smoke test (no upload). On tag
+    # pushes / workflow_dispatch it gates on create-release and uploads the
+    # produced artifacts to the release.
+    needs: [create-release]
+    if: ${{ !cancelled() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
 
     runs-on: ubuntu-latest
 
@@ -43,9 +53,9 @@ jobs:
 
       - name: Install pico-sdk-tools
         run: |
-          tar -vzxf picotool.tar.gz -C $HOME
-          chmod +x $HOME/picotool/picotool
-          echo "$HOME/picotool" >> $GITHUB_PATH
+          tar -vzxf picotool.tar.gz -C "$HOME"
+          chmod +x "$HOME/picotool/picotool"
+          echo "$HOME/picotool" >> "$GITHUB_PATH"
 
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -57,13 +67,14 @@ jobs:
         run: rustup target add thumbv8m.main-none-eabihf
 
       - name: Build firmware (${{ matrix.hw-rev }})
-        run: cargo build --release --manifest-path crates/pico-de-gallo-firmware/Cargo.toml --target thumbv8m.main-none-eabihf ${{ matrix.feature-flags }}
+        run: cargo build --release --locked --manifest-path crates/pico-de-gallo-firmware/Cargo.toml --target thumbv8m.main-none-eabihf ${{ matrix.feature-flags }}
 
       - name: Generate uf2
         run: |
           picotool uf2 convert crates/pico-de-gallo-firmware/target/thumbv8m.main-none-eabihf/release/pico-de-gallo-firmware -t elf firmware-${{ matrix.hw-rev }}.uf2
 
       - name: Upload uf2 to release
+        if: github.event_name != 'pull_request'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -73,6 +84,7 @@ jobs:
           overwrite: true
 
       - name: Upload elf to release
+        if: github.event_name != 'pull_request'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}

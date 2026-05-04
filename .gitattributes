@@ -1,0 +1,63 @@
+# Enforce LF line endings on all text files.
+#
+# Without this, a contributor on Windows can silently introduce CRLF
+# line endings, which trip shellcheck/actionlint, break here-docs in
+# CI shell scripts, and produce noisy whole-file diffs.
+#
+# `text=auto` lets git detect text vs binary; `eol=lf` forces LF on
+# checkin and on checkout regardless of `core.autocrlf`. Run
+# `dos2unix <file>` on any file you create on Windows before committing
+# (or just rely on git to renormalize on commit).
+
+* text=auto eol=lf
+
+# --- Explicit text overrides (in case auto-detect gets it wrong) -----
+*.rs            text eol=lf
+*.toml          text eol=lf
+*.md            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.json          text eol=lf
+*.sh            text eol=lf
+*.py            text eol=lf
+*.h             text eol=lf
+*.c             text eol=lf
+*.lock          text eol=lf
+
+# --- Binary files (never touch line endings) -------------------------
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.pdf           binary
+*.uf2           binary
+*.bin           binary
+*.elf           binary
+*.so            binary
+*.dylib         binary
+*.dll           binary
+*.a             binary
+*.lib           binary
+*.zip           binary
+*.tar           binary
+*.gz            binary
+*.whl           binary
+
+# KiCad files are S-expressions (text), but treating them as binary
+# avoids accidental whitespace churn from editors / format-on-save.
+*.kicad_sch     binary
+*.kicad_pcb     binary
+*.kicad_pro     binary
+*.kicad_sym     binary
+*.kicad_mod     binary
+*.kicad_dru     binary
+*.kicad_prl     binary
+*.step          binary
+*.stp           binary
+*.stl           binary
+
+# FreeCAD project files are zipped XML — definitely binary.
+*.FCStd         binary
+*.FCStd1        binary
+*.FCBak         binary
