@@ -15,7 +15,33 @@ feature-depth = 1
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-ignore = []
+# Every entry here needs a justification comment AND a removal trigger.
+# When in doubt, prefer fixing the underlying dep over adding an ignore.
+ignore = [
+    # atomic-polyfill is unmaintained (deprecated by upstream in favor of
+    # portable-atomic). Reaches us transitively via heapless 0.7 -> postcard
+    # 1.x -> postcard-rpc 0.12. There is no safe upgrade until postcard
+    # migrates to heapless 0.8 (which uses portable-atomic). Re-evaluate
+    # whenever postcard-rpc bumps its postcard/heapless majors.
+    "RUSTSEC-2023-0089",
+    # proc-macro-error is unmaintained (maintainer unreachable). Reaches us
+    # only as a compile-time dev-dep through bilge-impl -> bilge ->
+    # is31fl3743b-driver (used by pico-de-gallo-hal tests). Not in shipped
+    # binaries. Re-evaluate when bilge migrates to proc-macro-error2 (or
+    # when is31fl3743b-driver drops bilge).
+    "RUSTSEC-2024-0370",
+    # bare-metal is deprecated in favor of critical-section. Reaches us
+    # transitively via cortex-m 0.7, which is depended on by essentially
+    # every embassy-rp / embassy-executor / panic-probe / rp-pac crate in
+    # the firmware. Re-evaluate when the cortex-m 0.7 ecosystem migrates
+    # off bare-metal (cortex-m 0.8 / embassy bumps).
+    "RUSTSEC-2026-0110",
+    # paste is unmaintained (archived by upstream). Reaches us only as a
+    # compile-time proc-macro through pio-core -> pio -> embassy-rp (and
+    # pio-proc / pio-parser). Not in shipped firmware binaries.
+    # Re-evaluate when embassy-rp's pio stack migrates to pastey.
+    "RUSTSEC-2024-0436",
+]
 
 # -- Licenses -----------------------------------------------------------------
 [licenses]
