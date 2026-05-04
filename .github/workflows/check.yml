@@ -83,22 +83,22 @@ jobs:
         working-directory: crates/${{ matrix.crate }}
         run: cargo clippy --all-targets -- -D warnings
 
-  # Enable once we have a released crate
-  # semver:
-  #   runs-on: ubuntu-latest
-  #   name: semver
-  #   strategy:
-  #     fail-fast: false
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #       with:
-  #         submodules: true
-  #     - name: Install stable
-  #       uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         components: rustfmt
-  #     - name: cargo-semver-checks
-  #       uses: obi1kenobi/cargo-semver-checks-action@v2
+  # Wire-protocol crate is published; cargo-semver-checks catches accidental
+  # API breakage in PRs against pico-de-gallo-internal.
+  semver:
+    runs-on: ubuntu-latest
+    name: stable / semver
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo-semver-checks
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: pico-de-gallo-internal
+          manifest-path: crates/Cargo.toml
 
   doc:
     # run docs generation on nightly rather than stable. This enables features like
@@ -261,3 +261,29 @@ jobs:
         uses: docker://rhysd/actionlint:latest
         with:
           args: -color
+
+  deny:
+    # cargo-deny enforces the dependency policy in deny.toml: no yanked
+    # crates, license allow-list, no unknown registries, and (most
+    # importantly) warns on duplicate copies of a crate in the dep graph.
+    # Duplicate copies are exactly the failure mode that produced the
+    # embassy-usb-driver 0.2.1 regression (two embedded-io-async majors).
+    runs-on: ubuntu-latest
+
+    name: ubuntu / cargo-deny
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [crates, crates/pico-de-gallo-firmware]
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: ${{ matrix.workspace }}/Cargo.toml
+          arguments: --all-features
+          command: check bans licenses sources advisories
