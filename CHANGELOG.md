@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-04
+
+**Crate versions:** internal 0.5.0, lib 0.5.0, hal 0.5.0, ffi 0.6.0, app 0.6.0, firmware 0.9.0, pyco 0.2.0
+
+### Breaking Changes
+
+- **internal**: `UartGetConfigurationResponse` and `AdcGetConfigurationResponse`
+  are now `Result<…>` instead of bare struct values, so endpoints can
+  report `Unsupported` on hardware revisions that don't route the peripheral.
+  Wire protocol is **not** backward compatible — firmware and host must be
+  upgraded together.
+- **internal**: New `Unsupported` variant added to `UartError`, `AdcError`, and
+  `OneWireError`. Because these enums are not `#[non_exhaustive]`, existing
+  exhaustive matches in downstream code must add the new arm.
+- **lib**: `uart_get_config()` now returns `PicoDeGalloError<UartError>` and
+  `adc_get_config()` now returns `PicoDeGalloError<AdcError>` (was
+  `PicoDeGalloError<Infallible>`).
+
 ### Added
 
 - **hardware**: v1.1 landing board — single keyed 2×12 (0.1″ pitch)
@@ -20,8 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Capabilities` bitflag newtype (`u64`) with named constants (`I2C`, `SPI`,
   `UART`, `GPIO`, `PWM`, `ADC`, `ONEWIRE`). Schema version constants
   auto-generated from `Cargo.toml` via `build.rs`.
-- **internal**: `Unsupported` variant added to `UartError`, `AdcError`, and
-  `OneWireError` for endpoints not available on the current hardware revision.
 - **firmware**: `hw-rev1` and `hw-rev2` Cargo feature flags (mutually exclusive).
   `hw-rev1` is the default and matches the current v1 landing board.
   Unsupported peripherals (UART, ADC, 1-Wire on v1) return `Unsupported`
@@ -49,6 +65,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ci/firmware**: `release-firmware.yml` now generates the `.uf2`
+  with [`elf2uf2-rs`](https://github.com/JoNil/elf2uf2-rs) instead of
+  downloading `picotool` from the `pico-sdk-tools` release tarball.
+  The tool is installed from git (`cargo install --git ... --locked`)
+  because the published crates.io 2.2.0 release does not yet expose
+  the `--family` CLI option. The conversion uses `--family rp2350-arm-ns`
+  (non-secure Cortex-M33; TrustZone is not enabled). Output artifact
+  names (`firmware-{rev1,rev2}.uf2` and
+  `pico-de-gallo-firmware-{rev1,rev2}` ELF) are unchanged.
 - **firmware/release**: Renamed firmware crate package from
   `pico-de-gallo-fw` to `pico-de-gallo-firmware` (matches the
   directory name). The release ELF asset uploaded by
@@ -56,12 +81,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pico-de-gallo-firmware-{rev1,rev2}` (was
   `pico-de-gallo-fw-{rev1,rev2}`). The `firmware-{rev1,rev2}.uf2`
   artifact name is unchanged.
-- **internal**: `UartGetConfigurationResponse` changed from `UartConfigurationInfo`
-  to `Result<UartConfigurationInfo, UartError>`. `AdcGetConfigurationResponse`
-  changed from `AdcConfigurationInfo` to `Result<AdcConfigurationInfo, AdcError>`.
-- **lib**: `uart_get_config()` now returns `PicoDeGalloError<UartError>` (was
-  `PicoDeGalloError<Infallible>`). `adc_get_config()` now returns
-  `PicoDeGalloError<AdcError>` (was `PicoDeGalloError<Infallible>`).
+
+### Fixed
+
+- **firmware**: Pin `embassy-usb-driver = "=0.2.0"` to work around an
+  upstream incompatibility — `embassy-usb-driver 0.2.1` bumped
+  `embedded-io-async` from 0.6 to 0.7, but `embassy-usb 0.5.1`'s
+  CDC-ACM `embedded_io_async::ErrorType` impl still expects the 0.6
+  trait. The mismatch produces an `EndpointError: embedded_io_async::Error`
+  trait-bound error inside `embassy-usb`. We can't move to embassy-usb
+  0.6 because `postcard-rpc 0.12` only ships an `embassy-usb-0_5-server`
+  feature.
 
 ## [0.8.0] — 2026-04-22
 
@@ -325,7 +355,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/OpenDevicePartnership/pico-de-gallo/compare/firmware-v0.8.0...HEAD
+[Unreleased]: https://github.com/OpenDevicePartnership/pico-de-gallo/compare/firmware-v0.9.0...HEAD
+[0.9.0]: https://github.com/OpenDevicePartnership/pico-de-gallo/compare/firmware-v0.8.0...firmware-v0.9.0
 [0.8.0]: https://github.com/OpenDevicePartnership/pico-de-gallo/compare/firmware-v0.7.0...firmware-v0.8.0
 [0.7.0]: https://github.com/OpenDevicePartnership/pico-de-gallo/compare/firmware-v0.6.0...firmware-v0.7.0
 [firmware-v0.6.0]: https://github.com/OpenDevicePartnership/pico-de-gallo/releases/tag/firmware-v0.6.0
