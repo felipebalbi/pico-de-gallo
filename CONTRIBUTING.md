@@ -16,7 +16,53 @@ pull request so that the project team can discuss the situation with you.
 
 ## Commit Message
 
-* Use meaningful commit messages. See [this blogpost](http://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html)
+We use [Conventional Commits](https://www.conventionalcommits.org/)
+with a crate scope so that
+[release-please](.github/RELEASE-PLEASE.md) can automate versioning,
+CHANGELOG entries, and release tags.
+
+Format:
+
+```
+<type>(<scope>)<!>: <subject>
+
+<body>
+
+<footer>
+```
+
+- **Type:** `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`,
+  `build`, `ci`, `revert`. Use `!` (or a `BREAKING CHANGE:` footer) for
+  breaking changes.
+- **Scope:** the crate name, without the `pico-de-gallo-` prefix —
+  one of `internal`, `lib`, `hal`, `ffi`, `application`, `pyco`,
+  `firmware`. For repo-wide changes use `repo`. For changes that span
+  several crates, list them comma-separated, e.g. `feat(internal,
+  firmware): …`.
+- **Subject:** imperative mood, no trailing period (Tim Pope's
+  [classic guide](http://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html)
+  still applies for body wording).
+
+Examples:
+
+```
+feat(internal): add device/info endpoint with capability bitfield
+fix(firmware): pin embassy-usb-driver to "=0.2.0"
+feat(application)!: rename --baud to --baud-rate
+chore(ci): re-enable cargo-semver-checks on internal
+```
+
+### Wire-protocol changes
+
+Any commit that changes wire types in `pico-de-gallo-internal`
+**must**:
+
+- be marked breaking (`feat(internal)!:` or `BREAKING CHANGE:` footer),
+- be paired with a corresponding `feat(firmware)!:` commit so that
+  firmware bumps in lockstep with the schema version,
+- and ideally be accompanied by version bumps on every downstream
+  crate (`lib`, `hal`, `ffi`, `application`, `pyco`) in the same PR
+  so the release-please PRs land together.
 
 ## PR Etiquette
 

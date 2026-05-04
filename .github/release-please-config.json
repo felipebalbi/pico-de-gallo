@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "rust",
+  "bootstrap-sha": "f8081c81a13f7542132ea7cc74abdee8c3d69315",
+  "include-component-in-tag": true,
+  "tag-separator": "-v",
+  "separate-pull-requests": true,
+  "include-v-in-tag": false,
+  "plugins": [
+    {
+      "type": "cargo-workspace",
+      "merge": false,
+      "updateAllPackages": false
+    }
+  ],
+  "packages": {
+    "crates/pico-de-gallo-internal": {
+      "package-name": "pico-de-gallo-internal",
+      "component": "internal",
+      "changelog-path": "../../CHANGELOG.md"
+    },
+    "crates/pico-de-gallo-lib": {
+      "package-name": "pico-de-gallo-lib",
+      "component": "library",
+      "changelog-path": "../../CHANGELOG.md"
+    },
+    "crates/pico-de-gallo-hal": {
+      "package-name": "pico-de-gallo-hal",
+      "component": "hal",
+      "changelog-path": "../../CHANGELOG.md"
+    },
+    "crates/pico-de-gallo-ffi": {
+      "package-name": "pico-de-gallo-ffi",
+      "component": "ffi",
+      "changelog-path": "../../CHANGELOG.md"
+    },
+    "crates/pico-de-gallo-app": {
+      "package-name": "gallo",
+      "component": "application",
+      "changelog-path": "../../CHANGELOG.md"
+    },
+    "crates/pyco-de-gallo": {
+      "package-name": "pyco-de-gallo",
+      "component": "pyco",
+      "changelog-path": "../../CHANGELOG.md"
+    },
+    "crates/pico-de-gallo-firmware": {
+      "package-name": "pico-de-gallo-firmware",
+      "component": "firmware",
+      "changelog-path": "../../CHANGELOG.md"
+    }
+  }
+}
