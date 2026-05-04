@@ -44,6 +44,21 @@ case/                             # 3D-printable enclosure (FreeCAD)
 - All crates use **Rust 2024 edition**
 - MSRV: **1.90**
 
+## File Conventions
+
+**All text files use LF (Unix) line endings.** `.gitattributes`
+enforces `* text=auto eol=lf`, so git will renormalize on commit even
+if your editor wrote CRLF. If you create a file on Windows and
+`git diff` shows `^M` markers or whole-file churn, run:
+
+```
+dos2unix <file>
+```
+
+(or, if `dos2unix` isn't available, re-save with LF endings from your
+editor). CRLF in shell `run:` blocks silently breaks `actionlint` /
+`shellcheck` and produces noisy diffs.
+
 ## Build & Test Commands
 
 CI in `.github/workflows/check.yml` runs each job **per crate**
