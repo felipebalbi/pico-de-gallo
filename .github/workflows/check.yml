@@ -211,3 +211,37 @@ jobs:
       - name: cargo +${{ matrix.msrv }} check
         run: cargo check
         working-directory: crates/${{ matrix.crate }}
+
+  lockfile:
+    # Verify that the committed Cargo.lock is consistent with Cargo.toml.
+    # Fails if a contributor edited a Cargo.toml dependency without
+    # regenerating the lockfile, which would otherwise only surface as a
+    # release-day surprise (cf. embassy-usb-driver 0.2.1 transitive break).
+    runs-on: ubuntu-latest
+
+    name: ubuntu / stable / lockfile
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - workspace: crates
+            extra-flags: ""
+          - workspace: crates/pico-de-gallo-firmware
+            extra-flags: "--target thumbv8m.main-none-eabihf"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: rustup target add thumbv8m.main-none-eabihf
+        if: matrix.workspace == 'crates/pico-de-gallo-firmware'
+        run: rustup target add thumbv8m.main-none-eabihf
+
+      - name: cargo check --locked
+        working-directory: ${{ matrix.workspace }}
+        run: cargo check --locked ${{ matrix.extra-flags }}
