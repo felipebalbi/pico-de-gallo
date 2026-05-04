@@ -245,3 +245,19 @@ jobs:
       - name: cargo check --locked
         working-directory: ${{ matrix.workspace }}
         run: cargo check --locked ${{ matrix.extra-flags }}
+
+  actionlint:
+    # Lint every workflow in .github/workflows/. Catches typos, missing
+    # runs-on, bad matrix syntax. Cheap insurance against CI breakage
+    # introduced by workflow edits.
+    runs-on: ubuntu-latest
+
+    name: ubuntu / actionlint
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
