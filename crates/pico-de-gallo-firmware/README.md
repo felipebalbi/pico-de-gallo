@@ -15,7 +15,7 @@ $ cargo build --release --manifest-path crates/pico-de-gallo-firmware/Cargo.toml
 Convert the ELF to UF2 and copy to the Pico 2 in BOOTSEL mode:
 
 ```console
-$ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/pico-de-gallo-fw -t elf firmware.uf2
+$ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/pico-de-gallo-firmware -t elf firmware.uf2
 $ picotool load firmware.uf2
 ```
 

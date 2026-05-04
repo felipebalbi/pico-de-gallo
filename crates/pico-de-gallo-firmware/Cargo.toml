@@ -1,5 +1,5 @@
 [package]
-name = "pico-de-gallo-fw"
+name = "pico-de-gallo-firmware"
 version = "0.8.0"
 edition = "2024"
 license = "MIT"

@@ -61,7 +61,7 @@ jobs:
 
       - name: Generate uf2
         run: |
-          picotool uf2 convert crates/pico-de-gallo-firmware/target/thumbv8m.main-none-eabihf/release/pico-de-gallo-fw -t elf firmware-${{ matrix.hw-rev }}.uf2
+          picotool uf2 convert crates/pico-de-gallo-firmware/target/thumbv8m.main-none-eabihf/release/pico-de-gallo-firmware -t elf firmware-${{ matrix.hw-rev }}.uf2
 
       - name: Upload uf2 to release
         uses: svenstaro/upload-release-action@v2
@@ -76,7 +76,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: crates/pico-de-gallo-firmware/target/thumbv8m.main-none-eabihf/release/pico-de-gallo-fw
-          asset_name: pico-de-gallo-fw-${{ matrix.hw-rev }}
+          file: crates/pico-de-gallo-firmware/target/thumbv8m.main-none-eabihf/release/pico-de-gallo-firmware
+          asset_name: pico-de-gallo-firmware-${{ matrix.hw-rev }}
           tag: ${{ github.ref }}
           overwrite: true

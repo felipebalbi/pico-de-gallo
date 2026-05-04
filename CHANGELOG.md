@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **firmware/release**: Renamed firmware crate package from
+  `pico-de-gallo-fw` to `pico-de-gallo-firmware` (matches the
+  directory name). The release ELF asset uploaded by
+  `release-firmware.yml` is now
+  `pico-de-gallo-firmware-{rev1,rev2}` (was
+  `pico-de-gallo-fw-{rev1,rev2}`). The `firmware-{rev1,rev2}.uf2`
+  artifact name is unchanged.
 - **internal**: `UartGetConfigurationResponse` changed from `UartConfigurationInfo`
   to `Result<UartConfigurationInfo, UartError>`. `AdcGetConfigurationResponse`
   changed from `AdcConfigurationInfo` to `Result<AdcConfigurationInfo, AdcError>`.
