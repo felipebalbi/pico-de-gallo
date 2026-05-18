@@ -1,0 +1,59 @@
+title: "[Show & tell] "
+labels: ["show-and-tell"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Built something cool with Pico de Gallo? Share it here! 🌶️
+
+        We love seeing how people use the bridge — sensor bring-ups, automated
+        test rigs, weird 1-Wire devices, custom landing boards, language bindings
+        you wrote on top of the FFI, anything goes.
+
+  - type: input
+    id: project
+    attributes:
+      label: Project name / one-liner
+      placeholder: "e.g. CI smoke-test rig for our BMS firmware"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which Pico de Gallo surface(s) did you use?
+      multiple: true
+      options:
+        - CLI (`gallo`)
+        - Python bindings (`pyco-de-gallo`)
+        - C FFI (`pico-de-gallo-ffi`)
+        - Rust host library (`pico-de-gallo-lib`)
+        - embedded-hal adapter (`pico-de-gallo-hal`)
+        - Custom firmware fork
+        - Custom hardware / landing board
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What did you build?
+      description: A few paragraphs about the project, what it does, and what you learned.
+    validations:
+      required: true
+
+  - type: textarea
+    id: links
+    attributes:
+      label: Links, photos, videos
+      description: GitHub repo, blog post, photos of the wiring, scope captures, anything.
+    validations:
+      required: false
+
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Anything you'd like to see improved?
+      description: Rough edges you hit, features that would have helped, docs you wished existed. (Optional — feel free to also open a feature request.)
+    validations:
+      required: false

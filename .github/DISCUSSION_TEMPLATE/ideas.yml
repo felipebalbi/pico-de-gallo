@@ -1,0 +1,53 @@
+title: "[Idea] "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got an idea that isn't quite a concrete feature request yet? Float it here. 🌶️
+
+        Use this space for half-baked thoughts, "what if" questions, API design
+        debates, and protocol direction. Once an idea has rough consensus and a
+        clear shape, it can be promoted to a [Feature request](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/new?template=feature_request.yml).
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Roughly what area is this idea about?
+      options:
+        - Wire protocol / new endpoint
+        - CLI ergonomics
+        - Python bindings
+        - C FFI
+        - Rust host API
+        - Firmware behavior
+        - Hardware / next board revision
+        - Documentation / examples
+        - Project direction
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: Describe the idea. Don't worry about being polished — we'll refine it together.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why?
+      description: What problem would this solve, or what would it unlock? Concrete use cases help.
+    validations:
+      required: false
+
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: Prior art
+      description: Similar tools (Bus Pirate, FT232H, Aardvark, Glasgow…), upstream issues, or papers worth looking at.
+    validations:
+      required: false

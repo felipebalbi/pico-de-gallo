@@ -1,0 +1,56 @@
+title: "[Q&A] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Welcome! 🌶️ Got a question about using Pico de Gallo? You're in the right place.
+
+        Before posting, please skim the [book](https://opendevicepartnership.github.io/pico-de-gallo/)
+        and search existing [issues](https://github.com/OpenDevicePartnership/pico-de-gallo/issues?q=is%3Aissue)
+        and [discussions](https://github.com/OpenDevicePartnership/pico-de-gallo/discussions) — answers to common
+        questions (wiring, firmware flashing, Python install, schema-version mismatch) often live there already.
+
+        If you've found a reproducible bug, please open a [Bug report](https://github.com/OpenDevicePartnership/pico-de-gallo/issues/new?template=bug_report.yml) instead.
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface is your question about?
+      options:
+        - CLI (`gallo`)
+        - Python bindings (`pyco-de-gallo`)
+        - C FFI (`pico-de-gallo-ffi`)
+        - Rust host library (`pico-de-gallo-lib`)
+        - embedded-hal adapter (`pico-de-gallo-hal`)
+        - Firmware / flashing
+        - Hardware / wiring
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions in use
+      description: Firmware version, host tool version, OS, language runtime — whatever's relevant.
+      placeholder: "e.g. firmware-v0.6.0 hw-rev1, gallo 0.6.0, Linux"
+    validations:
+      required: false
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What's your question?
+      description: Be specific. Include the command you ran, the device you're talking to, and what you've already tried.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, datasheets, wiring photos — anything that helps.
+    validations:
+      required: false

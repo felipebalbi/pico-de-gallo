@@ -1,0 +1,128 @@
+name: ✨ Feature request
+description: Suggest a new endpoint, CLI flag, binding, hardware revision, or other enhancement for Pico de Gallo.
+title: "feat: <short description>"
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest an improvement! 🌶️
+
+        Pico de Gallo spans firmware (no_std Embassy on RP2350), a host library, a
+        CLI (`gallo`), C FFI, Python bindings (`pyco-de-gallo`), an embedded-hal
+        adapter, and the wire protocol shared between them. The more context you
+        give about *where* your idea fits, the faster we can act on it.
+
+        Before filing, please:
+        - Search [existing issues](https://github.com/OpenDevicePartnership/pico-de-gallo/issues?q=is%3Aissue) and [discussions](https://github.com/OpenDevicePartnership/pico-de-gallo/discussions) for prior art.
+        - Skim the [book](https://opendevicepartnership.github.io/pico-de-gallo/) to confirm the feature isn't already supported.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checks
+      options:
+        - label: I have searched existing issues and discussions and could not find a duplicate.
+          required: true
+        - label: I have checked the documentation and the feature is not already available.
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component(s)
+      description: Which crate(s) or surface(s) would this feature touch? Select all that apply.
+      multiple: true
+      options:
+        - firmware (pico-de-gallo-firmware, no_std)
+        - wire protocol (pico-de-gallo-internal)
+        - host library (pico-de-gallo-lib)
+        - embedded-hal adapter (pico-de-gallo-hal)
+        - C FFI (pico-de-gallo-ffi)
+        - CLI application (gallo / pico-de-gallo-app)
+        - Python bindings (pyco-de-gallo)
+        - hardware (KiCad PCB / enclosure)
+        - documentation (book, README, rustdoc)
+        - CI / release tooling
+        - other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: peripheral
+    attributes:
+      label: Related peripheral
+      description: If this is about a specific protocol or peripheral, pick one.
+      options:
+        - "n/a"
+        - I2C
+        - SPI
+        - UART
+        - GPIO
+        - PWM
+        - ADC
+        - 1-Wire
+        - USB / transport
+        - other
+    validations:
+      required: false
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem?
+      description: A clear and concise description of the problem. Concrete usage scenarios help — "I'm trying to bring up a BME280 over I2C and…"
+      placeholder: I'm always frustrated when [...]
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: |
+        What should Pico de Gallo do? If this involves a new wire-protocol endpoint,
+        sketch the request/response shape. If it's a CLI change, show the proposed
+        command line. If it's a Python or C API change, show the proposed signature.
+      placeholder: |
+        e.g. Add an `i2c/scan-range` endpoint that takes (start, end) and returns
+        the responding addresses, exposed in the CLI as `gallo i2c scan --start 0x08 --end 0x77`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: Other approaches you weighed, and why the proposed solution wins. Include any workarounds you're using today.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: wire-impact
+    attributes:
+      label: Wire-protocol impact
+      description: |
+        Changes to `pico-de-gallo-internal` types or enum ordering are **breaking**
+        and require a coordinated firmware + host release. Check any that apply.
+      options:
+        - label: Adds a new endpoint or topic.
+        - label: Adds a new variant to an existing wire enum (append-only, non-breaking).
+        - label: Changes existing request/response types or reorders enum variants (BREAKING).
+        - label: No wire-protocol impact.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Datasheets, links to upstream projects, screenshots, logic-analyzer captures, references to similar tools (Bus Pirate, FT232H, Aardvark), etc.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Are you willing to contribute?
+      options:
+        - label: I'd like to implement this myself and open a PR.
+        - label: I can help test on hardware once someone implements it.

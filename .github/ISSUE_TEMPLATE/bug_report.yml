@@ -1,0 +1,150 @@
+name: 🐛 Bug report
+description: Report something in Pico de Gallo that doesn't work the way it should.
+title: "bug: <short description>"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! 🌶️
+
+        **Please do not report security vulnerabilities here.** Use the
+        [private security advisory form](https://github.com/felipebalbi/pico-de-gallo/security/advisories/new) instead.
+
+        The more detail you give about your hardware, firmware version, and the
+        exact commands you ran, the faster we can reproduce and fix the bug.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checks
+      options:
+        - label: I have searched existing issues and could not find a duplicate.
+          required: true
+        - label: I am running the latest released firmware and host tools, or I have explained below why I can't.
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component(s)
+      description: Which crate(s) or surface(s) does the bug affect? Select all that apply.
+      multiple: true
+      options:
+        - firmware (pico-de-gallo-firmware)
+        - wire protocol (pico-de-gallo-internal)
+        - host library (pico-de-gallo-lib)
+        - embedded-hal adapter (pico-de-gallo-hal)
+        - C FFI (pico-de-gallo-ffi)
+        - CLI application (gallo / pico-de-gallo-app)
+        - Python bindings (pyco-de-gallo)
+        - hardware (KiCad PCB / enclosure)
+        - documentation (book, README, rustdoc)
+        - CI / release tooling
+        - other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: peripheral
+    attributes:
+      label: Related peripheral
+      options:
+        - "n/a"
+        - I2C
+        - SPI
+        - UART
+        - GPIO
+        - PWM
+        - ADC
+        - 1-Wire
+        - USB / transport
+        - other
+    validations:
+      required: false
+
+  - type: input
+    id: firmware-version
+    attributes:
+      label: Firmware version
+      description: Run `gallo version` or check the `.uf2` filename. Include the hardware revision (hw-rev1 / hw-rev2).
+      placeholder: "e.g. firmware-v0.6.0 (hw-rev1)"
+    validations:
+      required: true
+
+  - type: input
+    id: host-version
+    attributes:
+      label: Host tool version
+      description: Version of `gallo`, `pico-de-gallo-lib`, `pyco-de-gallo`, or the FFI library you're using. Include language/runtime version where relevant (e.g. Python 3.12).
+      placeholder: "e.g. gallo 0.6.0 / pyco-de-gallo 0.6.0 on Python 3.12"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Host operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware setup
+      description: Pico 2 board variant, landing board revision (if any), and the device under test (e.g. "BME280 on I2C, 3.3V, 10k pull-ups").
+      placeholder: "e.g. Raspberry Pi Pico 2 + rev1 landing board, BME280 @ 0x76 on I2C"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is. Include what you *expected* to happen as well.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, copy-pasteable steps. Include the exact `gallo` command, Python snippet, or Rust code that triggers the bug.
+      placeholder: |
+        1. Flash firmware-v0.6.0 hw-rev1
+        2. Connect BME280 to I2C0 with 10k pull-ups
+        3. Run `gallo i2c scan`
+        4. Observe...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output / error
+      description: Paste the full output, error message, panic, or stack trace. For firmware crashes, include defmt/RTT logs if you have them.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, captures, and other evidence
+      description: Logic-analyzer captures, `RUST_LOG=trace` output, USB pcap dumps, photos of the wiring — anything that helps.
+    validations:
+      required: false
+
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression info
+      description: Did this used to work? If yes, what was the last known-good version? `git bisect` results are gold.
+    validations:
+      required: false

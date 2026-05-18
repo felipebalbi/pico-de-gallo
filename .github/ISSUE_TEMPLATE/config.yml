@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://felipebalbi.github.io/pico-de-gallo/
+    about: Read the Pico de Gallo book before opening an issue — many questions are answered there.
+  - name: 💬 Discussions
+    url: https://github.com/OpenDevicePartnership/pico-de-gallo/discussions
+    about: Ask a question, share a project, or float an idea that isn't quite a feature request yet.
+  - name: 🔒 Security advisory
+    url: https://github.com/OpenDevicePartnership/pico-de-gallo/security/advisories/new
+    about: Report a security vulnerability privately. Do NOT open a public issue.
