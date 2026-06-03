@@ -153,7 +153,120 @@ reset + Delay). Pull each one in from its subsection independently.
 
 ## 6. Per-peripheral reference
 
-<!-- filled in Tasks 7–11 -->
+### 6.1 I²C
+
+**When to use:** the device is on an I²C bus and uses 7-bit addressing.
+
+**HAL accessor:** `hal.i2c()` → returns `I2c`.
+
+**Traits implemented:** `embedded_hal::i2c::I2c`,
+`embedded_hal_async::i2c::I2c`.
+
+#### Snippet — binary form
+
+```rust
+// examples/<chip>.rs
+// pico-de-gallo decision log:
+//   shape:        binary
+//   sync/async:   sync (reason: driver is blocking)
+//   peripherals:  i2c
+//   hal version:  <crate version observed at generation time>
+
+use embedded_hal::i2c::I2c;
+use pico_de_gallo_hal::Hal;
+
+fn main() {
+    let hal = Hal::new();
+    let mut i2c = hal.i2c();
+
+    let mut buf = [0u8; 2];
+    i2c.write_read(0x48, &[0x00], &mut buf).unwrap();
+    println!("raw: {:02x?}", buf);
+}
+```
+
+#### Snippet — HIL-test form
+
+```rust
+#[cfg(feature = "hil")]
+#[test]
+fn tmp102_responds_on_default_address() {
+    use embedded_hal::i2c::I2c;
+    let hal = pico_de_gallo_hal::Hal::new();
+    let mut i2c = hal.i2c();
+    let mut buf = [0u8; 2];
+    // A successful write_read with an ACK proves the device is wired.
+    i2c.write_read(0x48, &[0x00], &mut buf).unwrap();
+}
+```
+
+#### Gotchas
+
+- 7-bit addressing only. Pass `0x48`, not `0x90`.
+- `I2c::transaction()` (and `write_read`) is batched as a single USB
+  round-trip by the HAL — prefer it over separate `write` + `read`.
+- Default bus frequency is 100 kHz. Bump with
+  `hal.i2c_set_config(I2cFrequency::Fast)?` for 400 kHz or
+  `I2cFrequency::FastPlus` for 1 MHz.
+- Async usage: see §3 for the mandatory `current_thread` warning.
+
+#### Config knobs
+
+- `hal.i2c_set_config(I2cFrequency)` — bus frequency. Default
+  `Standard` (100 kHz). Variants: `Standard`, `Fast`, `FastPlus`.
+- `hal.i2c_get_config() -> Result<I2cFrequency, _>` — read current
+  frequency.
+- `hal.i2c_scan(include_reserved: bool) -> Result<Vec<u8>, _>` —
+  scan for devices. `false` scans `0x08..=0x77`, `true` scans the
+  full `0x00..=0x7F`.
+
+### 6.2 SPI bus (no CS)
+
+<!-- filled in Task 11 -->
+
+### 6.3 SPI device (with CS)
+
+<!-- filled in Task 8 -->
+
+### GPIO subsections (§§6.4–6.7) — read first
+
+<!-- pin-state machine table filled in Task 9 -->
+
+### 6.4 GPIO output
+
+<!-- filled in Task 9 -->
+
+### 6.5 GPIO input
+
+<!-- filled in Task 9 -->
+
+### 6.6 GPIO async wait
+
+<!-- filled in Task 9 -->
+
+### 6.7 GPIO subscribe (push events)
+
+<!-- filled in Task 10 -->
+
+### 6.8 PWM
+
+<!-- filled in Task 11 -->
+
+### 6.9 ADC
+
+<!-- filled in Task 11 -->
+
+### 6.10 1-Wire
+
+<!-- filled in Task 11 -->
+
+### 6.11 UART
+
+<!-- filled in Task 11 -->
+
+### 6.12 Delay
+
+<!-- filled in Task 11 -->
 
 ## 7. Worked end-to-end example
 
