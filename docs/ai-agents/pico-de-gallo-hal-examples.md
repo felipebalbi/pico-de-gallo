@@ -295,19 +295,194 @@ fn driver_who_am_i_matches_datasheet() {
 
 ### GPIO subsections (§§6.4–6.7) — read first
 
-<!-- pin-state machine table filled in Task 9 -->
+**Pin range:** `0..=3` (firmware exposes four pins). Any pin number
+outside this range returns `GpioError::InvalidPin`.
+
+**Pin state machine** — at any moment a pin is in exactly one of
+these states, and only the listed ops are valid:
+
+| State              | Reached by                            | Allowed ops                                                    |
+|--------------------|---------------------------------------|----------------------------------------------------------------|
+| Unconfigured       | freshly-booted firmware               | `Gpio::set_config(...)` only                                   |
+| Output             | `set_config(GpioDirection::Output,_)` | `OutputPin::set_low/high`, `StatefulOutputPin::is_set_low/high`|
+| Input              | `set_config(GpioDirection::Input,_)`  | `InputPin::is_low/high`, async `Wait::wait_for_*`              |
+| Subscribed (Input) | `hal.gpio_subscribe(pin, edge)`       | receive `GpioEvent`s; **no other ops** until `gpio_unsubscribe`|
+
+Cross-state transitions: call `set_config(...)` again to flip
+direction; call `gpio_unsubscribe(pin)` to leave Subscribed. **A pin
+that is Subscribed cannot also be wait()'d on or read/written**: the
+firmware returns `GpioError::PinMonitored`.
+
+`use pico_de_gallo_lib::{GpioDirection, GpioPull, GpioEdge};` —
+these are not re-exported by the HAL.
 
 ### 6.4 GPIO output
 
-<!-- filled in Task 9 -->
+**When to use:** drive a line high or low — LED, relay, reset line,
+manual CS pin (only if you're **not** using `hal.spi_device(cs)`).
+
+**HAL accessor:** `hal.gpio(pin)` → returns `Gpio`. Pin range
+`0..=3`.
+
+**Traits implemented:** `embedded_hal::digital::OutputPin`,
+`embedded_hal::digital::StatefulOutputPin`.
+
+#### Snippet — binary form
+
+```rust
+// examples/blink.rs
+// pico-de-gallo decision log:
+//   shape:        binary
+//   sync/async:   sync (reason: trivial blocking loop)
+//   peripherals:  gpio(0)
+//   hal version:  <crate version observed at generation time>
+
+use embedded_hal::digital::OutputPin;
+use pico_de_gallo_hal::Hal;
+use pico_de_gallo_lib::{GpioDirection, GpioPull};
+use std::time::Duration;
+
+fn main() {
+    let hal = Hal::new();
+    let mut gpio = hal.gpio(0);
+    gpio.set_config(GpioDirection::Output, GpioPull::None).unwrap();
+
+    loop {
+        gpio.set_high().unwrap();
+        std::thread::sleep(Duration::from_secs(1));
+        gpio.set_low().unwrap();
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+```
+
+#### Gotchas
+
+- Pin range `0..=3`.
+- Call `set_config(Output, _)` before driving the pin — pins boot
+  unconfigured.
+- The CS pin you pass to `hal.spi_device(cs)` is **not** usable here.
+  Don't share pin numbers.
+- Async usage: see §3 for the mandatory `current_thread` warning.
+
+#### Config knobs
+
+- `Gpio::set_config(GpioDirection, GpioPull)` — direction + internal
+  pull resistor. Variants: `GpioDirection::{Input, Output}`,
+  `GpioPull::{None, Up, Down}`. Default after firmware boot: input,
+  no pull.
 
 ### 6.5 GPIO input
 
-<!-- filled in Task 9 -->
+**When to use:** poll a digital line — a switch, a status pin, a
+strap.
+
+**HAL accessor:** `hal.gpio(pin)` → returns `Gpio`. Pin range
+`0..=3`.
+
+**Traits implemented:** `embedded_hal::digital::InputPin`.
+
+#### Snippet — binary form
+
+```rust
+// examples/<chip>.rs
+// pico-de-gallo decision log:
+//   shape:        binary
+//   sync/async:   sync (reason: polled, no edge wait)
+//   peripherals:  gpio(1)
+//   hal version:  <crate version observed at generation time>
+
+use embedded_hal::digital::InputPin;
+use pico_de_gallo_hal::Hal;
+use pico_de_gallo_lib::{GpioDirection, GpioPull};
+
+fn main() {
+    let hal = Hal::new();
+    let mut button = hal.gpio(1);
+    button.set_config(GpioDirection::Input, GpioPull::Up).unwrap();
+
+    if button.is_low().unwrap() {
+        println!("button pressed");
+    }
+}
+```
+
+#### Snippet — HIL-test form
+
+```rust
+#[cfg(feature = "hil")]
+#[test]
+fn strap_pin_reads_low_with_pullup() {
+    use embedded_hal::digital::InputPin;
+    use pico_de_gallo_lib::{GpioDirection, GpioPull};
+    let hal = pico_de_gallo_hal::Hal::new();
+    let mut pin = hal.gpio(2);
+    pin.set_config(GpioDirection::Input, GpioPull::Up).unwrap();
+    // Strapped low → pull-up loses, pin reads low.
+    assert!(pin.is_low().unwrap());
+}
+```
+
+#### Gotchas
+
+- Pin range `0..=3`.
+- Default pull is `None`. For a button-to-ground use
+  `GpioPull::Up`; for a button-to-VCC use `GpioPull::Down`.
+- For edge-triggered waiting use §6.6; for streamed events §6.7.
+- Async usage: see §3 for the mandatory `current_thread` warning.
 
 ### 6.6 GPIO async wait
 
-<!-- filled in Task 9 -->
+**When to use:** block the current async task until a GPIO edge or
+level happens. Common for button presses, IRQ lines from sensors,
+SPI BUSY/READY pins. **This subsection is the only reason most
+examples need to be async.**
+
+**HAL accessor:** `hal.gpio(pin)` → returns `Gpio`. Pin range
+`0..=3`.
+
+**Traits implemented:** `embedded_hal_async::digital::Wait` —
+methods `wait_for_high`, `wait_for_low`, `wait_for_rising_edge`,
+`wait_for_falling_edge`, `wait_for_any_edge`.
+
+#### Snippet — binary form
+
+```rust
+// examples/button.rs
+// pico-de-gallo decision log:
+//   shape:        binary
+//   sync/async:   async (reason: GPIO Wait trait is async-only)
+//   peripherals:  gpio(0)
+//   hal version:  <crate version observed at generation time>
+
+use embedded_hal_async::digital::Wait;
+use pico_de_gallo_hal::Hal;
+use pico_de_gallo_lib::{GpioDirection, GpioPull};
+
+#[tokio::main]               // multi-thread — DO NOT use current_thread
+async fn main() {
+    let hal = Hal::new();
+    let mut button = hal.gpio(0);
+    button.set_config(GpioDirection::Input, GpioPull::Up).unwrap();
+
+    loop {
+        button.wait_for_falling_edge().await.unwrap();
+        println!("pressed");
+        button.wait_for_rising_edge().await.unwrap();
+        println!("released");
+    }
+}
+```
+
+#### Gotchas
+
+- Pin range `0..=3`.
+- The pin must be configured as Input first. The default firmware
+  state is unconfigured; call `set_config(Input, _)`.
+- The pin **must not** also be Subscribed (§6.7) — pick one
+  mechanism per pin.
+- `#[tokio::main]` only — see §3 for the mandatory `current_thread`
+  warning.
 
 ### 6.7 GPIO subscribe (push events)
 
