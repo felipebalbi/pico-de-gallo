@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a single ~400–700-line markdown file at `docs/ai-agents/pico-de-gallo-hal-examples.md` that an AI coding agent fetches over HTTP and uses as a complete recipe for generating a working `pico-de-gallo-hal` example or HIL test. Add one row to `AGENTS.md` §15.1 so the file stays in lockstep with the HAL.
+**Goal:** Add a single ~500–800-line markdown file at `docs/ai-agents/pico-de-gallo-hal-examples.md` that an AI coding agent fetches over HTTP and uses as a complete recipe for generating a working `pico-de-gallo-hal` example or HIL test. Add one row to `AGENTS.md` §15.1 so the file stays in lockstep with the HAL.
 
 **Architecture:** Pure docs change. The file is built incrementally section-by-section (TL;DR → rules → decision tree → 12 peripheral subsections → worked example → checklist → drift note). After every task that adds code snippets, run the §15-acceptance grep to confirm no fabricated HAL accessors have appeared. One commit per task.
 
@@ -1746,8 +1746,8 @@ Expected: no output. **If any match remains, fix it before continuing.**
 ```bash
 wc -l docs/ai-agents/pico-de-gallo-hal-examples.md
 ```
-Expected: between 400 and 700 lines. If under 400, sections were too
-terse — re-read the spec §8 length budget and pad. If over 700,
+Expected: between 500 and 900 lines. If under 500, sections were too
+terse — re-read the spec §8 length budget and pad. If over 900,
 shorten by removing redundant prose; the per-peripheral templates
 must stay intact.
 
@@ -1857,7 +1857,7 @@ tree, 6. Per-peripheral reference, 7. Worked end-to-end example,
 wc -l docs/ai-agents/pico-de-gallo-hal-examples.md
 file docs/ai-agents/pico-de-gallo-hal-examples.md
 ```
-Expected: line count between 400 and 700; `file` output contains
+Expected: line count between 500 and 900; `file` output contains
 `UTF-8 text` and **not** `CRLF`.
 
 - [ ] **Step 3: Acceptance criterion 3 — no fabricated accessors**

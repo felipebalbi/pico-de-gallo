@@ -68,9 +68,18 @@ unavailable to the agent for the purposes of producing the example.
 
 ## 5. Length budget
 
-- Target: 400–600 lines of markdown.
-- Hard ceiling: 700 lines. Above that, the agent's working memory
+- Target: 500–800 lines of markdown.
+- Hard ceiling: 900 lines. Above that, the agent's working memory
   starts paying a real cost per fetch.
+
+> **Amendment 2026-06-03** (during implementation): the original
+> 400–600 / 700 budget proved too tight once §6 was depth-weighted
+> per §9. Six Deep-tier peripherals with full HIL snippets, gotchas,
+> and config knobs alone reach ~600 lines; the rules sections,
+> decision tree, worked example, and drift note push the total
+> above 700. The new 500–800 / 900 budget reflects what good
+> coverage actually costs, while still being cheap relative to a
+> typical HTML page.
 
 ## 6. Tone and voice
 
@@ -419,7 +428,7 @@ The implementation phase is complete when all of the following hold:
 1. `docs/ai-agents/pico-de-gallo-hal-examples.md` exists, follows the
    structure in §8, honors every authoritative content rule in §10,
    documents only the surface in §11, and uses the template in §12.
-2. The file is between 400 and 700 lines, with LF line endings.
+2. The file is between 500 and 900 lines, with LF line endings.
 3. Every HAL accessor named in the file resolves to a real `pub fn`
    in `crates/pico-de-gallo-hal/src/lib.rs`. The implementer verifies
    this manually before opening the PR by running, from the repo root:
