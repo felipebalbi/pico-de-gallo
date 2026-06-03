@@ -18,8 +18,8 @@ driver against real hardware through a Pico de Gallo USB bridge.
 Decide which shape to produce (§2), pick blocking or async (§3), set
 up `Cargo.toml` (§4), look up which HAL accessor your device needs
 (§5 decision tree → §6 per-peripheral reference), drop a fixed-format
-decision-log header at the top of the generated file (§10.7 below),
-and verify against the checklist in §8.
+decision-log header at the top of the generated file (format defined
+in §7), and verify against the checklist in §8.
 
 The HAL exposes I²C, SPI, GPIO, PWM, ADC, 1-Wire, UART, and Delay.
 Pin range for any GPIO is **0..=3** (the firmware only exposes four
@@ -93,9 +93,9 @@ Selection algorithm, in order:
 >   UART, PWM, ADC, or 1-Wire call.
 >
 > The HAL detects "in async context" but cannot detect runtime
-> flavor (see `Hal::in_async_context` in `lib.rs:463`), so it
-> unconditionally calls `tokio::task::block_in_place`, which tokio
-> documents as panicking on single-threaded runtimes.
+> flavor (see the private `in_async_context` helper at `lib.rs:463`),
+> so it unconditionally calls `tokio::task::block_in_place`, which
+> tokio documents as panicking on single-threaded runtimes.
 
 Default tokio dep when async is chosen:
 
@@ -813,7 +813,7 @@ Before declaring the example done, verify every one of these:
 - [ ] The sync/async choice follows §3, and if async, the runtime is
       multi-thread (`#[tokio::main]` with **no** `current_thread`
       flavor).
-- [ ] Every HAL accessor used appears in the §11-style table
+- [ ] Every HAL accessor used appears in the approved list below
       (i.e. is one of `hal.i2c`, `hal.spi`, `hal.spi_device`,
       `hal.gpio`, `hal.gpio_subscribe`, `hal.gpio_unsubscribe`,
       `hal.pwm_channel`, `hal.adc_read`, `hal.uart`, `hal.delay`,
