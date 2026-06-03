@@ -133,7 +133,23 @@ Re-exported by `pico_de_gallo_hal` (no extra dependency needed):
 
 ## 5. Peripheral decision tree
 
-<!-- filled in Task 6 -->
+| Your device…                                          | Jump to       |
+|-------------------------------------------------------|---------------|
+| Talks I²C (sensor, EEPROM, expander)                  | §6.1          |
+| Talks SPI, driver manages CS itself                   | §6.2          |
+| Talks SPI, you provide a CS pin (typical)             | §6.3          |
+| Is an LED, relay, or reset line (drives a level)      | §6.4          |
+| Is a button or switch you poll                        | §6.5          |
+| Is a button you wait on (edge-triggered)              | §6.6          |
+| Needs streamed edge events (rotary encoder, etc.)     | §6.7          |
+| Is a motor or LED needing a duty cycle                | §6.8          |
+| Is an analog input (potentiometer, thermistor)        | §6.9          |
+| Is a 1-Wire device (DS18B20, DS2401)                  | §6.10         |
+| Talks UART or serial                                  | §6.11         |
+| The driver needs `&mut impl DelayNs`                  | §6.12         |
+
+Most drivers combine 2–3 of these (e.g. SPI device + GPIO output for
+reset + Delay). Pull each one in from its subsection independently.
 
 ## 6. Per-peripheral reference
 
