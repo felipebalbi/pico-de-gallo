@@ -758,7 +758,50 @@ the full surface.
 
 ## 7. Worked end-to-end example
 
-<!-- filled in Task 12 -->
+A complete `examples/shtc3.rs` for the Sensirion SHTC3 temperature
++ humidity sensor. The four-line decision log at the top is
+**mandatory** in every generated example — same prefixes, same
+order, four lines exactly.
+
+```rust
+// examples/shtc3.rs
+// pico-de-gallo decision log:
+//   shape:        binary
+//   sync/async:   sync (reason: shtcx is blocking; no edge wait needed)
+//   peripherals:  i2c, delay
+//   hal version:  0.6
+
+use pico_de_gallo_hal::Hal;
+use shtcx::{shtc3, PowerMode};
+
+fn main() {
+    let hal = Hal::new();
+    let i2c = hal.i2c();           // §6.1
+    let mut delay = hal.delay();   // §6.12
+
+    let mut sensor = shtc3(i2c);
+    let m = sensor.measure(PowerMode::NormalMode, &mut delay).unwrap();
+
+    println!(
+        "{:.2} °C / {:.2} %RH",
+        m.temperature.as_degrees_celsius(),
+        m.humidity.as_percent(),
+    );
+}
+```
+
+Decision-log format — **literal, four lines, exact prefixes**:
+
+```text
+// pico-de-gallo decision log:
+//   shape:        binary | hil-test
+//   sync/async:   sync | async (reason: …)
+//   peripherals:  i2c, gpio(3)
+//   hal version:  <crate version observed at generation time>
+```
+
+Free-form variants are not permitted. The fixed format is
+grep-checkable by the maintainer drift-prevention hooks (see §9).
 
 ## 8. Completion checklist
 
