@@ -108,7 +108,28 @@ override the flavor.
 
 ## 4. Cargo setup
 
-<!-- filled in Task 5 -->
+This file does not pin versions. Resolve current versions from
+crates.io when you edit `Cargo.toml`. The crates you need are:
+
+- `pico-de-gallo-hal` — the HAL itself. Goes in `[dependencies]` for
+  binaries, `[dev-dependencies]` (optional, gated by the `hil`
+  feature) for HIL tests.
+- `embedded-hal` — required if your driver returns
+  `embedded_hal::*::Error` types.
+- `embedded-hal-async` — required only if you use async traits
+  (`embedded_hal_async::digital::Wait`, etc.).
+- `tokio` — required only if async, with features
+  `["rt-multi-thread", "macros", "time"]`. **Do not** pick
+  `current_thread` — see §3.
+- `pico-de-gallo-lib` — required directly when you need
+  `AdcChannel`, `GpioDirection`, `GpioPull`, `GpioEdge`,
+  `AdcConfigurationInfo`, or `PicoDeGallo::uart_set_config` (none
+  of these are re-exported by the HAL).
+- The driver crate(s) for the device you're exercising.
+
+Re-exported by `pico_de_gallo_hal` (no extra dependency needed):
+`GpioEvent`, `I2cFrequency`, `SpiConfigurationInfo`, `SpiPhase`,
+`SpiPolarity`, `UartConfigurationInfo`.
 
 ## 5. Peripheral decision tree
 
