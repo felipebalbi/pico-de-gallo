@@ -27,7 +27,45 @@ pins). The HAL is `pico-de-gallo-hal` on crates.io.
 
 ## 2. Output-shape rule (binary vs. HIL test)
 
-<!-- filled in Task 3 -->
+**Default: binary at `examples/<chip>.rs`.**
+
+Pick **HIL test** (`#[cfg(feature = "hil")] #[test]` inside a driver
+crate, gated behind a `hil` Cargo feature) only when **at least one**
+of these is true:
+
+- The user explicitly says "test", "validate the driver", "regression
+  test", "CI", or "hardware-in-the-loop".
+- The user names an existing driver crate they want regression
+  coverage for.
+
+Otherwise produce the binary. "Show me X works", "make X blink",
+"read a value from X", and bring-up scripts are all binary requests.
+
+If both shapes seem to fit, default to binary; binaries are easier to
+run by hand and the user can always wrap one in a test later.
+
+The HIL-test shape pattern is:
+
+```rust
+#[cfg(feature = "hil")]
+#[test]
+fn <chip>_<assertion>() {
+    let hal = pico_de_gallo_hal::Hal::new();
+    // ... assert something the user would actually want to know
+    //     is true for their hardware ...
+}
+```
+
+Gate it in the driver crate's `Cargo.toml`:
+
+```toml
+[features]
+default = []
+hil = ["dep:pico-de-gallo-hal"]
+
+[dev-dependencies]
+pico-de-gallo-hal = { version = "*", optional = true }
+```
 
 ## 3. Sync-vs-async rule
 
