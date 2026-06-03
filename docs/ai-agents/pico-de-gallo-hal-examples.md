@@ -486,7 +486,68 @@ async fn main() {
 
 ### 6.7 GPIO subscribe (push events)
 
-<!-- filled in Task 10 -->
+**When to use:** the application needs a stream of edge events from
+a pin (rotary encoders, repeated button events) without polling and
+without holding an async `wait_for_*` future per edge.
+
+**HAL accessors:**
+
+- `hal.gpio_subscribe(pin, edge)` → `Result<(), GpioHalError>` —
+  start firmware-side monitoring. `edge` is `GpioEdge::Rising`,
+  `Falling`, or `Any`.
+- `hal.gpio_unsubscribe(pin)` → `Result<(), GpioHalError>` — stop
+  monitoring and return the pin to ordinary use.
+
+Push events arrive on the `"gpio/event"` topic as `GpioEvent` values.
+**Receiving them from the HAL is not currently exposed as a typed
+stream**; for end-to-end push handling you may need to drop down to
+`pico_de_gallo_lib::PicoDeGallo` directly.
+
+**Traits implemented:** n/a (project-specific).
+
+#### Snippet — binary form
+
+```rust
+// examples/<chip>.rs
+// pico-de-gallo decision log:
+//   shape:        binary
+//   sync/async:   sync (reason: subscribe/unsubscribe are blocking calls)
+//   peripherals:  gpio_subscribe(2)
+//   hal version:  <crate version observed at generation time>
+
+use pico_de_gallo_hal::Hal;
+use pico_de_gallo_lib::{GpioDirection, GpioEdge, GpioPull};
+
+fn main() {
+    let hal = Hal::new();
+
+    // Configure the pin as Input first.
+    let mut pin = hal.gpio(2);
+    pin.set_config(GpioDirection::Input, GpioPull::Up).unwrap();
+    drop(pin);  // release the Gpio handle so the subscription owns it
+
+    hal.gpio_subscribe(2, GpioEdge::Falling).unwrap();
+    // Consume GpioEvents via pico_de_gallo_lib::PicoDeGallo if needed.
+    // ... eventually:
+    hal.gpio_unsubscribe(2).unwrap();
+}
+```
+
+#### Gotchas
+
+- Pin range `0..=3`.
+- While subscribed, the pin **cannot** be `is_low`/`is_high`/`set_*`/`wait_for_*`'d.
+  Those calls return `GpioError::PinMonitored`. Call
+  `hal.gpio_unsubscribe(pin)` first.
+- If a previous host process died while holding a subscription,
+  subsequent GPIO operations on that pin fail with `PinMonitored`
+  until the firmware is reset. **The HAL does not expose a recovery
+  method.** Recover by power-cycling the board, or by depending on
+  `pico-de-gallo-lib` directly and calling
+  `PicoDeGallo::system_reset_subscriptions().await`.
+- The HAL does not currently surface push events as a stream. For
+  full producer/consumer behavior you'll need
+  `pico-de-gallo-lib` directly.
 
 ### 6.8 PWM
 
