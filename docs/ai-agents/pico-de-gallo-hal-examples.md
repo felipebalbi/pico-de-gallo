@@ -69,7 +69,42 @@ pico-de-gallo-hal = { version = "*", optional = true }
 
 ## 3. Sync-vs-async rule
 
-<!-- filled in Task 4 -->
+Selection algorithm, in order:
+
+1. If the driver crate's primary API is `async fn` → **async**
+   (`#[tokio::main]`).
+2. If the driver crate's primary API is blocking → **blocking**.
+3. If the driver crate offers both → **blocking** (simpler).
+4. If the example needs GPIO edge waits (the `Wait` trait:
+   `wait_for_falling_edge`, etc.) → **async** regardless of (1)–(3).
+5. If both async edge waits **and** blocking driver methods are
+   needed → **async**. The HAL's `block_in_place` plumbing lets
+   blocking trait calls run inside a tokio task, **but read the
+   warning below first**.
+
+> ### ⚠ Mandatory: never use `current_thread` tokio
+>
+> If you pick async, you MUST use the **default multi-thread**
+> tokio runtime:
+>
+> - `#[tokio::main]` — correct.
+> - `#[tokio::main(flavor = "current_thread")]` — **will panic**
+>   the first time a driver issues a blocking I²C, SPI, GPIO,
+>   UART, PWM, ADC, or 1-Wire call.
+>
+> The HAL detects "in async context" but cannot detect runtime
+> flavor (see `Hal::in_async_context` in `lib.rs:463`), so it
+> unconditionally calls `tokio::task::block_in_place`, which tokio
+> documents as panicking on single-threaded runtimes.
+
+Default tokio dep when async is chosen:
+
+```toml
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+```
+
+Do **not** add `"current_thread"` to the feature list and do **not**
+override the flavor.
 
 ## 4. Cargo setup
 
