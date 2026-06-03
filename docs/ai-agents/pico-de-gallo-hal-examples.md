@@ -226,7 +226,72 @@ fn tmp102_responds_on_default_address() {
 
 ### 6.3 SPI device (with CS)
 
-<!-- filled in Task 8 -->
+**When to use:** the device is on an SPI bus and you provide a GPIO
+pin as chip-select. This is the common case — most drivers expect an
+`SpiDevice` that wraps CS handling for them.
+
+**HAL accessor:** `hal.spi_device(cs_pin)` → returns
+`Result<SpiDev, SpiHalError>`. CS pin range: `0..=3`.
+
+**Traits implemented:** `embedded_hal::spi::SpiDevice`,
+`embedded_hal_async::spi::SpiDevice`.
+
+#### Snippet — binary form
+
+```rust
+// examples/<chip>.rs
+// pico-de-gallo decision log:
+//   shape:        binary
+//   sync/async:   sync (reason: driver is blocking)
+//   peripherals:  spi_device(cs=0)
+//   hal version:  <crate version observed at generation time>
+
+use pico_de_gallo_hal::Hal;
+use <driver_crate>::Driver;
+
+fn main() {
+    let hal = Hal::new();
+    let spi = hal.spi_device(0).expect("spi_device failed");
+    let mut driver = Driver::new(spi);
+    // ... use driver ...
+}
+```
+
+#### Snippet — HIL-test form
+
+```rust
+#[cfg(feature = "hil")]
+#[test]
+fn driver_who_am_i_matches_datasheet() {
+    let hal = pico_de_gallo_hal::Hal::new();
+    let spi = hal.spi_device(0).unwrap();
+    let mut driver = <DriverCrate>::new(spi);
+    assert_eq!(driver.who_am_i().unwrap(), 0xAB);
+}
+```
+
+#### Gotchas
+
+- CS pin range is `0..=3`. The pin **must not** also be used as a
+  `Gpio` elsewhere in the program (no concurrent ownership).
+- The async `SpiDevice::transaction` is **not** cancellation-safe:
+  if the future is dropped after CS is asserted low but before it is
+  deasserted, CS stays low. Match the behavior of
+  `embedded-hal-bus::ExclusiveDevice`.
+- `Operation::TransferInPlace(buf)` works, but the implementation
+  allocates a `Vec` the same size as `buf` per occurrence in a
+  transaction. For large in-place transfers prefer
+  `Operation::Transfer(read, write)` with two buffers.
+- Async usage: see §3 for the mandatory `current_thread` warning.
+
+#### Config knobs
+
+- `hal.spi_set_config(freq_hz, SpiPhase, SpiPolarity)` — clock
+  frequency, phase, polarity. Defaults: 1 MHz,
+  `SpiPhase::CaptureOnFirstTransition`, `SpiPolarity::IdleLow`
+  (mode 0).
+- `hal.spi_get_config() -> Result<SpiConfigurationInfo, _>` — read
+  back current configuration.
 
 ### GPIO subsections (§§6.4–6.7) — read first
 
