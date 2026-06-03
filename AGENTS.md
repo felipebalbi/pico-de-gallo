@@ -718,7 +718,7 @@ update at least the chapter(s) on the right:
 | `pico-de-gallo-ffi/src/lib.rs` — `gallo_*` functions        | `book/src/crates/ffi.md`                                                 |
 | `pico-de-gallo-app/src/...` — CLI subcommands/flags         | `book/src/crates/app.md`, the relevant `book/src/interfaces/*` chapter   |
 | `pico-de-gallo-lib/src/lib.rs` — public methods             | `book/src/crates/lib.md`                                                 |
-| `pico-de-gallo-hal/src/...` — trait impls                   | `book/src/crates/hal.md`, `book/src/driver/*`                            |
+| `pico-de-gallo-hal/src/...` — trait impls                   | `book/src/crates/hal.md`, `book/src/driver/*`, `docs/ai-agents/pico-de-gallo-hal-examples.md` |
 | `pyco-de-gallo/src/...` — Python surface                    | `book/src/crates/python.md`                                              |
 | `pico-de-gallo-firmware/src/...` — peripheral behaviour     | `book/src/internals/firmware.md`, `book/src/interfaces/*`                |
 | `crates/pico-de-gallo-internal/build.rs` — schema version   | `book/src/internals/releases.md`, `book/src/internals/wire-protocol.md`  |
