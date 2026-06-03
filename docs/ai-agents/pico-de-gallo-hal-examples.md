@@ -805,7 +805,30 @@ grep-checkable by the maintainer drift-prevention hooks (see §9).
 
 ## 8. Completion checklist
 
-<!-- filled in Task 13 -->
+Before declaring the example done, verify every one of these:
+
+- [ ] The `Cargo.toml` entries from §4 are present and correct.
+- [ ] The chosen output shape (binary vs HIL test) matches the
+      user's intent per §2.
+- [ ] The sync/async choice follows §3, and if async, the runtime is
+      multi-thread (`#[tokio::main]` with **no** `current_thread`
+      flavor).
+- [ ] Every HAL accessor used appears in the §11-style table
+      (i.e. is one of `hal.i2c`, `hal.spi`, `hal.spi_device`,
+      `hal.gpio`, `hal.gpio_subscribe`, `hal.gpio_unsubscribe`,
+      `hal.pwm_channel`, `hal.adc_read`, `hal.uart`, `hal.delay`,
+      `hal.onewire`, or one of their associated `*_set_config`/
+      `*_get_config` siblings). No invented APIs.
+- [ ] Pin numbers are in range: GPIO `0..=3`, PWM channel `0..=3`,
+      ADC channel is an `AdcChannel` enum variant.
+- [ ] If using `spi_device(cs)`, the `cs` pin is **not** also used
+      as a `Gpio` elsewhere.
+- [ ] If using `gpio_subscribe(pin, …)`, a matching
+      `gpio_unsubscribe(pin)` exists on every exit path.
+- [ ] The mandatory four-line decision-log comment block is at the
+      top of the example, with the literal prefixes from §7.
+- [ ] If the host can run `cargo check` against the generated file,
+      it passes.
 
 ## 9. Drift-prevention note (for maintainers)
 
