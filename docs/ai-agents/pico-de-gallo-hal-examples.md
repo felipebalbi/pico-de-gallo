@@ -222,7 +222,36 @@ fn tmp102_responds_on_default_address() {
 
 ### 6.2 SPI bus (no CS)
 
-<!-- filled in Task 11 -->
+**When to use:** rarely — only when the driver crate manages chip
+select itself (passes its own GPIO handle, talks to a non-CS device,
+or daisy-chains). Otherwise prefer §6.3.
+
+**HAL accessor:** `hal.spi()` → returns `Spi`.
+
+**Traits implemented:** `embedded_hal::spi::SpiBus`,
+`embedded_hal_async::spi::SpiBus`.
+
+```rust
+use embedded_hal::spi::SpiBus;
+use pico_de_gallo_hal::Hal;
+
+fn main() {
+    let hal = Hal::new();
+    let mut spi = hal.spi();
+
+    let tx = [0xAA, 0x55];
+    let mut rx = [0u8; 2];
+    spi.transfer(&mut rx, &tx).unwrap();
+    println!("rx: {:02x?}", rx);
+}
+```
+
+#### Gotchas
+
+- No automatic CS. The bus is always live.
+- Config knobs are shared with §6.3: `hal.spi_set_config(...)` and
+  `hal.spi_get_config()`.
+- Async usage: see §3 for the mandatory `current_thread` warning.
 
 ### 6.3 SPI device (with CS)
 
@@ -551,23 +580,181 @@ fn main() {
 
 ### 6.8 PWM
 
-<!-- filled in Task 11 -->
+**When to use:** the device needs a duty-cycle waveform — motor
+ESCs, dimmable LEDs, servo control.
+
+**HAL accessor:** `hal.pwm_channel(channel)` → returns `PwmChannel`.
+Channels `0..=3` (channels 0/1 share slice 6 on GPIO 12/13, channels
+2/3 share slice 7 on GPIO 14/15).
+
+```rust
+use embedded_hal::pwm::SetDutyCycle;
+use pico_de_gallo_hal::Hal;
+
+fn main() {
+    let mut hal = Hal::new();
+    hal.pwm_set_config(0, 1_000, false).unwrap();  // 1 kHz, edge-aligned
+    let mut ch = hal.pwm_channel(0);
+    ch.set_duty_cycle_percent(50).unwrap();
+}
+```
+
+Gotchas: `pwm_set_config(channel, freq_hz, phase_correct)` affects
+the whole slice — channels 0/1 cannot use different frequencies, and
+neither can 2/3. Async usage: see §3 for the mandatory
+`current_thread` warning. See
+[`pico-de-gallo-hal` docs.rs](https://docs.rs/pico-de-gallo-hal) for
+the full surface.
 
 ### 6.9 ADC
 
-<!-- filled in Task 11 -->
+**When to use:** read an analog input — potentiometer, thermistor,
+battery voltage.
+
+**HAL accessor:** `hal.adc_read(channel)` →
+`Result<u16, AdcHalError>`. There is **no `embedded-hal` 1.0 ADC
+trait**, so this is a project-specific method.
+
+**Traits implemented:** n/a.
+
+```rust
+use pico_de_gallo_hal::Hal;
+use pico_de_gallo_lib::AdcChannel;  // not re-exported by the HAL
+
+fn main() {
+    let hal = Hal::new();
+    let raw = hal.adc_read(AdcChannel::Adc0).unwrap();
+    let volts = raw as f32 * 3.3 / 4096.0;
+    println!("raw: {raw}, V≈{volts:.3}");
+}
+```
+
+#### Snippet — HIL-test form
+
+```rust
+#[cfg(feature = "hil")]
+#[test]
+fn adc0_reads_in_valid_range() {
+    use pico_de_gallo_lib::AdcChannel;
+    let hal = pico_de_gallo_hal::Hal::new();
+    let raw = hal.adc_read(AdcChannel::Adc0).unwrap();
+    assert!(raw <= 4095, "12-bit ADC must be ≤ 4095, got {raw}");
+}
+```
+
+#### Gotchas
+
+- `AdcChannel` is **not** re-exported by the HAL. Add
+  `pico-de-gallo-lib` to your dependencies and
+  `use pico_de_gallo_lib::AdcChannel;`.
+- 12-bit raw value (`0..=4095`). Convert with `raw × 3.3 / 4096`.
+- Use `hal.adc_get_config()` for resolution/reference details
+  (returns `AdcConfigurationInfo`).
+- Async usage: see §3 for the mandatory `current_thread` warning.
 
 ### 6.10 1-Wire
 
-<!-- filled in Task 11 -->
+**When to use:** the device is on a Dallas/Maxim 1-Wire bus — DS18B20
+temperature sensor, DS2401 silicon serial number, etc.
+
+**HAL accessor:** `hal.onewire()` → returns `OneWire`. No
+`embedded-hal` 1-Wire trait exists.
+
+**Traits implemented:** n/a.
+
+```rust
+use pico_de_gallo_hal::Hal;
+
+fn main() {
+    let hal = Hal::new();
+    let ow = hal.onewire();
+
+    let present = ow.reset().unwrap();
+    println!("device present: {present}");
+
+    // Issue ROM-skip + convert-T to all devices on the bus.
+    ow.write(&[0xCC, 0x44]).unwrap();
+}
+```
+
+Available methods: `reset()`, `read(len)`, `write(data)`,
+`write_pullup(data, pullup_ms)`, `search()`, `search_next()`.
+
+#### Snippet — HIL-test form
+
+```rust
+#[cfg(feature = "hil")]
+#[test]
+fn onewire_bus_has_at_least_one_device() {
+    let hal = pico_de_gallo_hal::Hal::new();
+    let ow = hal.onewire();
+    assert!(ow.reset().unwrap(), "no 1-Wire device responded");
+}
+```
+
+#### Gotchas
+
+- Enumerate devices with `search()` for the first address, then
+  `search_next()` until it returns `None`.
+- Parasitic-power parts (DS18B20 in 2-wire mode) need
+  `write_pullup(data, pullup_ms)` to hold the line high after the
+  convert command.
+- Async usage: see §3 for the mandatory `current_thread` warning.
 
 ### 6.11 UART
 
-<!-- filled in Task 11 -->
+**When to use:** the device speaks serial — a GPS module, a
+debug-port-on-UART chip, AT-command modem.
+
+**HAL accessor:** `hal.uart()` → returns `Uart`. Implements
+`embedded_io::{Read,Write}` and `embedded_io_async::{Read,Write}`.
+
+```rust
+use embedded_io::Write as _;
+use pico_de_gallo_hal::Hal;
+
+fn main() {
+    let hal = Hal::new();
+    let mut uart = hal.uart();
+    uart.write_all(b"AT\r\n").unwrap();
+}
+```
+
+Gotchas: read uses a timeout (default 1000 ms). Set with
+`uart.set_timeout_ms(0)` for non-blocking. **Baud rate is fixed at
+the firmware default. The HAL does not expose a baud-rate setter** —
+to change baud, depend on `pico-de-gallo-lib` and call
+`PicoDeGallo::uart_set_config(...)` directly. Async usage: see §3
+for the mandatory `current_thread` warning. See
+[`pico-de-gallo-hal` docs.rs](https://docs.rs/pico-de-gallo-hal) for
+the full surface.
 
 ### 6.12 Delay
 
-<!-- filled in Task 11 -->
+**When to use:** the driver wants `&mut impl DelayNs` for
+register-settle delays, reset sequences, sensor warm-up.
+
+**HAL accessor:** `hal.delay()` → returns `Delay`. Implements
+`embedded_hal::delay::DelayNs` and
+`embedded_hal_async::delay::DelayNs`.
+
+```rust
+use pico_de_gallo_hal::Hal;
+
+fn main() {
+    let hal = Hal::new();
+    let i2c = hal.i2c();
+    let mut delay = hal.delay();
+    let mut sensor = MyDriver::new(i2c);
+    sensor.init(&mut delay).unwrap();
+}
+```
+
+Gotchas: blocking `Delay` uses `std::thread::sleep`; async `Delay`
+uses `tokio::time::sleep`. Pass `&mut delay` by-mutable-reference to
+driver methods. See
+[`pico-de-gallo-hal` docs.rs](https://docs.rs/pico-de-gallo-hal) for
+the full surface.
 
 ## 7. Worked end-to-end example
 
