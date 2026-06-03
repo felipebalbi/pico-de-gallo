@@ -10,7 +10,20 @@ If this file contradicts that file, the source wins — file an issue at
 
 ## 1. TL;DR
 
-<!-- filled in Task 2 -->
+You are generating either a host-side **example binary** at
+`examples/<chip>.rs` or a **hardware-in-the-loop test** gated behind
+`#[cfg(feature = "hil")]`. Both shapes exercise an `embedded-hal`
+driver against real hardware through a Pico de Gallo USB bridge.
+
+Decide which shape to produce (§2), pick blocking or async (§3), set
+up `Cargo.toml` (§4), look up which HAL accessor your device needs
+(§5 decision tree → §6 per-peripheral reference), drop a fixed-format
+decision-log header at the top of the generated file (§10.7 below),
+and verify against the checklist in §8.
+
+The HAL exposes I²C, SPI, GPIO, PWM, ADC, 1-Wire, UART, and Delay.
+Pin range for any GPIO is **0..=3** (the firmware only exposes four
+pins). The HAL is `pico-de-gallo-hal` on crates.io.
 
 ## 2. Output-shape rule (binary vs. HIL test)
 
