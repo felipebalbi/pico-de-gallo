@@ -832,4 +832,26 @@ Before declaring the example done, verify every one of these:
 
 ## 9. Drift-prevention note (for maintainers)
 
-<!-- filled in Task 14 -->
+This file documents the public surface of `pico-de-gallo-hal`. It is
+listed in `AGENTS.md` §15.1 as a parity target for
+`crates/pico-de-gallo-hal/src/`. Any PR that changes the HAL public
+surface (accessor added/removed/renamed, gotcha discovered, trait
+impl changed) must update this file in the same commit. Reviewers
+treat omissions as a blocker, not a nit.
+
+**Recommended CI guard (not yet implemented):** a regex check that
+extracts every `hal\.\w+\(` and `Hal::\w+\b` from this file and
+asserts the symbol exists as a `pub fn` in
+`crates/pico-de-gallo-hal/src/lib.rs`. A one-liner that catches the
+common drift mode:
+
+```bash
+diff <(grep -oE '(hal\.[a-z0-9_]+\()|(Hal::[a-z0-9_]+\b)' \
+        docs/ai-agents/pico-de-gallo-hal-examples.md | sort -u) \
+     <(grep -oE 'pub fn [a-z0-9_]+' \
+        crates/pico-de-gallo-hal/src/lib.rs | sort -u)
+```
+
+If the file disagrees with the source, the **source wins** — file an
+issue at
+<https://github.com/OpenDevicePartnership/pico-de-gallo/issues>.
