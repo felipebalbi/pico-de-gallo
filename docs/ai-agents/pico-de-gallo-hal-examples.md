@@ -121,15 +121,18 @@ crates.io when you edit `Cargo.toml`. The crates you need are:
 - `tokio` — required only if async, with features
   `["rt-multi-thread", "macros", "time"]`. **Do not** pick
   `current_thread` — see §3.
-- `pico-de-gallo-lib` — required directly when you need
-  `AdcChannel`, `GpioDirection`, `GpioPull`, `GpioEdge`,
-  `AdcConfigurationInfo`, or `PicoDeGallo::uart_set_config` (none
-  of these are re-exported by the HAL).
+- `pico-de-gallo-lib` — required directly only when you need
+  `PicoDeGallo::uart_set_config` (UART baud-rate setter; not on the
+  HAL). As of HAL 0.7, `AdcChannel`, `AdcConfigurationInfo`,
+  `GpioDirection`, `GpioEdge`, and `GpioPull` are re-exported by
+  `pico_de_gallo_hal` and no longer require depending on the lib
+  directly.
 - The driver crate(s) for the device you're exercising.
 
 Re-exported by `pico_de_gallo_hal` (no extra dependency needed):
-`GpioEvent`, `I2cFrequency`, `SpiConfigurationInfo`, `SpiPhase`,
-`SpiPolarity`, `UartConfigurationInfo`.
+`AdcChannel`, `AdcConfigurationInfo`, `GpioDirection`, `GpioEdge`,
+`GpioEvent`, `GpioPull`, `I2cFrequency`, `SpiConfigurationInfo`,
+`SpiPhase`, `SpiPolarity`, `UartConfigurationInfo`.
 
 ## 5. Peripheral decision tree
 
@@ -342,8 +345,8 @@ direction; call `gpio_unsubscribe(pin)` to leave Subscribed. **A pin
 that is Subscribed cannot also be wait()'d on or read/written**: the
 firmware returns `GpioError::PinMonitored`.
 
-`use pico_de_gallo_lib::{GpioDirection, GpioPull, GpioEdge};` —
-these are not re-exported by the HAL.
+`use pico_de_gallo_hal::{GpioDirection, GpioPull, GpioEdge};` —
+re-exported from `pico-de-gallo-lib` (HAL 0.7+).
 
 ### 6.4 GPIO output
 
@@ -368,7 +371,7 @@ manual CS pin (only if you're **not** using `hal.spi_device(cs)`).
 
 use embedded_hal::digital::OutputPin;
 use pico_de_gallo_hal::Hal;
-use pico_de_gallo_lib::{GpioDirection, GpioPull};
+use pico_de_gallo_hal::{GpioDirection, GpioPull};
 use std::time::Duration;
 
 fn main() {
@@ -423,7 +426,7 @@ strap.
 
 use embedded_hal::digital::InputPin;
 use pico_de_gallo_hal::Hal;
-use pico_de_gallo_lib::{GpioDirection, GpioPull};
+use pico_de_gallo_hal::{GpioDirection, GpioPull};
 
 fn main() {
     let hal = Hal::new();
@@ -443,7 +446,7 @@ fn main() {
 #[test]
 fn strap_pin_reads_low_with_pullup() {
     use embedded_hal::digital::InputPin;
-    use pico_de_gallo_lib::{GpioDirection, GpioPull};
+    use pico_de_gallo_hal::{GpioDirection, GpioPull};
     let hal = pico_de_gallo_hal::Hal::new();
     let mut pin = hal.gpio(2);
     pin.set_config(GpioDirection::Input, GpioPull::Up).unwrap();
@@ -486,7 +489,7 @@ methods `wait_for_high`, `wait_for_low`, `wait_for_rising_edge`,
 
 use embedded_hal_async::digital::Wait;
 use pico_de_gallo_hal::Hal;
-use pico_de_gallo_lib::{GpioDirection, GpioPull};
+use pico_de_gallo_hal::{GpioDirection, GpioPull};
 
 #[tokio::main]               // multi-thread — DO NOT use current_thread
 async fn main() {
@@ -551,7 +554,7 @@ stream**; for end-to-end push handling you may need to drop down to
 //   hal version:  <crate version observed at generation time>
 
 use pico_de_gallo_hal::Hal;
-use pico_de_gallo_lib::{GpioDirection, GpioEdge, GpioPull};
+use pico_de_gallo_hal::{GpioDirection, GpioEdge, GpioPull};
 
 fn main() {
     let hal = Hal::new();
@@ -576,10 +579,11 @@ fn main() {
   `hal.gpio_unsubscribe(pin)` first.
 - If a previous host process died while holding a subscription,
   subsequent GPIO operations on that pin fail with `PinMonitored`
-  until the firmware is reset. **The HAL does not expose a recovery
-  method.** Recover by power-cycling the board, or by depending on
-  `pico-de-gallo-lib` directly and calling
-  `PicoDeGallo::system_reset_subscriptions().await`.
+  until the firmware is reset. **Recovery:** call
+  `hal.system_reset_subscriptions()?` after connect (recommended on
+  every `Hal::new_validated()` flow). As of HAL 0.7, the recovery
+  endpoint is exposed directly; older HALs required dropping to
+  `pico-de-gallo-lib`. Power-cycling the board also works.
 - The HAL does not currently surface push events as a stream. For
   full producer/consumer behavior you'll need
   `pico-de-gallo-lib` directly.
@@ -624,8 +628,7 @@ trait**, so this is a project-specific method.
 **Traits implemented:** n/a.
 
 ```rust
-use pico_de_gallo_hal::Hal;
-use pico_de_gallo_lib::AdcChannel;  // not re-exported by the HAL
+use pico_de_gallo_hal::{AdcChannel, Hal}; // AdcChannel re-exported by HAL 0.7+
 
 fn main() {
     let hal = Hal::new();
@@ -641,7 +644,7 @@ fn main() {
 #[cfg(feature = "hil")]
 #[test]
 fn adc0_reads_in_valid_range() {
-    use pico_de_gallo_lib::AdcChannel;
+    use pico_de_gallo_hal::AdcChannel;
     let hal = pico_de_gallo_hal::Hal::new();
     let raw = hal.adc_read(AdcChannel::Adc0).unwrap();
     assert!(raw <= 4095, "12-bit ADC must be ≤ 4095, got {raw}");
@@ -650,12 +653,11 @@ fn adc0_reads_in_valid_range() {
 
 #### Gotchas
 
-- `AdcChannel` is **not** re-exported by the HAL. Add
-  `pico-de-gallo-lib` to your dependencies and
-  `use pico_de_gallo_lib::AdcChannel;`.
+- `AdcChannel` is re-exported by `pico_de_gallo_hal` as of HAL 0.7.
+  Older HALs required `use pico_de_gallo_lib::AdcChannel;`.
 - 12-bit raw value (`0..=4095`). Convert with `raw × 3.3 / 4096`.
 - Use `hal.adc_get_config()` for resolution/reference details
-  (returns `AdcConfigurationInfo`).
+  (returns `AdcConfigurationInfo`, also re-exported as of HAL 0.7).
 - Async usage: see §3 for the mandatory `current_thread` warning.
 
 ### 6.10 1-Wire
