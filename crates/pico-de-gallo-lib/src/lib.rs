@@ -484,9 +484,13 @@ impl PicoDeGallo {
     /// Wait for GPIO numbered by `pin` to reach `High` state.
     ///
     /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    ///
+    /// This call waits forever. For a bounded wait that returns
+    /// [`GpioError::Timeout`] on expiry, use
+    /// [`gpio_wait_for_high_with_timeout`](Self::gpio_wait_for_high_with_timeout).
     pub async fn gpio_wait_for_high(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
-            .send_resp::<GpioWaitForHigh>(&GpioWaitRequest { pin })
+            .send_resp::<GpioWaitForHigh>(&GpioWaitRequest { pin, timeout_ms: 0 })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
@@ -494,9 +498,13 @@ impl PicoDeGallo {
     /// Wait for GPIO numbered by `pin` to reach `Low` state.
     ///
     /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    ///
+    /// This call waits forever. For a bounded wait that returns
+    /// [`GpioError::Timeout`] on expiry, use
+    /// [`gpio_wait_for_low_with_timeout`](Self::gpio_wait_for_low_with_timeout).
     pub async fn gpio_wait_for_low(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
-            .send_resp::<GpioWaitForLow>(&GpioWaitRequest { pin })
+            .send_resp::<GpioWaitForLow>(&GpioWaitRequest { pin, timeout_ms: 0 })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
@@ -504,9 +512,13 @@ impl PicoDeGallo {
     /// Wait for a rising edge on the GPIO numbered by `pin`.
     ///
     /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    ///
+    /// This call waits forever. For a bounded wait that returns
+    /// [`GpioError::Timeout`] on expiry, use
+    /// [`gpio_wait_for_rising_edge_with_timeout`](Self::gpio_wait_for_rising_edge_with_timeout).
     pub async fn gpio_wait_for_rising_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
-            .send_resp::<GpioWaitForRising>(&GpioWaitRequest { pin })
+            .send_resp::<GpioWaitForRising>(&GpioWaitRequest { pin, timeout_ms: 0 })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
@@ -514,9 +526,13 @@ impl PicoDeGallo {
     /// Wait for a falling edge on the GPIO numbered by `pin`.
     ///
     /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    ///
+    /// This call waits forever. For a bounded wait that returns
+    /// [`GpioError::Timeout`] on expiry, use
+    /// [`gpio_wait_for_falling_edge_with_timeout`](Self::gpio_wait_for_falling_edge_with_timeout).
     pub async fn gpio_wait_for_falling_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
-            .send_resp::<GpioWaitForFalling>(&GpioWaitRequest { pin })
+            .send_resp::<GpioWaitForFalling>(&GpioWaitRequest { pin, timeout_ms: 0 })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
@@ -525,9 +541,128 @@ impl PicoDeGallo {
     /// numbered by `pin`.
     ///
     /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    ///
+    /// This call waits forever. For a bounded wait that returns
+    /// [`GpioError::Timeout`] on expiry, use
+    /// [`gpio_wait_for_any_edge_with_timeout`](Self::gpio_wait_for_any_edge_with_timeout).
     pub async fn gpio_wait_for_any_edge(&self, pin: u8) -> Result<(), PicoDeGalloError<GpioError>> {
         self.client
-            .send_resp::<GpioWaitForAny>(&GpioWaitRequest { pin })
+            .send_resp::<GpioWaitForAny>(&GpioWaitRequest { pin, timeout_ms: 0 })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Wait for GPIO numbered by `pin` to reach `High` state, with a
+    /// host-supplied timeout.
+    ///
+    /// Returns `Err(PicoDeGalloError::Endpoint(GpioError::Timeout))`
+    /// if the level is not reached within `timeout`. Passing
+    /// `Duration::ZERO` reverts to the wait-forever behavior of
+    /// [`gpio_wait_for_high`](Self::gpio_wait_for_high).
+    ///
+    /// Available on firmware schema 0.7+.
+    ///
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    pub async fn gpio_wait_for_high_with_timeout(
+        &self,
+        pin: u8,
+        timeout: std::time::Duration,
+    ) -> Result<(), PicoDeGalloError<GpioError>> {
+        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        self.client
+            .send_resp::<GpioWaitForHigh>(&GpioWaitRequest { pin, timeout_ms })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Wait for GPIO numbered by `pin` to reach `Low` state, with a
+    /// host-supplied timeout.
+    ///
+    /// Returns `Err(PicoDeGalloError::Endpoint(GpioError::Timeout))`
+    /// if the level is not reached within `timeout`. Passing
+    /// `Duration::ZERO` reverts to the wait-forever behavior of
+    /// [`gpio_wait_for_low`](Self::gpio_wait_for_low).
+    ///
+    /// Available on firmware schema 0.7+.
+    ///
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    pub async fn gpio_wait_for_low_with_timeout(
+        &self,
+        pin: u8,
+        timeout: std::time::Duration,
+    ) -> Result<(), PicoDeGalloError<GpioError>> {
+        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        self.client
+            .send_resp::<GpioWaitForLow>(&GpioWaitRequest { pin, timeout_ms })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Wait for a rising edge on the GPIO numbered by `pin`, with a
+    /// host-supplied timeout.
+    ///
+    /// Returns `Err(PicoDeGalloError::Endpoint(GpioError::Timeout))`
+    /// if no rising edge is detected within `timeout`. Passing
+    /// `Duration::ZERO` reverts to the wait-forever behavior of
+    /// [`gpio_wait_for_rising_edge`](Self::gpio_wait_for_rising_edge).
+    ///
+    /// Available on firmware schema 0.7+.
+    ///
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    pub async fn gpio_wait_for_rising_edge_with_timeout(
+        &self,
+        pin: u8,
+        timeout: std::time::Duration,
+    ) -> Result<(), PicoDeGalloError<GpioError>> {
+        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        self.client
+            .send_resp::<GpioWaitForRising>(&GpioWaitRequest { pin, timeout_ms })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Wait for a falling edge on the GPIO numbered by `pin`, with a
+    /// host-supplied timeout.
+    ///
+    /// Returns `Err(PicoDeGalloError::Endpoint(GpioError::Timeout))`
+    /// if no falling edge is detected within `timeout`. Passing
+    /// `Duration::ZERO` reverts to the wait-forever behavior of
+    /// [`gpio_wait_for_falling_edge`](Self::gpio_wait_for_falling_edge).
+    ///
+    /// Available on firmware schema 0.7+.
+    ///
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    pub async fn gpio_wait_for_falling_edge_with_timeout(
+        &self,
+        pin: u8,
+        timeout: std::time::Duration,
+    ) -> Result<(), PicoDeGalloError<GpioError>> {
+        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        self.client
+            .send_resp::<GpioWaitForFalling>(&GpioWaitRequest { pin, timeout_ms })
+            .await?
+            .map_err(PicoDeGalloError::Endpoint)
+    }
+
+    /// Wait for either a rising edge or a falling edge on the GPIO
+    /// numbered by `pin`, with a host-supplied timeout.
+    ///
+    /// Returns `Err(PicoDeGalloError::Endpoint(GpioError::Timeout))`
+    /// if no edge is detected within `timeout`. Passing
+    /// `Duration::ZERO` reverts to the wait-forever behavior of
+    /// [`gpio_wait_for_any_edge`](Self::gpio_wait_for_any_edge).
+    ///
+    /// Available on firmware schema 0.7+.
+    ///
+    /// Pico de Gallo offers 4 total GPIOs, numbered 0 through 3.
+    pub async fn gpio_wait_for_any_edge_with_timeout(
+        &self,
+        pin: u8,
+        timeout: std::time::Duration,
+    ) -> Result<(), PicoDeGalloError<GpioError>> {
+        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        self.client
+            .send_resp::<GpioWaitForAny>(&GpioWaitRequest { pin, timeout_ms })
             .await?
             .map_err(PicoDeGalloError::Endpoint)
     }
