@@ -1,0 +1,77 @@
+name: agent-guide-parity
+
+# Catches drift between docs/ai-agents/pico-de-gallo-hal-examples.md
+# and the HAL public surface. Every `hal.X(` and `Hal::X` reference
+# in the agent guide MUST resolve to a real `pub fn` (or
+# `pub async fn`) in `crates/pico-de-gallo-hal/src/lib.rs`.
+#
+# Catches the drift mode docs/ai-agents/pico-de-gallo-hal-examples.md
+# §9 warned about: a HAL accessor renamed or removed without
+# updating the agent guide, leaving the guide referring to APIs
+# that don't exist. Closes Category A finding #36 / PR #56 side
+# finding #5.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/pico-de-gallo-hal/src/**'
+      - 'docs/ai-agents/pico-de-gallo-hal-examples.md'
+      - '.github/workflows/agent-guide-parity.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'crates/pico-de-gallo-hal/src/**'
+      - 'docs/ai-agents/pico-de-gallo-hal-examples.md'
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract HAL accessor names from agent guide
+        run: |
+          # The agent guide writes accessors either as `hal.X(` (instance
+          # method on a Hal value or a returned handle) or `Hal::X` (path
+          # syntax for an associated function like `Hal::new`).
+          # Digit-aware regex (`[a-z0-9_]+`) catches accessors like
+          # `hal.i2c(` and `hal.adc_read(` that a plain `[a-z_]+` regex
+          # silently skips — the fix surfaced during PR #56 Task 9.
+          grep -oE '(hal\.[a-z0-9_]+\()|(Hal::[a-z0-9_]+\b)' \
+            docs/ai-agents/pico-de-gallo-hal-examples.md \
+            | sed -E 's/^hal\.//;s/\(.*$//;s/^Hal:://' \
+            | sort -u > /tmp/doc-names.txt
+          echo "Names referenced from the agent guide:"
+          cat /tmp/doc-names.txt
+
+      - name: Extract pub fn names from HAL source
+        run: |
+          # Match both `pub fn X` and `pub async fn X` across all impl
+          # blocks in lib.rs (not just on Hal itself — Gpio::set_high,
+          # I2c::transaction, etc. are legitimate too).
+          grep -oE '(pub (async )?fn) [a-z0-9_]+' \
+            crates/pico-de-gallo-hal/src/lib.rs \
+            | sed -E 's/^pub (async )?fn //' \
+            | sort -u > /tmp/src-names.txt
+          echo "pub fn names in lib.rs:"
+          cat /tmp/src-names.txt
+
+      - name: Assert every doc-named accessor exists in source
+        run: |
+          missing=$(comm -23 /tmp/doc-names.txt /tmp/src-names.txt)
+          if [ -n "$missing" ]; then
+              echo "::error::Agent guide references HAL accessors that don't exist in lib.rs:"
+              echo "$missing"
+              echo ""
+              echo "Fix: either add the missing pub fn to"
+              echo "  crates/pico-de-gallo-hal/src/lib.rs, or"
+              echo "update the agent guide at"
+              echo "  docs/ai-agents/pico-de-gallo-hal-examples.md"
+              echo "to remove the stale reference."
+              echo ""
+              echo "See AGENTS.md §15.1 (book ↔ code parity) for the"
+              echo "drift-prevention rule this check enforces."
+              exit 1
+          fi
+          echo "All HAL accessor names in the agent guide resolve to pub fn in lib.rs."
