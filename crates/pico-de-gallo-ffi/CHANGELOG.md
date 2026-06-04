@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-06-03 — Category A hotfix)
+
+- `gallo_gpio_wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout_ms`
+  C functions. `timeout_ms == 0` preserves wait-forever behavior;
+  non-zero bounds the firmware-side wait and returns
+  `Status::GpioTimeout` on expiry. Available on firmware schema
+  0.7+; older firmware returns `Status::SchemaMismatch`.
+- `Status::GpioTimeout = -70` enum variant (appended at end of
+  `Status` enum; preserves stable C ABI per AGENTS.md §8).
+
+### Changed (2026-06-03 — Category A hotfix)
+
+- Bumped `pico-de-gallo-lib` dependency to 0.7.0 for the
+  `gpio_wait_for_*_with_timeout` host methods.
+
 ### Added
 
 - `gallo_system_reset_subscriptions(const PicoDeGallo *, uint8_t

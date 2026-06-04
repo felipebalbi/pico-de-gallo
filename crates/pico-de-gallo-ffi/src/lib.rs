@@ -208,6 +208,11 @@ pub enum Status {
     SpiTransferFailed = -68,
     /// Resetting server-side subscriptions failed
     SystemResetSubscriptionsFailed = -69,
+    /// GPIO wait endpoint timed out before the requested edge/level
+    /// was detected. Returned only by the `_with_timeout_ms` variants
+    /// when the host-supplied timeout expired. Available on firmware
+    /// schema 0.7+.
+    GpioTimeout = -70,
 }
 
 // ----------------------------- Error Mapping Helpers -----------------------------
@@ -239,6 +244,7 @@ fn gpio_error_to_status(e: PicoDeGalloError<GpioError>) -> Status {
         PicoDeGalloError::Endpoint(GpioError::WrongDirection) => Status::GpioWrongDirection,
         PicoDeGalloError::Endpoint(GpioError::PinMonitored) => Status::GpioPinMonitored,
         PicoDeGalloError::Endpoint(GpioError::PinNotMonitored) => Status::GpioPinNotMonitored,
+        PicoDeGalloError::Endpoint(GpioError::Timeout) => Status::GpioTimeout,
         PicoDeGalloError::Endpoint(GpioError::Other) => Status::GpioGetFailed,
         PicoDeGalloError::Comms(_) => Status::CommsFailed,
     }
@@ -1389,6 +1395,210 @@ pub unsafe extern "C" fn gallo_gpio_wait_for_any_edge(
     let gallo = unsafe { &*gallo };
 
     let result = block_on(gallo.0.gpio_wait_for_any_edge(pin));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+// ----------------------------- GPIO Wait endpoints (with timeout) -----------------------------
+
+/// gallo_gpio_wait_for_high_with_timeout_ms - Waits for a high level
+/// on a given GPIO pin, bounded by `timeout_ms`.
+///
+/// `timeout_ms == 0` waits forever (equivalent to
+/// [`gallo_gpio_wait_for_high`]). Non-zero bounds the firmware-side
+/// wait; expiry returns [`Status::GpioTimeout`].
+///
+/// Available on firmware schema 0.7+. Returns
+/// [`Status::SchemaMismatch`] if invoked against older firmware.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_wait_for_high_with_timeout_ms(
+    gallo: *const PicoDeGallo,
+    pin: u8,
+    timeout_ms: u32,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result =
+        block_on(gallo.0.gpio_wait_for_high_with_timeout(
+            pin,
+            std::time::Duration::from_millis(timeout_ms as u64),
+        ));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+/// gallo_gpio_wait_for_low_with_timeout_ms - Waits for a low level on
+/// a given GPIO pin, bounded by `timeout_ms`.
+///
+/// `timeout_ms == 0` waits forever (equivalent to
+/// [`gallo_gpio_wait_for_low`]). Non-zero bounds the firmware-side
+/// wait; expiry returns [`Status::GpioTimeout`].
+///
+/// Available on firmware schema 0.7+. Returns
+/// [`Status::SchemaMismatch`] if invoked against older firmware.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_wait_for_low_with_timeout_ms(
+    gallo: *const PicoDeGallo,
+    pin: u8,
+    timeout_ms: u32,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result =
+        block_on(gallo.0.gpio_wait_for_low_with_timeout(
+            pin,
+            std::time::Duration::from_millis(timeout_ms as u64),
+        ));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+/// gallo_gpio_wait_for_rising_edge_with_timeout_ms - Waits for a
+/// rising edge on a given GPIO pin, bounded by `timeout_ms`.
+///
+/// `timeout_ms == 0` waits forever (equivalent to
+/// [`gallo_gpio_wait_for_rising_edge`]). Non-zero bounds the
+/// firmware-side wait; expiry returns [`Status::GpioTimeout`].
+///
+/// Available on firmware schema 0.7+. Returns
+/// [`Status::SchemaMismatch`] if invoked against older firmware.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_wait_for_rising_edge_with_timeout_ms(
+    gallo: *const PicoDeGallo,
+    pin: u8,
+    timeout_ms: u32,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_wait_for_rising_edge_with_timeout(
+        pin,
+        std::time::Duration::from_millis(timeout_ms as u64),
+    ));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+/// gallo_gpio_wait_for_falling_edge_with_timeout_ms - Waits for a
+/// falling edge on a given GPIO pin, bounded by `timeout_ms`.
+///
+/// `timeout_ms == 0` waits forever (equivalent to
+/// [`gallo_gpio_wait_for_falling_edge`]). Non-zero bounds the
+/// firmware-side wait; expiry returns [`Status::GpioTimeout`].
+///
+/// Available on firmware schema 0.7+. Returns
+/// [`Status::SchemaMismatch`] if invoked against older firmware.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_wait_for_falling_edge_with_timeout_ms(
+    gallo: *const PicoDeGallo,
+    pin: u8,
+    timeout_ms: u32,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_wait_for_falling_edge_with_timeout(
+        pin,
+        std::time::Duration::from_millis(timeout_ms as u64),
+    ));
+
+    match result {
+        Ok(()) => Status::Ok,
+        Err(e) => gpio_error_to_status(e),
+    }
+}
+
+/// gallo_gpio_wait_for_any_edge_with_timeout_ms - Waits for any edge
+/// on a given GPIO pin, bounded by `timeout_ms`.
+///
+/// `timeout_ms == 0` waits forever (equivalent to
+/// [`gallo_gpio_wait_for_any_edge`]). Non-zero bounds the
+/// firmware-side wait; expiry returns [`Status::GpioTimeout`].
+///
+/// Available on firmware schema 0.7+. Returns
+/// [`Status::SchemaMismatch`] if invoked against older firmware.
+///
+/// # Safety
+///
+/// Caller must ensure that `gallo` is a valid, opaque pointer to
+/// `PicoDeGallo` returned by `gallo_init()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_gpio_wait_for_any_edge_with_timeout_ms(
+    gallo: *const PicoDeGallo,
+    pin: u8,
+    timeout_ms: u32,
+) -> Status {
+    if gallo.is_null() {
+        eprintln!("Unexpected NULL context");
+        return Status::Uninitialized;
+    }
+
+    // Safety: caller must ensure that `gallo` is a valid opaque
+    // pointer to `PicoDeGallo` returned by `gallo_init()`.
+    let gallo = unsafe { &*gallo };
+
+    let result = block_on(gallo.0.gpio_wait_for_any_edge_with_timeout(
+        pin,
+        std::time::Duration::from_millis(timeout_ms as u64),
+    ));
 
     match result {
         Ok(()) => Status::Ok,
@@ -3087,6 +3297,43 @@ mod tests {
     #[test]
     fn gpio_wait_for_any_edge_null_device_returns_uninitialized() {
         let status = unsafe { gallo_gpio_wait_for_any_edge(std::ptr::null_mut(), 0) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_wait_for_high_with_timeout_ms_null_device_returns_uninitialized() {
+        let status =
+            unsafe { gallo_gpio_wait_for_high_with_timeout_ms(std::ptr::null_mut(), 0, 100) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_wait_for_low_with_timeout_ms_null_device_returns_uninitialized() {
+        let status =
+            unsafe { gallo_gpio_wait_for_low_with_timeout_ms(std::ptr::null_mut(), 0, 100) };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_wait_for_rising_edge_with_timeout_ms_null_device_returns_uninitialized() {
+        let status = unsafe {
+            gallo_gpio_wait_for_rising_edge_with_timeout_ms(std::ptr::null_mut(), 0, 100)
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_wait_for_falling_edge_with_timeout_ms_null_device_returns_uninitialized() {
+        let status = unsafe {
+            gallo_gpio_wait_for_falling_edge_with_timeout_ms(std::ptr::null_mut(), 0, 100)
+        };
+        assert_eq!(status, Status::Uninitialized);
+    }
+
+    #[test]
+    fn gpio_wait_for_any_edge_with_timeout_ms_null_device_returns_uninitialized() {
+        let status =
+            unsafe { gallo_gpio_wait_for_any_edge_with_timeout_ms(std::ptr::null_mut(), 0, 100) };
         assert_eq!(status, Status::Uninitialized);
     }
 
