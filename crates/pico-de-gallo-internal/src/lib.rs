@@ -1517,6 +1517,55 @@ mod tests {
     use super::*;
     use postcard::{from_bytes, to_allocvec};
 
+    // --- Schema version vs. Cargo.toml ---
+
+    /// AGENTS.md §13.8 warns about a stale-incremental-cache trap
+    /// where `SCHEMA_VERSION_*` constants don't match the crate
+    /// `[package].version`. The `build.rs` derives them from the
+    /// package version at build time, but a corrupted incremental
+    /// cache could theoretically ship a mismatched build. This test
+    /// guards against that by parsing `CARGO_PKG_VERSION` at compile
+    /// time and asserting equality.
+    ///
+    /// Closes Category A finding #35.
+    #[test]
+    fn schema_version_matches_cargo_pkg_version() {
+        let cargo_version = env!("CARGO_PKG_VERSION");
+        let mut parts = cargo_version.split('.');
+        let major_str = parts.next().expect("CARGO_PKG_VERSION must have major");
+        let minor_str = parts.next().expect("CARGO_PKG_VERSION must have minor");
+        let patch_str = parts.next().expect("CARGO_PKG_VERSION must have patch");
+        assert!(
+            parts.next().is_none(),
+            "CARGO_PKG_VERSION must be MAJOR.MINOR.PATCH; got {cargo_version}",
+        );
+        let cargo_major: u16 = major_str
+            .parse()
+            .expect("CARGO_PKG_VERSION major must parse as u16");
+        let cargo_minor: u16 = minor_str
+            .parse()
+            .expect("CARGO_PKG_VERSION minor must parse as u16");
+        let cargo_patch: u32 = patch_str
+            .parse()
+            .expect("CARGO_PKG_VERSION patch must parse as u32");
+        assert_eq!(
+            SCHEMA_VERSION_MAJOR, cargo_major,
+            "SCHEMA_VERSION_MAJOR ({SCHEMA_VERSION_MAJOR}) does not match \
+             CARGO_PKG_VERSION ({cargo_version}). Did you bump the [package].version \
+             but skip a clean rebuild? See AGENTS.md §13.8.",
+        );
+        assert_eq!(
+            SCHEMA_VERSION_MINOR, cargo_minor,
+            "SCHEMA_VERSION_MINOR ({SCHEMA_VERSION_MINOR}) does not match \
+             CARGO_PKG_VERSION ({cargo_version}).",
+        );
+        assert_eq!(
+            SCHEMA_VERSION_PATCH, cargo_patch,
+            "SCHEMA_VERSION_PATCH ({SCHEMA_VERSION_PATCH}) does not match \
+             CARGO_PKG_VERSION ({cargo_version}).",
+        );
+    }
+
     // --- I2C round-trip tests ---
 
     #[test]
