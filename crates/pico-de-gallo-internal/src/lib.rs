@@ -1628,7 +1628,10 @@ mod tests {
 
     #[test]
     fn gpio_wait_request_round_trip() {
-        let req = GpioWaitRequest { pin: 7, timeout_ms: 0 };
+        let req = GpioWaitRequest {
+            pin: 7,
+            timeout_ms: 0,
+        };
         let bytes = to_allocvec(&req).unwrap();
         let decoded: GpioWaitRequest = from_bytes(&bytes).unwrap();
         assert_eq!(req, decoded);
@@ -1636,7 +1639,10 @@ mod tests {
 
     #[test]
     fn gpio_wait_request_round_trip_with_timeout() {
-        let original = GpioWaitRequest { pin: 2, timeout_ms: 500 };
+        let original = GpioWaitRequest {
+            pin: 2,
+            timeout_ms: 500,
+        };
         let bytes = to_allocvec(&original).unwrap();
         let decoded: GpioWaitRequest = from_bytes(&bytes).unwrap();
         assert_eq!(decoded.pin, 2);
