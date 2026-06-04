@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-06-03 — Category A hotfix)
+
+- `gpio_wait_for_*` handlers now honor the per-request `timeout_ms`
+  field added in `pico-de-gallo-internal` 0.7. A value of `0`
+  preserves the pre-0.7 wait-forever behavior. Non-zero wraps the
+  embassy `wait_for_*_edge()` future in
+  `embassy_time::with_timeout(Duration::from_millis(timeout_ms))`
+  and returns `GpioError::Timeout` on expiry.
+- Embassy-rp watchdog enabled at 2-second timeout, fed every
+  800 ms by a dedicated `watchdog_feeder_task`. `pause_on_debug(true)`
+  is set so debugger sessions don't reset the chip. Recovers the
+  device from any future handler hang regression (1-Wire PIO
+  stalls, embassy-rp peripheral bugs, etc.). The feeder is a
+  separate embassy task — RPC handlers cannot be trusted to feed
+  because a wedged handler would also wedge any handler-based
+  feed scheme (see closed dispatcher-wedge regression below).
+
+### Fixed (2026-06-03 — Category A hotfix)
+
+- `i2c_scan_handler` now wraps each per-address probe in
+  `with_timeout(Duration::from_millis(50))`. A single stuck
+  address (slave NAKs slowly, electrical issue, etc.) no longer
+  burns the entire scan budget. The watchdog feeder task runs
+  independently so the device stays alive even during long scans.
+
+### Why
+
+- Closes the dispatcher-wedge regression where a `gpio_wait_for_*`
+  on a never-transitioning pin blocked **every other endpoint**
+  until power-cycle (reliability finding B1, captured in
+  `docs/superpowers/specs/2026-06-03-pico-de-gallo-category-a-review-synthesis.md`).
+- Closes the no-recovery-from-handler-hang gap (reliability
+  finding R5).
+- Reduces worst-case impact of a flaky I²C bus on `i2c_scan`
+  (reliability finding B2 / #33).
+
+### Lockstep
+
+- Coupled to `pico-de-gallo-internal` 0.7.0 (schema minor bump
+  adding `timeout_ms` to `GpioWaitRequest` and `GpioError::Timeout`
+  variant). See AGENTS.md §6.5.
+
+## [Unreleased — earlier]
+
 ### Added
 
 - `system/reset-subscriptions` endpoint handler. Firmware iterates

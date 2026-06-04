@@ -975,6 +975,120 @@ impl PycoDeGallo {
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
+    /// Block until the GPIO numbered by ``pin`` reads high, with a
+    /// host-supplied timeout.
+    ///
+    /// Args:
+    ///     pin (int): GPIO pin number (0–3).
+    ///     timeout_ms (int): Timeout in milliseconds. 0 means wait
+    ///         forever (equivalent to ``gpio_wait_for_high(pin)``).
+    ///         Non-zero bounds the firmware-side wait.
+    ///
+    /// Raises:
+    ///     RuntimeError: If the timeout expires (``GpioError::Timeout``)
+    ///         or any other firmware error occurs.
+    ///
+    /// Available on firmware schema 0.7+.
+    fn gpio_wait_for_high_with_timeout(
+        &self,
+        py: Python<'_>,
+        pin: u8,
+        timeout_ms: u32,
+    ) -> PyResult<()> {
+        self.block(
+            py,
+            self.inner.gpio_wait_for_high_with_timeout(
+                pin,
+                std::time::Duration::from_millis(timeout_ms as u64),
+            ),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    }
+
+    /// Block until the GPIO numbered by ``pin`` reads low, with a
+    /// host-supplied timeout.
+    ///
+    /// See :py:meth:`gpio_wait_for_high_with_timeout` for argument
+    /// semantics.
+    fn gpio_wait_for_low_with_timeout(
+        &self,
+        py: Python<'_>,
+        pin: u8,
+        timeout_ms: u32,
+    ) -> PyResult<()> {
+        self.block(
+            py,
+            self.inner.gpio_wait_for_low_with_timeout(
+                pin,
+                std::time::Duration::from_millis(timeout_ms as u64),
+            ),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    }
+
+    /// Block until a rising edge is detected on the GPIO numbered by
+    /// ``pin``, with a host-supplied timeout.
+    ///
+    /// See :py:meth:`gpio_wait_for_high_with_timeout` for argument
+    /// semantics.
+    fn gpio_wait_for_rising_edge_with_timeout(
+        &self,
+        py: Python<'_>,
+        pin: u8,
+        timeout_ms: u32,
+    ) -> PyResult<()> {
+        self.block(
+            py,
+            self.inner.gpio_wait_for_rising_edge_with_timeout(
+                pin,
+                std::time::Duration::from_millis(timeout_ms as u64),
+            ),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    }
+
+    /// Block until a falling edge is detected on the GPIO numbered by
+    /// ``pin``, with a host-supplied timeout.
+    ///
+    /// See :py:meth:`gpio_wait_for_high_with_timeout` for argument
+    /// semantics.
+    fn gpio_wait_for_falling_edge_with_timeout(
+        &self,
+        py: Python<'_>,
+        pin: u8,
+        timeout_ms: u32,
+    ) -> PyResult<()> {
+        self.block(
+            py,
+            self.inner.gpio_wait_for_falling_edge_with_timeout(
+                pin,
+                std::time::Duration::from_millis(timeout_ms as u64),
+            ),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    }
+
+    /// Block until any (rising or falling) edge is detected on the GPIO
+    /// numbered by ``pin``, with a host-supplied timeout.
+    ///
+    /// See :py:meth:`gpio_wait_for_high_with_timeout` for argument
+    /// semantics.
+    fn gpio_wait_for_any_edge_with_timeout(
+        &self,
+        py: Python<'_>,
+        pin: u8,
+        timeout_ms: u32,
+    ) -> PyResult<()> {
+        self.block(
+            py,
+            self.inner.gpio_wait_for_any_edge_with_timeout(
+                pin,
+                std::time::Duration::from_millis(timeout_ms as u64),
+            ),
+        )
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+    }
+
     /// Configure a GPIO pin's direction and internal pull resistor.
     ///
     /// After configuration, the pin enters explicit mode: :meth:`gpio_get`

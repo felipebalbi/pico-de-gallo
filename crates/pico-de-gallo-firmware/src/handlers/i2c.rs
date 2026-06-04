@@ -3,6 +3,7 @@
 use defmt::{debug, warn};
 use embassy_embedded_hal::SetConfig;
 use embassy_rp::i2c;
+use embassy_time::{Duration, with_timeout};
 use pico_de_gallo_internal::{
     I2cBatchError, I2cBatchOp, I2cBatchRequest, I2cBatchResponse, I2cError, I2cFrequency, I2cGetConfigurationResponse,
     I2cReadRequest, I2cReadResponse, I2cScanRequest, I2cScanResponse, I2cSetConfigurationRequest,
@@ -95,13 +96,22 @@ pub(crate) async fn i2c_scan_handler<'a>(
 
     for addr in start..=end {
         // Probe by attempting a 1-byte read. ACK means a device is present.
+        // Bound each probe at 50ms so a single stuck address can't burn the
+        // whole scan budget. The watchdog feeder task runs independently and
+        // keeps the dog fed even if the scan takes several seconds total.
         let mut probe_buf = [0u8];
-        if context.i2c.read_async(addr, &mut probe_buf).await.is_ok() {
-            if found >= MAX_TRANSFER_SIZE {
-                break;
+        match with_timeout(Duration::from_millis(50), context.i2c.read_async(addr, &mut probe_buf)).await {
+            Ok(Ok(_)) => {
+                if found >= MAX_TRANSFER_SIZE {
+                    break;
+                }
+                context.buf[found] = addr;
+                found += 1;
             }
-            context.buf[found] = addr;
-            found += 1;
+            Ok(Err(_)) => {} // NACK or other I²C error — no device
+            Err(_) => {
+                warn!("i2c_scan: address {=u8:#x} timed out", addr);
+            }
         }
     }
 

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes (2026-06-03 — Category A hotfix)
+
+- `GpioWaitRequest` gained a `timeout_ms: u32` field, used by all
+  five `gpio/wait-*` endpoints (`gpio/wait-high`, `wait-low`,
+  `wait-rising`, `wait-falling`, `wait-any`). A value of `0`
+  preserves pre-0.7 wait-forever behavior; non-zero bounds the
+  firmware-side wait and returns `GpioError::Timeout` on expiry.
+- `GpioError::Timeout` variant appended at end of enum (safe wire-
+  protocol addition per AGENTS.md §6.1).
+- Schema version bumps via the `pico-de-gallo-internal` version
+  bump (`0.6.0` → `0.7.0`); under the pre-1.0 schema-versioning
+  rule this is a breaking schema bump, so hosts and firmware must
+  be upgraded together. Lockstep version bumps planned:
+  `pico-de-gallo-internal` `0.6.0` → `0.7.0`, `pico-de-gallo-lib`
+  `0.6.0` → `0.7.0`, `pico-de-gallo-hal` `0.7.0` → `0.8.0`,
+  `pico-de-gallo-ffi` `0.7.0` → `0.8.0`, `gallo` (CLI) `0.7.0` →
+  `0.8.0`, `pyco-de-gallo` `0.3.0` → `0.4.0`,
+  `pico-de-gallo-firmware` `0.10.0` → `0.11.0`. Closes Category A
+  finding #2 (reliability subagent B1: GPIO `wait_for_*` on a
+  never-transitioning pin previously wedged the entire firmware
+  dispatcher).
+
 ### Breaking Changes
 
 - New `system/reset-subscriptions` endpoint appended to the wire

@@ -67,11 +67,12 @@ use embassy_rp::pwm::{self, Pwm};
 #[cfg(feature = "hw-rev2")]
 use embassy_rp::uart::{self, BufferedUart};
 use embassy_rp::usb::Driver;
+use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_time::Instant;
+use embassy_time::{Duration, Instant, Timer};
 use embassy_usb::{Config, UsbDevice};
 use pico_de_gallo_internal::{
     AdcGetConfiguration, AdcRead, ENDPOINT_LIST, GetDeviceInfo, GpioEdge, GpioEvent, GpioEventTopic, GpioGet, GpioPut,
@@ -356,6 +357,9 @@ async fn main(spawner: Spawner) {
     let config = embassy_rp::config::Config::new(ClockConfig::system_freq(150_000_000).unwrap());
     let p = embassy_rp::init(config);
 
+    // Arm the hardware watchdog as defence-in-depth against handler hangs.
+    spawner.must_spawn(watchdog_feeder_task(Watchdog::new(p.WATCHDOG)));
+
     // USB/RPC INIT
     let driver = Driver::new(p.USB, Irqs);
     let pbufs = PBUFS.take();
@@ -471,4 +475,27 @@ async fn main(spawner: Spawner) {
 #[embassy_executor::task]
 pub async fn usb_task(mut usb: UsbDevice<'static, AppDriver>) {
     usb.run().await;
+}
+
+/// Dedicated watchdog feeder task.
+///
+/// Feeds the embassy-rp watchdog every 800 ms with a 2-second timeout.
+/// The 800 ms cadence leaves margin for the embassy executor's scheduling
+/// jitter while keeping the worst-case recovery time under 2 seconds when
+/// a handler genuinely wedges (e.g., a 1-Wire PIO program stalling on a
+/// shorted bus, an embassy-rp peripheral bug).
+///
+/// This task MUST be the only feeder. RPC handlers cannot be trusted to
+/// feed — the dispatcher-wedge regression closed in commit fdb3ba15e64d
+/// means a wedged handler would also wedge any handler-based feed scheme.
+/// See docs/superpowers/specs/2026-06-03-pico-de-gallo-category-a-review-synthesis.md
+/// finding #3.
+#[embassy_executor::task]
+async fn watchdog_feeder_task(mut watchdog: Watchdog) {
+    watchdog.start(Duration::from_secs(2));
+    watchdog.pause_on_debug(true);
+    loop {
+        Timer::after(Duration::from_millis(800)).await;
+        watchdog.feed(Duration::from_secs(2));
+    }
 }

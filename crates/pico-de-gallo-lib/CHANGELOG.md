@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-06-03 — Category A hotfix)
+
+- `PicoDeGallo::gpio_wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout`
+  methods take a `std::time::Duration` and return
+  `Err(PicoDeGalloError::Endpoint(GpioError::Timeout))` on expiry.
+  The existing two-arg methods (`gpio_wait_for_high(pin)` etc.)
+  preserve the wait-forever behavior by passing `timeout_ms: 0`
+  on the wire. Closes Category A finding #2 at the host-library
+  layer.
+
+### Changed (2026-06-03 — Category A hotfix)
+
+- Bumped `pico-de-gallo-internal` dependency to 0.7.0 (wire schema
+  change: append-only `timeout_ms: u32` on `GpioWaitRequest`,
+  append-only `GpioError::Timeout` variant). Lockstep with firmware
+  0.11.0 per AGENTS.md §6.5.
+
 ### Added
 
 - `PicoDeGallo::system_reset_subscriptions()` host method returns

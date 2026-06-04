@@ -512,6 +512,12 @@ async fn main() {
   mechanism per pin.
 - `#[tokio::main]` only — see §3 for the mandatory `current_thread`
   warning.
+- The `Wait` trait methods wait forever. Production code should
+  prefer the bounded inherent methods `Gpio::wait_for_*_with_timeout(Duration)`
+  (HAL 0.7+) which return `GpioHalError::Gpio(GpioError::Timeout)`
+  on expiry. The trait methods exist for compatibility with
+  embedded-hal drivers; the inherent methods exist because
+  `embedded-hal-async::Wait` does not accept a timeout.
 
 ### 6.7 GPIO subscribe (push events)
 

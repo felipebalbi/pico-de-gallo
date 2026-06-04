@@ -490,6 +490,11 @@ pub enum GpioError {
     PinMonitored,
     /// The pin is not currently monitored — cannot unsubscribe.
     PinNotMonitored,
+    /// Returned by `gpio_wait_*` endpoints when the host-supplied
+    /// `timeout_ms` elapses before the requested edge or level is detected.
+    /// Introduced in schema 0.7. A `timeout_ms` of `0` waits forever and
+    /// never returns this variant.
+    Timeout,
 }
 
 impl core::fmt::Display for GpioError {
@@ -500,6 +505,7 @@ impl core::fmt::Display for GpioError {
             Self::WrongDirection => write!(f, "GPIO pin configured in wrong direction"),
             Self::PinMonitored => write!(f, "GPIO pin is being monitored for events"),
             Self::PinNotMonitored => write!(f, "GPIO pin is not monitored"),
+            Self::Timeout => write!(f, "GPIO wait timed out"),
         }
     }
 }
@@ -546,6 +552,10 @@ impl From<GpioState> for bool {
 pub struct GpioWaitRequest {
     /// GPIO pin index (0–7).
     pub pin: u8,
+    /// Per-request timeout in milliseconds. A value of `0` means wait
+    /// forever (matches pre-0.7 behavior). Any non-zero value bounds the
+    /// firmware-side wait; expiry returns [`GpioError::Timeout`].
+    pub timeout_ms: u32,
 }
 
 /// GPIO pin direction.
@@ -1618,10 +1628,25 @@ mod tests {
 
     #[test]
     fn gpio_wait_request_round_trip() {
-        let req = GpioWaitRequest { pin: 7 };
+        let req = GpioWaitRequest {
+            pin: 7,
+            timeout_ms: 0,
+        };
         let bytes = to_allocvec(&req).unwrap();
         let decoded: GpioWaitRequest = from_bytes(&bytes).unwrap();
         assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn gpio_wait_request_round_trip_with_timeout() {
+        let original = GpioWaitRequest {
+            pin: 2,
+            timeout_ms: 500,
+        };
+        let bytes = to_allocvec(&original).unwrap();
+        let decoded: GpioWaitRequest = from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.pin, 2);
+        assert_eq!(decoded.timeout_ms, 500);
     }
 
     #[test]
@@ -1740,11 +1765,19 @@ mod tests {
             GpioError::WrongDirection,
             GpioError::PinMonitored,
             GpioError::PinNotMonitored,
+            GpioError::Timeout,
         ] {
             let bytes = to_allocvec(&err).unwrap();
             let decoded: GpioError = from_bytes(&bytes).unwrap();
             assert_eq!(err, decoded);
         }
+    }
+
+    #[test]
+    fn gpio_error_timeout_variant_round_trip() {
+        let bytes = postcard::to_allocvec(&GpioError::Timeout).unwrap();
+        let decoded: GpioError = postcard::from_bytes(&bytes).unwrap();
+        assert!(matches!(decoded, GpioError::Timeout));
     }
 
     #[test]
@@ -1801,6 +1834,7 @@ mod tests {
             format!("{}", GpioError::PinNotMonitored),
             "GPIO pin is not monitored"
         );
+        assert_eq!(format!("{}", GpioError::Timeout), "GPIO wait timed out");
     }
 
     // --- P1: Schema stability tests ---
@@ -1967,7 +2001,7 @@ mod tests {
     #[test]
     fn gpio_wait_request_all_pins() {
         for pin in 0..=u8::MAX {
-            let req = GpioWaitRequest { pin };
+            let req = GpioWaitRequest { pin, timeout_ms: 0 };
             let bytes = to_allocvec(&req).unwrap();
             let decoded: GpioWaitRequest = from_bytes(&bytes).unwrap();
             assert_eq!(req, decoded);

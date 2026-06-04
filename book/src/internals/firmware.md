@@ -21,6 +21,26 @@ context, while background tasks handle work such as GPIO event publication.
 > This is why the firmware can do DMA-backed transfers and interrupt-driven I/O
 > without turning into a hand-written state machine maze.
 
+### Watchdog
+
+A dedicated `watchdog_feeder_task` arms the RP2350 hardware watchdog at
+**2 seconds** and feeds it every **800 ms**. The 800 ms cadence leaves
+margin for embassy scheduling jitter while keeping the worst-case
+recovery time under 2 seconds when a handler genuinely wedges.
+
+The feeder is a **separate embassy task**, not part of any RPC handler.
+This is deliberate: postcard-rpc dispatches handlers serially on a
+shared context, and a wedged handler would also wedge any handler-based
+feed scheme. The dispatcher-wedge regression closed in
+`pico-de-gallo-firmware` 0.11.0 (see CHANGELOG) is exactly the scenario
+this defense covers — even with the GPIO `wait_for_*` timeout fix, any
+future unbounded await in a handler will trip the watchdog within 2 s
+and reset the device.
+
+`pause_on_debug(true)` is set so an attached debugger session does not
+reset the chip while you single-step. The watchdog is the same on both
+`hw-rev1` and `hw-rev2` (no rev-specific code).
+
 ## `no_std` and logging
 
 This crate is `no_std`. Logging uses `defmt` over RTT.
