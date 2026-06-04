@@ -344,6 +344,70 @@ pub unsafe extern "C" fn gallo_init_with_serial_number(
     Box::into_raw(gallo) as *const PicoDeGallo
 }
 
+/// gallo_init_strict - Like `gallo_init` but validates the connected
+/// firmware's schema version before returning.
+///
+/// Returns `NULL` if no device is reachable, the firmware does not
+/// support the `device/info` endpoint (legacy firmware), or the
+/// schema version does not match this host library's compiled-in
+/// schema.
+///
+/// Prefer this in production C code: `gallo_init` is lazy and surfaces
+/// failures only on the first real RPC call, which is harder to
+/// diagnose. `gallo_init_strict` fails fast at construction with a
+/// `NULL` return.
+///
+/// On success, the returned pointer must be freed with `gallo_free`
+/// when no longer needed.
+#[unsafe(no_mangle)]
+pub extern "C" fn gallo_init_strict() -> *const PicoDeGallo {
+    let inner = lib::PicoDeGallo::new();
+    match block_on(inner.validate()) {
+        Ok(_info) => Box::into_raw(Box::new(PicoDeGallo(inner))) as *const PicoDeGallo,
+        Err(e) => {
+            eprintln!("gallo_init_strict: firmware validation failed: {e}");
+            std::ptr::null()
+        }
+    }
+}
+
+/// gallo_init_strict_with_serial_number - Like
+/// `gallo_init_with_serial_number` but validates the connected
+/// firmware's schema version before returning.
+///
+/// Returns `NULL` if no matching device is reachable, the firmware
+/// does not support the `device/info` endpoint (legacy firmware),
+/// or the schema version does not match.
+///
+/// See `gallo_init_strict` for the rationale.
+///
+/// # Safety
+///
+/// `c_serial_number` must point to a valid c-string containing a
+/// valid Pico de Gallo serial number with a NULL-terminator.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gallo_init_strict_with_serial_number(
+    c_serial_number: *const c_char,
+) -> *const PicoDeGallo {
+    if c_serial_number.is_null() {
+        eprintln!("NULL serial number received");
+        return std::ptr::null();
+    }
+    let serial_number = unsafe { CStr::from_ptr(c_serial_number).to_str() };
+    if serial_number.is_err() {
+        eprintln!("Invalid UTF-8 string");
+        return std::ptr::null();
+    }
+    let inner = lib::PicoDeGallo::new_with_serial_number(serial_number.unwrap());
+    match block_on(inner.validate()) {
+        Ok(_info) => Box::into_raw(Box::new(PicoDeGallo(inner))) as *const PicoDeGallo,
+        Err(e) => {
+            eprintln!("gallo_init_strict_with_serial_number: firmware validation failed: {e}");
+            std::ptr::null()
+        }
+    }
+}
+
 /// gallo_free - Releases and destroys the library context created by `gallo_init`.
 ///
 /// # Safety
@@ -3567,6 +3631,12 @@ mod tests {
     #[test]
     fn init_with_null_serial_returns_null() {
         let ptr = unsafe { gallo_init_with_serial_number(std::ptr::null()) };
+        assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn init_strict_with_null_serial_returns_null() {
+        let ptr = unsafe { gallo_init_strict_with_serial_number(std::ptr::null()) };
         assert!(ptr.is_null());
     }
 

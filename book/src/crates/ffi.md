@@ -36,8 +36,10 @@ gallo_free(gallo);
 
 | Function | Purpose |
 |---|---|
-| `const PicoDeGallo *gallo_init(void)` | Connect to the first matching board |
-| `const PicoDeGallo *gallo_init_with_serial_number(const char *serial)` | Connect to a board with a specific USB serial number |
+| `const PicoDeGallo *gallo_init(void)` | Connect to the first matching board (lazy — failures surface on first RPC) |
+| `const PicoDeGallo *gallo_init_with_serial_number(const char *serial)` | Connect to a board with a specific USB serial number (lazy) |
+| `const PicoDeGallo *gallo_init_strict(void)` | Like `gallo_init` but calls `validate()` before returning; returns `NULL` on schema mismatch or device-not-present |
+| `const PicoDeGallo *gallo_init_strict_with_serial_number(const char *serial)` | Like the above with serial-number selection; recommended in production |
 | `void gallo_free(const PicoDeGallo *gallo)` | Release the opaque handle; `NULL` is a safe no-op |
 
 ## Status Codes
