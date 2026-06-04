@@ -5,6 +5,22 @@ All notable changes to `gallo` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (2026-06-03 — Category A hotfix)
+
+- Bumped `pico-de-gallo-lib` dependency to 0.7.0. Required for
+  lockstep release with the wire-protocol schema bump in
+  `pico-de-gallo-internal` 0.7.0 / `pico-de-gallo-firmware` 0.11.0
+  (`timeout_ms` field on `GpioWaitRequest`, `GpioError::Timeout`
+  variant).
+- Existing `gallo` CLI behavior is unchanged in this release: the
+  pre-existing `gpio` subcommands (`get`, `put`, `set-config`,
+  `monitor`) all keep working. The CLI does not currently expose
+  `gpio wait-for-*` subcommands, so no new flags are added here.
+  Bounded waits remain accessible to Rust / C / Python consumers
+  via `pico-de-gallo-lib`, `pico-de-gallo-hal`, and `pico-de-gallo-ffi`.
+
 ## [0.6.0] — 2026-05-04
 
 ### Added
