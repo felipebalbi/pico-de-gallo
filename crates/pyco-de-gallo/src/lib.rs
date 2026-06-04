@@ -111,12 +111,64 @@ fn open_with_serial_number(serial_number: &str) -> PyResult<PycoDeGallo> {
     })
 }
 
+/// Open the first Pico de Gallo device on USB AND validate the
+/// firmware's schema version before returning.
+///
+/// Raises `RuntimeError` on device-not-found, schema version
+/// mismatch, legacy firmware, or any validation error.
+///
+/// Prefer in production Python code: :func:`open` is lazy and
+/// surfaces failures only on the first RPC call, which is harder
+/// to diagnose. ``open_strict`` fails fast with a clear exception.
+///
+/// Returns:
+///     PycoDeGallo: A connected and validated device handle.
+///
+/// Raises:
+///     RuntimeError: If a Tokio runtime could not be created, the
+///         device is not reachable, or the firmware's schema does
+///         not match.
+#[pyfunction]
+fn open_strict() -> PyResult<PycoDeGallo> {
+    let pyco = open()?;
+    pyco.runtime
+        .block_on(pyco.inner.validate())
+        .map_err(|e| PyRuntimeError::new_err(format!("firmware validation failed: {e}")))?;
+    Ok(pyco)
+}
+
+/// Open the Pico de Gallo device with the given USB serial number
+/// AND validate the firmware's schema version before returning.
+///
+/// See :func:`open_strict` for the rationale.
+///
+/// Args:
+///     serial_number (str): The USB serial number of the target device.
+///
+/// Returns:
+///     PycoDeGallo: A connected and validated device handle.
+///
+/// Raises:
+///     RuntimeError: If a Tokio runtime could not be created, the
+///         device is not reachable, or the firmware's schema does
+///         not match.
+#[pyfunction]
+fn open_strict_with_serial_number(serial_number: &str) -> PyResult<PycoDeGallo> {
+    let pyco = open_with_serial_number(serial_number)?;
+    pyco.runtime
+        .block_on(pyco.inner.validate())
+        .map_err(|e| PyRuntimeError::new_err(format!("firmware validation failed: {e}")))?;
+    Ok(pyco)
+}
+
 /// Python bindings for the Pico de Gallo USB bridge.
 #[pymodule]
 fn pyco_de_gallo(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(list_devices, m)?)?;
     m.add_function(wrap_pyfunction!(open, m)?)?;
     m.add_function(wrap_pyfunction!(open_with_serial_number, m)?)?;
+    m.add_function(wrap_pyfunction!(open_strict, m)?)?;
+    m.add_function(wrap_pyfunction!(open_strict_with_serial_number, m)?)?;
 
     m.add_class::<AdcConfigurationInfo>()?;
     m.add_class::<DeviceDescription>()?;
