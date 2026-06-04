@@ -5,6 +5,25 @@ All notable changes to `pico-de-gallo-hal` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added (2026-06-03 — Category A hotfix)
+
+- `Gpio::wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout`
+  async methods accept a `std::time::Duration` and return
+  `Err(GpioHalError::Gpio(GpioError::Timeout))` on expiry.
+  `embedded-hal-async`'s `Wait` trait does not support timeouts, so
+  these are exposed as inherent methods on `Gpio` instead. Recommended
+  for production code; the trait methods retain their wait-forever
+  semantics for compatibility with existing drivers.
+
+### Changed (2026-06-03 — Category A hotfix)
+
+- Bumped `pico-de-gallo-lib` dependency to 0.7.0.
+- Updated `docs/ai-agents/pico-de-gallo-hal-examples.md` §6.6 Gotchas
+  to recommend the bounded `_with_timeout` variants for production
+  use.
+
 ## [0.4.0] — 2026-04-22
 
 ### Breaking Changes

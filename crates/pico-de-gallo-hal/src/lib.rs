@@ -715,6 +715,91 @@ impl Gpio {
             .map_err(GpioHalError::from)
             .map(|s| s == GpioState::High)
     }
+
+    /// Wait for the pin to go high, with a host-supplied timeout.
+    ///
+    /// Like the [`Wait::wait_for_high`](embedded_hal_async::digital::Wait::wait_for_high)
+    /// trait method, but bounded. Returns
+    /// `Err(GpioHalError::Gpio(GpioError::Timeout))` if the level is not
+    /// reached within `timeout`.
+    ///
+    /// **Why this is project-specific:** `embedded-hal-async`'s `Wait`
+    /// trait does not accept a timeout. Drivers that need bounded waits
+    /// (recommended in production code; see
+    /// `docs/ai-agents/pico-de-gallo-hal-examples.md` §6.6 gotchas)
+    /// should use these methods directly instead of the trait.
+    ///
+    /// Available on firmware schema 0.7+.
+    pub async fn wait_for_high_with_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> std::result::Result<(), GpioHalError> {
+        let gallo = self.gallo.lock().await;
+        gallo
+            .gpio_wait_for_high_with_timeout(self.pin, timeout)
+            .await
+            .map_err(GpioHalError::from)
+    }
+
+    /// Wait for the pin to go low, with a host-supplied timeout.
+    ///
+    /// See [`wait_for_high_with_timeout`](Self::wait_for_high_with_timeout)
+    /// for the design rationale.
+    pub async fn wait_for_low_with_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> std::result::Result<(), GpioHalError> {
+        let gallo = self.gallo.lock().await;
+        gallo
+            .gpio_wait_for_low_with_timeout(self.pin, timeout)
+            .await
+            .map_err(GpioHalError::from)
+    }
+
+    /// Wait for a rising edge on the pin, with a host-supplied timeout.
+    ///
+    /// See [`wait_for_high_with_timeout`](Self::wait_for_high_with_timeout)
+    /// for the design rationale.
+    pub async fn wait_for_rising_edge_with_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> std::result::Result<(), GpioHalError> {
+        let gallo = self.gallo.lock().await;
+        gallo
+            .gpio_wait_for_rising_edge_with_timeout(self.pin, timeout)
+            .await
+            .map_err(GpioHalError::from)
+    }
+
+    /// Wait for a falling edge on the pin, with a host-supplied timeout.
+    ///
+    /// See [`wait_for_high_with_timeout`](Self::wait_for_high_with_timeout)
+    /// for the design rationale.
+    pub async fn wait_for_falling_edge_with_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> std::result::Result<(), GpioHalError> {
+        let gallo = self.gallo.lock().await;
+        gallo
+            .gpio_wait_for_falling_edge_with_timeout(self.pin, timeout)
+            .await
+            .map_err(GpioHalError::from)
+    }
+
+    /// Wait for any edge on the pin, with a host-supplied timeout.
+    ///
+    /// See [`wait_for_high_with_timeout`](Self::wait_for_high_with_timeout)
+    /// for the design rationale.
+    pub async fn wait_for_any_edge_with_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> std::result::Result<(), GpioHalError> {
+        let gallo = self.gallo.lock().await;
+        gallo
+            .gpio_wait_for_any_edge_with_timeout(self.pin, timeout)
+            .await
+            .map_err(GpioHalError::from)
+    }
 }
 
 impl embedded_hal::digital::ErrorType for Gpio {
