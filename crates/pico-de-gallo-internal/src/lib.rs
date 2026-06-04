@@ -467,7 +467,7 @@ pub type SpiTransferError = SpiError;
 /// Request to read the current level of a GPIO pin.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioGetRequest {
-    /// GPIO pin index (0–7).
+    /// GPIO pin index (0–3).
     pub pin: u8,
 }
 
@@ -479,7 +479,7 @@ pub struct GpioGetRequest {
 /// variants in the middle — only append at the end.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpioError {
-    /// The requested pin number is invalid (outside 0–7 range).
+    /// The requested pin number is invalid (outside 0–3 range).
     InvalidPin,
     /// An unspecified error occurred in the firmware.
     Other,
@@ -513,7 +513,7 @@ impl core::fmt::Display for GpioError {
 /// Request to set a GPIO pin to a specific level.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioPutRequest {
-    /// GPIO pin index (0–7).
+    /// GPIO pin index (0–3).
     pub pin: u8,
     /// Desired output level.
     pub state: GpioState,
@@ -550,7 +550,7 @@ impl From<GpioState> for bool {
 /// Request to wait for a GPIO pin to reach a specific state or edge.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioWaitRequest {
-    /// GPIO pin index (0–7).
+    /// GPIO pin index (0–3).
     pub pin: u8,
     /// Per-request timeout in milliseconds. A value of `0` means wait
     /// forever (matches pre-0.7 behavior). Any non-zero value bounds the
@@ -593,7 +593,7 @@ pub enum GpioPull {
 /// available options.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioSetConfigurationRequest {
-    /// GPIO pin index (0–7).
+    /// GPIO pin index (0–3).
     pub pin: u8,
     /// Desired pin direction.
     pub direction: GpioDirection,
