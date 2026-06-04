@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (2026-06-03 — Category A hotfix)
+### Fixed (2026-06-04 — Category A hotfix host-only PR)
+
+- `PicoDeGallo::validate()` now checks `schema_major` in addition
+  to `schema_minor`. Previously, a firmware reporting a bumped
+  major version with a matching minor would silently pass
+  validation and the host would subsequently mis-decode wire
+  bytes (silent garbage out). The schema-check policy is now
+  extracted into a private `check_schema_compatible(&DeviceInfo)`
+  helper with four regression tests covering matching versions
+  and the three rejection cases (bumped major, bumped minor,
+  both bumped).
+- `ValidateError::SchemaMismatch` payload extended with
+  `expected_major` and `actual_major` fields; `Display` impl
+  shows the full `MAJOR.MINOR.x` skew rather than just the minor
+  versions.
+
+  This is a structural change to a public enum variant payload.
+  Direct constructors and exhaustive matches against
+  `SchemaMismatch` will need to add the two new fields. The
+  variant is not on the wire (`ValidateError` is a host-side
+  type), so there is no schema impact.
+
+### Added (2026-06-03 — Category A hotfix wire PR, already on main as 0.7.0)
 
 - `PicoDeGallo::gpio_wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout`
   methods take a `std::time::Duration` and return
@@ -17,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the wire. Closes Category A finding #2 at the host-library
   layer.
 
-### Changed (2026-06-03 — Category A hotfix)
+### Changed (2026-06-03 — Category A hotfix wire PR, already on main as 0.7.0)
 
 - Bumped `pico-de-gallo-internal` dependency to 0.7.0 (wire schema
   change: append-only `timeout_ms: u32` on `GpioWaitRequest`,

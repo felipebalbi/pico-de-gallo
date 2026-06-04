@@ -58,8 +58,8 @@ use pico_de_gallo_internal::{
     OneWireSearchNext, OneWireWrite, OneWireWritePullup, OneWireWritePullupRequest, OneWireWriteRequest,
     PICO_DE_GALLO_PID, PwmDisable, PwmDisableRequest, PwmEnable, PwmEnableRequest, PwmGetConfiguration,
     PwmGetConfigurationRequest, PwmGetDutyCycle, PwmGetDutyCycleRequest, PwmSetConfiguration,
-    PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SCHEMA_VERSION_MINOR, SpiBatch,
-    SpiBatchRequest, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
+    PwmSetConfigurationRequest, PwmSetDutyCycle, PwmSetDutyCycleRequest, SCHEMA_VERSION_MAJOR, SCHEMA_VERSION_MINOR,
+    SpiBatch, SpiBatchRequest, SpiFlush, SpiGetConfiguration, SpiRead, SpiReadRequest, SpiSetConfiguration,
     SpiSetConfigurationRequest, SpiTransfer, SpiTransferRequest, SpiWrite, SpiWriteRequest, SystemResetSubscriptions,
     UartFlush, UartGetConfiguration, UartRead, UartReadRequest, UartSetConfiguration, UartSetConfigurationRequest,
     UartWrite, UartWriteRequest, Version,
@@ -160,6 +160,10 @@ pub enum ValidateError {
     /// The host and firmware were compiled against different versions of
     /// `pico-de-gallo-internal`. They must be upgraded together.
     SchemaMismatch {
+        /// Schema major version expected by this host library.
+        expected_major: u16,
+        /// Schema major version reported by the firmware.
+        actual_major: u16,
         /// Schema minor version expected by this host library.
         expected_minor: u16,
         /// Schema minor version reported by the firmware.
@@ -176,12 +180,15 @@ impl core::fmt::Display for ValidateError {
                 "firmware does not support the device/info endpoint — upgrade firmware"
             ),
             Self::SchemaMismatch {
+                expected_major,
+                actual_major,
                 expected_minor,
                 actual_minor,
             } => write!(
                 f,
-                "schema version mismatch: host expects 0.{expected_minor}.x \
-                 but firmware reports 0.{actual_minor}.x — upgrade both together"
+                "schema version mismatch: host expects \
+                 {expected_major}.{expected_minor}.x but firmware reports \
+                 {actual_major}.{actual_minor}.x — upgrade both together"
             ),
         }
     }
@@ -216,6 +223,30 @@ fn map_validate_error(e: HostErr<WireError>) -> ValidateError {
         HostErr::Wire(WireError::UnknownKey) | HostErr::Wire(WireError::KeyTooSmall) => ValidateError::LegacyFirmware,
         _ => ValidateError::Comms(e),
     }
+}
+
+/// Returns `Ok(())` if the firmware-reported schema in `info` is
+/// compatible with the host's compiled-in
+/// [`SCHEMA_VERSION_MAJOR`] / [`SCHEMA_VERSION_MINOR`].
+///
+/// Both major and minor are checked. Pre-1.0, the minor is the
+/// breaking-change axis (per AGENTS.md §6.2); the major is also
+/// checked so that any future 1.0+ bump is caught immediately rather
+/// than silently mis-decoding wire bytes against a host on 0.x.
+/// Closes Category A finding #1.
+///
+/// Extracted from [`PicoDeGallo::validate`] so the policy is
+/// independently testable.
+fn check_schema_compatible(info: &DeviceInfo) -> Result<(), ValidateError> {
+    if info.schema_major != SCHEMA_VERSION_MAJOR || info.schema_minor != SCHEMA_VERSION_MINOR {
+        return Err(ValidateError::SchemaMismatch {
+            expected_major: SCHEMA_VERSION_MAJOR,
+            actual_major: info.schema_major,
+            expected_minor: SCHEMA_VERSION_MINOR,
+            actual_minor: info.schema_minor,
+        });
+    }
+    Ok(())
 }
 
 /// Async client for a Pico de Gallo USB bridge device.
@@ -797,14 +828,7 @@ impl PicoDeGallo {
             .await
             .map_err(map_validate_error)?;
 
-        // Pre-1.0: minor version must match (0.x bumps are breaking).
-        // Post-1.0: switch to major version matching.
-        if info.schema_minor != SCHEMA_VERSION_MINOR {
-            return Err(ValidateError::SchemaMismatch {
-                expected_minor: SCHEMA_VERSION_MINOR,
-                actual_minor: info.schema_minor,
-            });
-        }
+        check_schema_compatible(&info)?;
 
         Ok(info)
     }
@@ -1265,5 +1289,92 @@ mod tests {
     #[test]
     fn map_validate_error_closed_is_comms() {
         assert_comms(HostErr::Closed);
+    }
+
+    // --- check_schema_compatible policy (Category A finding #1) ---
+
+    fn make_device_info(schema_major: u16, schema_minor: u16) -> DeviceInfo {
+        DeviceInfo {
+            fw_major: 0,
+            fw_minor: 0,
+            fw_patch: 0,
+            schema_major,
+            schema_minor,
+            schema_patch: 0,
+            hw_version: 1,
+            capabilities: Capabilities::NONE,
+        }
+    }
+
+    #[test]
+    fn check_schema_compatible_accepts_matching_versions() {
+        let info = make_device_info(SCHEMA_VERSION_MAJOR, SCHEMA_VERSION_MINOR);
+        check_schema_compatible(&info).expect("matching versions must validate");
+    }
+
+    #[test]
+    fn check_schema_compatible_rejects_bumped_major() {
+        // Pre-fix: validate() only compared schema_minor, so a bumped
+        // major with matching minor would silently pass and the host
+        // would mis-decode subsequent RPCs against an incompatible
+        // firmware. This test guards the post-fix behavior.
+        let info = make_device_info(SCHEMA_VERSION_MAJOR.wrapping_add(1), SCHEMA_VERSION_MINOR);
+        match check_schema_compatible(&info) {
+            Err(ValidateError::SchemaMismatch {
+                expected_major,
+                actual_major,
+                expected_minor,
+                actual_minor,
+            }) => {
+                assert_eq!(expected_major, SCHEMA_VERSION_MAJOR);
+                assert_eq!(actual_major, SCHEMA_VERSION_MAJOR.wrapping_add(1));
+                assert_eq!(expected_minor, SCHEMA_VERSION_MINOR);
+                assert_eq!(actual_minor, SCHEMA_VERSION_MINOR);
+            }
+            other => panic!("expected SchemaMismatch on bumped major, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_schema_compatible_rejects_bumped_minor() {
+        let info = make_device_info(SCHEMA_VERSION_MAJOR, SCHEMA_VERSION_MINOR.wrapping_add(1));
+        match check_schema_compatible(&info) {
+            Err(ValidateError::SchemaMismatch { actual_minor, .. }) => {
+                assert_eq!(actual_minor, SCHEMA_VERSION_MINOR.wrapping_add(1))
+            }
+            other => panic!("expected SchemaMismatch on bumped minor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_schema_compatible_rejects_both_bumped() {
+        let info = make_device_info(
+            SCHEMA_VERSION_MAJOR.wrapping_add(1),
+            SCHEMA_VERSION_MINOR.wrapping_add(2),
+        );
+        match check_schema_compatible(&info) {
+            Err(ValidateError::SchemaMismatch {
+                actual_major,
+                actual_minor,
+                ..
+            }) => {
+                assert_eq!(actual_major, SCHEMA_VERSION_MAJOR.wrapping_add(1));
+                assert_eq!(actual_minor, SCHEMA_VERSION_MINOR.wrapping_add(2));
+            }
+            other => panic!("expected SchemaMismatch on both bumped, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn schema_mismatch_display_includes_both_versions() {
+        let err = ValidateError::SchemaMismatch {
+            expected_major: 0,
+            actual_major: 1,
+            expected_minor: 7,
+            actual_minor: 0,
+        };
+        let s = format!("{err}");
+        assert!(s.contains("0.7"), "expected '0.7' in display, got: {s}");
+        assert!(s.contains("1.0"), "expected '1.0' in display, got: {s}");
     }
 }
