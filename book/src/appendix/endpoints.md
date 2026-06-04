@@ -76,16 +76,26 @@ from.
 |----------------|-------------|----------------------------------------------------------|
 | `gpio/event`   | `GpioEvent` | Push stream of edge events for subscribed GPIO pins.     |
 
-A `gpio/event` stream is opened implicitly when you call
-`gpio/subscribe` for a given pin, and closes when you
-`gpio/unsubscribe`. Subscriptions are server-side state that
-outlives the USB transport, so a host whose process crashed or
-was killed without unsubscribing will leave the pin owned by a
-firmware monitor task. Hosts should call
-`system/reset-subscriptions` once on connect (after
-`device/info`) to reclaim any such pins. The endpoint is
-idempotent and returns the number of subscriptions that were
-torn down.
+The `gpio/event` topic is a **single multiplexed stream** carrying
+events for every subscribed pin (each `GpioEvent` carries a
+`pin: u8` field so the host can demultiplex). `gpio/subscribe(pin,
+edge)` enables firmware-side monitoring of one pin; `gpio/unsubscribe(pin)`
+tears it down. Events for any subscribed pin arrive on the shared
+stream — there is no per-pin sub-channel and no implicit per-pin
+stream-open/close.
+
+Subscriptions are server-side state that outlives the USB transport,
+so a host whose process crashed or was killed without unsubscribing
+will leave the pin owned by a firmware monitor task. Hosts should
+call `system/reset-subscriptions` once on connect (after
+`device/info`) to reclaim any such pins. The endpoint is idempotent
+and returns the number of subscriptions that were torn down.
+
+Stale events: after `gpio/unsubscribe(pin)` returns `Ok`, a
+`GpioEvent` for that pin may still arrive (the firmware best-effort
+publishes events that were in-flight at unsubscribe time). Consumers
+should filter against their current subscription set and drop
+unknown-pin events without erroring.
 
 ## Adding Endpoints
 

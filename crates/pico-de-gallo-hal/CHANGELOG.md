@@ -7,7 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (2026-06-03 — Category A hotfix)
+### Added (2026-06-04 — Category A hotfix host-only PR)
+
+- `Hal::new_validated()` and
+  `Hal::new_validated_with_serial_number(serial)` constructors call
+  `validate()` before returning, failing loudly on
+  device-not-connected or schema-version mismatch. The existing
+  lazy `Hal::new()` / `Hal::new_with_serial_number()` continue to
+  defer failures until the first RPC.
+- `Hal::validate()` accessor for callers that constructed via the
+  lazy constructors and want to validate after the fact.
+- `Hal::system_reset_subscriptions() -> Result<u8, SystemHalError>`
+  exposes the firmware-side subscription teardown previously only
+  reachable via `pico-de-gallo-lib`. Recommended after
+  `new_validated()` in any application that uses GPIO subscriptions,
+  so a prior host's crashed-mid-subscription state is cleared.
+- `HalInitError` (wraps `pico_de_gallo_lib::ValidateError`) and
+  `SystemHalError` (just `Comms` today).
+- Re-exported `AdcChannel`, `AdcConfigurationInfo`, `GpioDirection`,
+  `GpioEdge`, `GpioPull` from `pico-de-gallo-lib`. Driver authors
+  no longer need to add `pico-de-gallo-lib` to their `Cargo.toml`
+  for these types.
+
+### Fixed (2026-06-04 — Category A hotfix host-only PR)
+
+- Removed the stale doc-comment reference to a non-existent
+  `Hal::uart_set_config` method on the `Uart` struct. Documentation
+  now correctly notes that UART baud is fixed at the firmware
+  default and changes require dropping to `pico-de-gallo-lib`.
+
+### Changed (2026-06-04 — Category A hotfix host-only PR)
+
+- Bumped `pico-de-gallo-lib` dependency to 0.7.1 (validate() now
+  also checks `schema_major`).
+- Updated `docs/ai-agents/pico-de-gallo-hal-examples.md`:
+  - §4 Cargo setup: removed the "not re-exported by the HAL"
+    bullet for `AdcChannel` et al. (they are re-exported now).
+  - §6.4–§6.7 GPIO snippets: switched `use pico_de_gallo_lib::{...}`
+    to `use pico_de_gallo_hal::{...}` for `GpioDirection`,
+    `GpioPull`, `GpioEdge`.
+  - §6.7 GPIO subscribe gotcha: documents
+    `hal.system_reset_subscriptions()` as the recovery path.
+  - §6.9 ADC snippet/HIL/gotchas: switched `AdcChannel` import
+    to the HAL re-export; historical note preserved.
+
+### Added (2026-06-03 — Category A hotfix wire PR, already on main as 0.7.0)
 
 - `Gpio::wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout`
   async methods accept a `std::time::Duration` and return
@@ -17,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for production code; the trait methods retain their wait-forever
   semantics for compatibility with existing drivers.
 
-### Changed (2026-06-03 — Category A hotfix)
+### Changed (2026-06-03 — Category A hotfix wire PR, already on main as 0.7.0)
 
 - Bumped `pico-de-gallo-lib` dependency to 0.7.0.
 - Updated `docs/ai-agents/pico-de-gallo-hal-examples.md` §6.6 Gotchas

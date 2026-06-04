@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (2026-06-03 — Category A hotfix)
+### Added (2026-06-04 — Category A hotfix host-only PR)
+
+- `pyco_de_gallo.open_strict()` and
+  `pyco_de_gallo.open_strict_with_serial_number(serial_number)`.
+  Both call `PicoDeGallo::validate()` internally before returning
+  the `PycoDeGallo` handle. Raise `RuntimeError` on device-not-found,
+  schema version mismatch, legacy firmware, or any validation error.
+  Prefer in production Python code over the lazy `open()` /
+  `open_with_serial_number()` — failures surface at construct time
+  rather than on the first RPC. Closes Category A finding #4 at
+  the Python layer.
+
+### Changed (2026-06-04 — Category A hotfix host-only PR)
+
+- Bumped `pico-de-gallo-lib` dependency to 0.7.1 (validate() now
+  also checks `schema_major`).
+- Updated `book/src/crates/python.md` to document the two new
+  entry points.
+
+### Added (2026-06-03 — Category A hotfix wire PR, already on main as 0.4.0)
 
 - `PycoDeGallo.gpio_wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout`
   Python methods accept a `timeout_ms: int`. 0 waits forever
@@ -15,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raises `RuntimeError` on `GpioError::Timeout`. Available on
   firmware schema 0.7+.
 
-### Changed (2026-06-03 — Category A hotfix)
+### Changed (2026-06-03 — Category A hotfix wire PR, already on main as 0.4.0)
 
 - Bumped `pico-de-gallo-lib` dependency to 0.7.0. Lockstep release
   with `pico-de-gallo-internal` 0.7.0 / `pico-de-gallo-firmware`

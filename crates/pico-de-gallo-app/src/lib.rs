@@ -585,11 +585,42 @@ impl Cli {
         }
     }
 
+    /// Validate the connected firmware's schema version up-front so a
+    /// mismatch is surfaced with a clear, actionable error message
+    /// rather than as a confusing `CommsFailed` on the first RPC.
+    ///
+    /// Called at the top of [`Cli::run`] for every subcommand except
+    /// `list` (no device needed) and `version` (the diagnostic
+    /// subcommand that explicitly reports the schema skew).
+    ///
+    /// Closes Category A finding #4 (reviewer R4) at the CLI layer.
+    async fn validate_firmware(&self) -> Result<()> {
+        let pg = self.connect();
+        pg.validate().await.map(|_info| ()).map_err(|e| {
+            eyre!(
+                "firmware validation failed: {e}\n\n\
+                                Re-flash the firmware to a version matching this `gallo` build, \
+                                or install a `gallo` build matching the firmware. \
+                                Run `gallo version` for the current device-reported schema."
+            )
+        })
+    }
+
     /// Execute the CLI command.
     ///
     /// Dispatches to the appropriate handler based on the parsed subcommand.
     /// Returns `Ok(())` on success or an error via `color_eyre`.
     pub async fn run(&self) -> Result<()> {
+        // Validate schema up-front for every subcommand that touches
+        // the device, except `list` (no device needed) and `version`
+        // (the diagnostic subcommand that reports schema skew itself).
+        // Without this, a schema mismatch would manifest as a confusing
+        // CommsFailed on the first RPC. See Category A finding #4.
+        match &self.command {
+            Commands::List | Commands::Version => {}
+            _ => self.validate_firmware().await?,
+        }
+
         match &self.command {
             Commands::List => Self::list_devices(),
             Commands::Version => self.version().await,

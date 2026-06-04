@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed (2026-06-03 — Category A hotfix)
+### Fixed (2026-06-04 — Category A hotfix host-only PR)
+
+- `gallo` now calls `validate()` at the top of every subcommand
+  except `list` and `version`. Previously the CLI connected
+  lazily and surfaced schema-version mismatches as confusing
+  `CommsFailed` errors on the first RPC; now the mismatch is
+  reported up-front with an actionable error message that
+  points at `gallo version` for the device-reported schema and
+  recommends either re-flashing the firmware or installing a
+  matching `gallo` build. Closes Category A finding #4 (reviewer
+  R4) at the CLI layer.
+
+  `list` is exempt because it doesn't touch a connected device.
+  `version` is exempt because it IS the diagnostic subcommand
+  that reports schema skew (it already handles legacy firmware
+  via `device_info()` with fallback).
+
+### Changed (2026-06-04 — Category A hotfix host-only PR)
+
+- Bumped `pico-de-gallo-lib` dependency to 0.7.1 (validate() now
+  also checks `schema_major`, so any future major-version skew
+  surfaces immediately rather than silently mis-decoding wire
+  bytes).
+
+### Changed (2026-06-03 — Category A hotfix wire PR, already on main as 0.8.0)
 
 - Bumped `pico-de-gallo-lib` dependency to 0.7.0. Required for
   lockstep release with the wire-protocol schema bump in

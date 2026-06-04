@@ -467,7 +467,7 @@ pub type SpiTransferError = SpiError;
 /// Request to read the current level of a GPIO pin.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioGetRequest {
-    /// GPIO pin index (0–7).
+    /// GPIO pin index (0–3).
     pub pin: u8,
 }
 
@@ -479,7 +479,7 @@ pub struct GpioGetRequest {
 /// variants in the middle — only append at the end.
 #[derive(Serialize, Deserialize, Schema, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpioError {
-    /// The requested pin number is invalid (outside 0–7 range).
+    /// The requested pin number is invalid (outside 0–3 range).
     InvalidPin,
     /// An unspecified error occurred in the firmware.
     Other,
@@ -513,7 +513,7 @@ impl core::fmt::Display for GpioError {
 /// Request to set a GPIO pin to a specific level.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioPutRequest {
-    /// GPIO pin index (0–7).
+    /// GPIO pin index (0–3).
     pub pin: u8,
     /// Desired output level.
     pub state: GpioState,
@@ -550,7 +550,7 @@ impl From<GpioState> for bool {
 /// Request to wait for a GPIO pin to reach a specific state or edge.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioWaitRequest {
-    /// GPIO pin index (0–7).
+    /// GPIO pin index (0–3).
     pub pin: u8,
     /// Per-request timeout in milliseconds. A value of `0` means wait
     /// forever (matches pre-0.7 behavior). Any non-zero value bounds the
@@ -593,7 +593,7 @@ pub enum GpioPull {
 /// available options.
 #[derive(Serialize, Deserialize, Schema, Debug, PartialEq)]
 pub struct GpioSetConfigurationRequest {
-    /// GPIO pin index (0–7).
+    /// GPIO pin index (0–3).
     pub pin: u8,
     /// Desired pin direction.
     pub direction: GpioDirection,
@@ -1516,6 +1516,55 @@ pub struct DeviceInfo {
 mod tests {
     use super::*;
     use postcard::{from_bytes, to_allocvec};
+
+    // --- Schema version vs. Cargo.toml ---
+
+    /// AGENTS.md §13.8 warns about a stale-incremental-cache trap
+    /// where `SCHEMA_VERSION_*` constants don't match the crate
+    /// `[package].version`. The `build.rs` derives them from the
+    /// package version at build time, but a corrupted incremental
+    /// cache could theoretically ship a mismatched build. This test
+    /// guards against that by parsing `CARGO_PKG_VERSION` at compile
+    /// time and asserting equality.
+    ///
+    /// Closes Category A finding #35.
+    #[test]
+    fn schema_version_matches_cargo_pkg_version() {
+        let cargo_version = env!("CARGO_PKG_VERSION");
+        let mut parts = cargo_version.split('.');
+        let major_str = parts.next().expect("CARGO_PKG_VERSION must have major");
+        let minor_str = parts.next().expect("CARGO_PKG_VERSION must have minor");
+        let patch_str = parts.next().expect("CARGO_PKG_VERSION must have patch");
+        assert!(
+            parts.next().is_none(),
+            "CARGO_PKG_VERSION must be MAJOR.MINOR.PATCH; got {cargo_version}",
+        );
+        let cargo_major: u16 = major_str
+            .parse()
+            .expect("CARGO_PKG_VERSION major must parse as u16");
+        let cargo_minor: u16 = minor_str
+            .parse()
+            .expect("CARGO_PKG_VERSION minor must parse as u16");
+        let cargo_patch: u32 = patch_str
+            .parse()
+            .expect("CARGO_PKG_VERSION patch must parse as u32");
+        assert_eq!(
+            SCHEMA_VERSION_MAJOR, cargo_major,
+            "SCHEMA_VERSION_MAJOR ({SCHEMA_VERSION_MAJOR}) does not match \
+             CARGO_PKG_VERSION ({cargo_version}). Did you bump the [package].version \
+             but skip a clean rebuild? See AGENTS.md §13.8.",
+        );
+        assert_eq!(
+            SCHEMA_VERSION_MINOR, cargo_minor,
+            "SCHEMA_VERSION_MINOR ({SCHEMA_VERSION_MINOR}) does not match \
+             CARGO_PKG_VERSION ({cargo_version}).",
+        );
+        assert_eq!(
+            SCHEMA_VERSION_PATCH, cargo_patch,
+            "SCHEMA_VERSION_PATCH ({SCHEMA_VERSION_PATCH}) does not match \
+             CARGO_PKG_VERSION ({cargo_version}).",
+        );
+    }
 
     // --- I2C round-trip tests ---
 

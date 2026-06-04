@@ -44,9 +44,8 @@
 //! | Delay | [`DelayNs`](embedded_hal::delay::DelayNs) | [`DelayNs`](embedded_hal_async::delay::DelayNs) |
 
 use pico_de_gallo_lib::{
-    AdcChannel, AdcConfigurationInfo, AdcError, GpioDirection, GpioEdge, GpioError, GpioPull,
-    GpioState, I2cError, OneWireError, PicoDeGallo, PicoDeGalloError, PwmError, SpiError,
-    UartError,
+    AdcError, GpioError, GpioState, I2cError, OneWireError, PicoDeGallo, PicoDeGalloError,
+    PwmError, SpiError, UartError, ValidateError,
 };
 use std::sync::Arc;
 use tokio::runtime::{Handle, Runtime};
@@ -54,7 +53,8 @@ use tokio::sync::Mutex;
 use tokio::task::block_in_place;
 
 pub use pico_de_gallo_lib::{
-    GpioEvent, I2cFrequency, SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo,
+    AdcChannel, AdcConfigurationInfo, GpioDirection, GpioEdge, GpioEvent, GpioPull, I2cFrequency,
+    SpiConfigurationInfo, SpiPhase, SpiPolarity, UartConfigurationInfo,
 };
 
 /// Top-level HAL context for a Pico de Gallo device.
@@ -463,9 +463,146 @@ impl Hal {
     fn in_async_context() -> bool {
         Handle::try_current().is_ok()
     }
+
+    /// Instantiate the library context AND validate that the connected
+    /// firmware's schema matches this HAL's compiled-in schema.
+    ///
+    /// Use this in production code that wants to fail loudly on a
+    /// device-not-connected or firmware-version-mismatch condition
+    /// rather than deferring failure to the first RPC.
+    /// [`Hal::new`] constructs lazily and surfaces validation failures
+    /// only on the first endpoint call.
+    pub fn new_validated() -> Result<Self, HalInitError> {
+        let hal = Self::new();
+        hal.validate()?;
+        Ok(hal)
+    }
+
+    /// Like [`Hal::new_validated`] but selects a specific device by
+    /// serial number.
+    pub fn new_validated_with_serial_number(serial_number: &str) -> Result<Self, HalInitError> {
+        let hal = Self::new_with_serial_number(serial_number);
+        hal.validate()?;
+        Ok(hal)
+    }
+
+    /// Validate the connected firmware's schema version against this
+    /// HAL's compiled-in schema.
+    ///
+    /// Returns `Ok(())` on a matching schema. Returns
+    /// [`HalInitError::Validate`] on schema mismatch or communication
+    /// failure.
+    ///
+    /// Called automatically by [`Hal::new_validated`]. Exposed here
+    /// for callers that constructed via the lazy [`Hal::new`] and
+    /// want to validate after the fact.
+    pub fn validate(&self) -> Result<(), HalInitError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.validate_inner())
+        } else {
+            self.validate_inner()
+        }
+    }
+
+    fn validate_inner(&self) -> Result<(), HalInitError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.validate())
+            .map(|_info| ())
+            .map_err(HalInitError::Validate)
+    }
+
+    /// Tear down any GPIO subscriptions still held by the firmware
+    /// from a previous host process.
+    ///
+    /// Returns the number of subscriptions cleared. Idempotent and
+    /// cheap when no subscriptions are active, so the recommended
+    /// connect sequence after [`Hal::new_validated`] is:
+    ///
+    /// ```no_run
+    /// use pico_de_gallo_hal::Hal;
+    /// let hal = Hal::new_validated().expect("device validated");
+    /// let _cleared = hal.system_reset_subscriptions()
+    ///     .expect("system reset failed");
+    /// // ... use hal ...
+    /// ```
+    ///
+    /// **When you need this:** if your application uses GPIO
+    /// subscriptions and a previous host process crashed without
+    /// calling `gpio_unsubscribe`, the firmware will still consider
+    /// those pins owned by a monitor task. This endpoint releases
+    /// them so the new host can use the pins.
+    pub fn system_reset_subscriptions(&self) -> Result<u8, SystemHalError> {
+        if Self::in_async_context() {
+            block_in_place(|| self.system_reset_subscriptions_inner())
+        } else {
+            self.system_reset_subscriptions_inner()
+        }
+    }
+
+    fn system_reset_subscriptions_inner(&self) -> Result<u8, SystemHalError> {
+        let handle = self.handle.clone();
+        let gallo = handle.block_on(self.gallo.lock());
+        handle
+            .block_on(gallo.system_reset_subscriptions())
+            .map_err(|e| match e {
+                PicoDeGalloError::Comms(c) => SystemHalError::Comms(format!("{c:?}")),
+                PicoDeGalloError::Endpoint(never) => match never {},
+            })
+    }
 }
 
 // ----------------------------- Error Types -----------------------------
+
+/// Error returned by [`Hal::new_validated`] and [`Hal::validate`].
+///
+/// Either the device is not reachable / not enumerated, or the
+/// firmware's schema version does not match this HAL's compiled-in
+/// schema. Both cases are blocking failures — the caller should
+/// stop, surface a clear error to the user, and not attempt RPCs.
+#[derive(Debug)]
+pub enum HalInitError {
+    /// Validation of the firmware's schema version failed (mismatch,
+    /// legacy firmware, or USB transport error during the device-info
+    /// round-trip). See [`pico_de_gallo_lib::ValidateError`] for the
+    /// underlying detail.
+    Validate(ValidateError),
+}
+
+impl core::fmt::Display for HalInitError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Validate(e) => write!(f, "firmware validation failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for HalInitError {}
+
+impl From<ValidateError> for HalInitError {
+    fn from(e: ValidateError) -> Self {
+        Self::Validate(e)
+    }
+}
+
+/// Error type for system-level HAL operations such as
+/// [`Hal::system_reset_subscriptions`].
+#[derive(Debug)]
+pub enum SystemHalError {
+    /// A USB communication error.
+    Comms(String),
+}
+
+impl core::fmt::Display for SystemHalError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Comms(msg) => write!(f, "communication error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for SystemHalError {}
 
 /// Error type for GPIO HAL operations.
 #[derive(Debug)]
@@ -1363,8 +1500,9 @@ impl embedded_hal_async::delay::DelayNs for Delay {
 /// UART handle implementing [`embedded-io`] traits.
 ///
 /// Obtained from [`Hal::uart`]. Supports blocking and async read/write.
-/// The baud rate can be changed at runtime with
-/// [`Hal::uart_set_config`].
+/// **Baud rate is fixed at the firmware default** and cannot be changed
+/// through this HAL — to change baud, depend on `pico-de-gallo-lib`
+/// directly and call `PicoDeGallo::uart_set_config`.
 ///
 /// **Read timeout**: UART reads use a configurable timeout (in
 /// milliseconds) to avoid blocking the USB bridge indefinitely. The

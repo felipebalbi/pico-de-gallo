@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (2026-06-03 — Category A hotfix)
+### Added (2026-06-04 — Category A hotfix host-only PR)
+
+- `gallo_init_strict()` and `gallo_init_strict_with_serial_number(c_serial_number)`.
+  Both call `PicoDeGallo::validate()` internally before returning
+  the opaque pointer. Return `NULL` on device-not-found, schema
+  version mismatch, legacy firmware, or any validation error.
+  Prefer in production C code over the lazy `gallo_init` —
+  failures (device not present, schema mismatch) surface at
+  construct time rather than on the first RPC. Closes Category A
+  finding #4 at the FFI layer.
+
+### Changed (2026-06-04 — Category A hotfix host-only PR)
+
+- Bumped `pico-de-gallo-lib` dependency to 0.7.1 (validate() now
+  also checks `schema_major`, so the new `gallo_init_strict`
+  surfaces major-version skew that the previous validation
+  silently accepted).
+
+### Added (2026-06-03 — Category A hotfix wire PR, already on main as 0.8.0)
 
 - `gallo_gpio_wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout_ms`
   C functions. `timeout_ms == 0` preserves wait-forever behavior;
@@ -17,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Status::GpioTimeout = -70` enum variant (appended at end of
   `Status` enum; preserves stable C ABI per AGENTS.md §8).
 
-### Changed (2026-06-03 — Category A hotfix)
+### Changed (2026-06-03 — Category A hotfix wire PR, already on main as 0.8.0)
 
 - Bumped `pico-de-gallo-lib` dependency to 0.7.0 for the
   `gpio_wait_for_*_with_timeout` host methods.

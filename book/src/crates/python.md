@@ -40,11 +40,15 @@ $ maturin build --release
 
 ## Opening a Device
 
-At module level you get three entry points:
+At module level you get five entry points:
 
 - `list_devices()`
-- `open()`
-- `open_with_serial_number(serial_number)`
+- `open()` — lazy; failures surface on the first RPC
+- `open_with_serial_number(serial_number)` — lazy, selects by serial
+- `open_strict()` — validates the firmware's schema version before
+  returning; raises `RuntimeError` on mismatch or device-not-found
+- `open_strict_with_serial_number(serial_number)` — strict variant
+  with serial selection (recommended for production)
 
 ```python
 import pyco_de_gallo as gallo
