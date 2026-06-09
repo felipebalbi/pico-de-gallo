@@ -41,6 +41,14 @@ ignore = [
     # pio-proc / pio-parser). Not in shipped firmware binaries.
     # Re-evaluate when embassy-rp's pio stack migrates to pastey.
     "RUSTSEC-2024-0436",
+    # proc-macro-error2 is unmaintained (upstream confirmed and recommends
+    # migrating away). It was originally created as a maintained fork of
+    # proc-macro-error (RUSTSEC-2024-0370); both are now unmaintained.
+    # Reaches us only as a compile-time proc-macro dep through tabled ->
+    # tabled_derive (used by the gallo CLI for table rendering). Not in
+    # shipped binaries. Re-evaluate when tabled_derive migrates to
+    # manyhow / proc-macro2-diagnostics, or when we drop tabled.
+    "RUSTSEC-2026-0173",
 ]
 
 # -- Licenses -----------------------------------------------------------------
