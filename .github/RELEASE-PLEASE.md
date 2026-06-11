@@ -139,7 +139,8 @@ When a combined release PR lands a new `internal` minor:
 2. Refresh `crates/pico-de-gallo-firmware/Cargo.lock`:
    ```bash
    cd crates/pico-de-gallo-firmware
-   cargo update -p pico-de-gallo-internal --locked
+   cargo update -p pico-de-gallo-internal
+   cargo check --locked --target thumbv8m.main-none-eabihf
    ```
 3. Stage both files into the release-please PR before merging.
 

@@ -416,7 +416,8 @@ is NOT auto-bumped.
 2. Refresh the firmware lockfile:
    ```bash
    cd crates/pico-de-gallo-firmware
-   cargo update -p pico-de-gallo-internal --locked
+   cargo update -p pico-de-gallo-internal
+   cargo check --locked --target thumbv8m.main-none-eabihf
    ```
 3. Push both edits into the release-please PR branch before
    merging. CI's `lockfile` matrix will fail if either is missing.
