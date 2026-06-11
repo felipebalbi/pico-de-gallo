@@ -8,6 +8,25 @@
   "include-v-in-tag": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
+  "plugins": [
+    {
+      "type": "cargo-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "pico-de-gallo",
+      "components": [
+        "internal",
+        "library",
+        "hal",
+        "ffi",
+        "application",
+        "pyco",
+        "firmware"
+      ]
+    }
+  ],
   "packages": {
     "crates/pico-de-gallo-internal": {
       "package-name": "pico-de-gallo-internal",
