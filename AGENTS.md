@@ -154,7 +154,7 @@ nothing to run `dos2unix` anyway.
     in a `Cargo.toml` outside a release-please-authored PR, stop.**
     The only exception is when release-please is itself broken and
     a human-driven re-release is the documented recovery path — see
-    the §13.18 row for what that looks like, and ask first.
+    the §13.17 row 2026-06-11 for what that looks like, and ask first.
 
 ---
 
@@ -363,14 +363,17 @@ A wire-protocol change requires bumping in the **same release cycle**:
 
 **Version bumps are driven by release-please, not by hand.** All
 seven released crates (internal, library, hal, ffi, application,
-pyco, firmware) are grouped under a single `linked-versions` plugin
-in `.github/release-please-config.json`. A Conventional Commit that
+pyco, firmware) are grouped under the `linked-versions` plugin
+in `.github/release-please-config.json`, with the `cargo-workspace`
+plugin rewriting cross-crate dep specs in lockstep (see "Firmware
+dep-spec is manually refreshed each release" below for the firmware
+caveat). A Conventional Commit that
 bumps any one of them (e.g. `feat(internal)!: ...`) makes
 release-please open release PRs that bump **all seven** to the same
 new version. **Do not bump `[package].version` in any `Cargo.toml`
 manually** — that desyncs the in-repo version from the manifest and
 from crates.io, and the result is exactly the regression in
-§13.18: release-please thinks nothing has changed, the release PR
+§13.17 (row 2026-06-11): release-please thinks nothing has changed, the release PR
 never appears, and nothing ever gets published.
 
 If you find the repo's `Cargo.toml` versions ahead of crates.io,
@@ -379,7 +382,7 @@ sees the manifest already matches the Cargo.toml and proposes
 nothing. The fix is a single coordinated re-release PR that bumps
 the manifest *and* every `Cargo.toml` to the next target version,
 then manual tagging post-merge to fire the publish workflows. See
-the §13.18 row for the playbook.
+the §13.17 row 2026-06-11 for the playbook.
 
 The `linked-versions` plugin enforces lockstep version *numbers*,
 but it does **not** know that `internal` ↔ `firmware` are
@@ -387,6 +390,40 @@ wire-coupled at the bytes-on-the-wire level. A `feat!` on
 `internal` alone will bump every component's version in lockstep,
 but the firmware source itself still needs the schema-encoding
 change. That part remains on you (or your AI agent).
+
+### Firmware dep-spec is manually refreshed each release
+
+`release-please` uses two plugins (see `.github/RELEASE-PLEASE.md`):
+
+- `cargo-workspace` rewrites cross-crate `version = "..."` dep
+  specs **inside the host workspace** (every dependent of a bumped
+  crate gets its `pico-de-gallo-X = { version = "Y.Z", path = "..." }`
+  spec updated automatically).
+- `linked-versions` groups all seven components (six host +
+  firmware) into one coordinated release PR.
+
+But firmware is **excluded** from the host workspace, so
+`cargo-workspace` does not see it. When the combined release PR
+proposes a new `pico-de-gallo-internal` minor, the firmware's
+`pico-de-gallo-internal = { version = "X", path = "..." }` spec
+is NOT auto-bumped.
+
+**Per-release manual step (one line + one lockfile refresh):**
+
+1. Edit `crates/pico-de-gallo-firmware/Cargo.toml` so the
+   `pico-de-gallo-internal` dep spec's `version = "..."` matches
+   the new internal target (e.g. `0.5.0` → `0.6.0`).
+2. Refresh the firmware lockfile:
+   ```bash
+   cd crates/pico-de-gallo-firmware
+   cargo update -p pico-de-gallo-internal --locked
+   ```
+3. Push both edits into the release-please PR branch before
+   merging. CI's `lockfile` matrix will fail if either is missing.
+
+The release-please PR will automatically bump the firmware's own
+`[package].version` (firmware has its own component); only the
+*cross-crate dep spec* needs the manual touch-up.
 
 ---
 
@@ -697,7 +734,8 @@ next agent doesn't repeat it.
 | 2026-05-29 | release-please defaults (missing `bump-minor-pre-major`) | `feat!` on the 0.x `internal` crate caused release-please to propose `internal 1.0.0` (plus six sibling 1.0.0 release PRs). PR #48 was merged before the trap was spotted; only a repo ruleset blocking `Cannot create ref` prevented the `internal-v1.0.0` tag, GitHub Release, and crates.io publish from going out. | Reverted the version bump on `main` (54573fa); added `bump-minor-pre-major: true` and `bump-patch-for-minor-pre-major: true` to `.github/release-please-config.json` so `feat!` on a 0.x crate bumps the minor and `feat:` bumps the patch. Closed the stale 1.0.0 release PRs so release-please regenerates them at the correct minor bumps. |
 | 2026-06-03 | `gpio_wait_for_*` on a never-transitioning pin after host crash | Firmware dispatcher wedged device-wide; every other endpoint queued behind the stuck handler until power-cycle (worse than the 2026-05-29 row — that one blocked one pin, this one bricks the device). Postcard-rpc 0.12 dispatches handlers serially on a shared `&mut Context`, so any `await` inside a handler blocks the whole `server.run()` loop. embassy-usb-driver 0.2.0 does NOT expose `wait_disconnected`, so a `select(edge, disconnect)` fix is not viable on the host-process-death path. | Appended `timeout_ms: u32` to `GpioWaitRequest` (shared by all five `gpio/wait-*` endpoints) and `GpioError::Timeout` variant. Firmware `gpio_wait_for_*` handlers wrap `flex.wait_for_*_edge()` in `embassy_time::with_timeout` when `timeout_ms != 0`. Also enabled the embassy-rp watchdog at 2 s, fed by a dedicated `watchdog_feeder_task` (defense-in-depth against any future infinite-await). Lockstep schema bump (internal 0.6→0.7, lib 0.6→0.7, hal 0.6→0.7, ffi 0.7→0.8, application 0.7→0.8, pyco 0.3→0.4, firmware 0.10→0.11). |
 | 2026-06-03 | `PicoDeGallo::validate()` only checked `schema_minor`, not `schema_major` | A firmware reporting a bumped major with matching minor would silently pass validation; the host would then mis-decode subsequent RPC responses (postcard happily decodes whatever bytes come back into the *host's* enum layout, so e.g. `NoAcknowledge` could be read as `Bus`). Failure mode is silent garbage out, no error to the caller. | Fixed `validate()` at `lib.rs:667` to check both major and minor, extended `ValidateError::SchemaMismatch` payload with `expected_major`/`actual_major`. Extracted the policy into a private `check_schema_compatible(&DeviceInfo)` helper with four regression tests. Also enforced validation up-front in `Hal::new_validated` (new), `gallo_init_strict` (new), `PycoDeGallo.open_strict` (new), and `gallo` CLI `Cli::run` (every subcommand except `list`/`version`). Closes Category A finding #1; host crates: lib 0.6.0→0.6.1, hal 0.6.0→0.7.0, ffi 0.7.0→0.7.1, application 0.7.0→0.7.1, pyco 0.3.0→0.3.1. |
-| 2026-06-11 | `Cargo.toml` `[package].version` edited by hand for the §13.17 6-03 fixes (internal/lib/hal 0.6→0.7, ffi/application 0.7→0.8, pyco 0.3→0.4, firmware 0.10→0.11), **without** going through a release-please PR. | Manifest (`.github/.release-please-manifest.json`) and crates.io were left at the previous release (internal/lib/hal 0.5.0, ffi 0.6.0, application 0.6.0, pyco 0.2.0, firmware 0.9.0). release-please then saw `Cargo.toml == manifest + N` for every crate and proposed **seven separate** release PRs (#60–#66) that each *downgrade* the in-repo `Cargo.toml` back to the next legitimate target (`crates.io + 0.1 minor`: internal/lib/hal 0.6.0, ffi/application 0.7.0, pyco 0.3.0, firmware 0.10.0). The schema-0.7 fixes built locally, ran in CI, and were **never published** to crates.io / PyPI / GitHub Releases. No `firmware-v0.10*` or `firmware-v0.11*` tag exists; only dev builds ever reported schema 0.7. Drift was invisible because `cargo install --git` and local builds happily used the in-repo versions. | Plan Z (the chosen path): do **not** hand-rewrite any `Cargo.toml`. Instead ship a small infra-only PR (this branch) that (a) adds the `linked-versions` plugin to `.github/release-please-config.json` grouping all seven released components, (b) hardens AGENTS.md §4 rule #12 + §6.5 + this row, (c) rewrites `.github/RELEASE-PLEASE.md` (wire-protocol section, new "Linked versions" + "Manual version bumps are forbidden" sections, corrected `bootstrap-sha` semantics, removed `cargo-workspace` plugin references). After it merges, close the seven stale per-component release PRs; release-please regenerates them as **one combined release PR** that downgrades every `Cargo.toml` to the target version, updates the manifest, and writes the CHANGELOG entries. Refresh both `Cargo.lock`s on that combined PR (`cargo update --workspace --locked` in `crates/` and `cargo update --locked` in `crates/pico-de-gallo-firmware/`) and merge. The seven tags (`internal-v0.6.0`, `library-v0.6.0`, `hal-v0.6.0`, `ffi-v0.7.0`, `application-v0.7.0`, `pyco-v0.3.0`, `firmware-v0.10.0`) and GitHub Releases are created by release-please automatically; `release-crates.yml` / `release-pyco.yml` / `release-firmware.yml` fire from those tags. Going forward: never edit `[package].version` by hand — see §4 rule #12 and §6.5. |
+| 2026-06-11 | `Cargo.toml` `[package].version` edited by hand for the §13.17 6-03 fixes (internal/lib/hal 0.6→0.7, ffi/application 0.7→0.8, pyco 0.3→0.4, firmware 0.10→0.11), **without** going through a release-please PR. | Manifest (`.github/.release-please-manifest.json`) and crates.io were left at the previous release (internal/lib/hal 0.5.0, ffi 0.6.0, application 0.6.0, pyco 0.2.0, firmware 0.9.0). release-please then saw `Cargo.toml == manifest + N` for every crate and proposed **seven separate** release PRs (#60–#66) that each *downgrade* the in-repo `Cargo.toml` back to the next legitimate target (`crates.io + 0.1 minor`: internal/lib/hal 0.6.0, ffi/application 0.7.0, pyco 0.3.0, firmware 0.10.0). The schema-0.7 fixes built locally, ran in CI, and were **never published** to crates.io / PyPI / GitHub Releases. No `firmware-v0.10*` or `firmware-v0.11*` tag exists; only dev builds ever reported schema 0.7. Drift was invisible because `cargo install --git` and local builds happily used the in-repo versions. | Plan Z (the chosen path): do **not** hand-rewrite any `Cargo.toml`. Instead ship a small infra-only PR (this branch) that (a) adds the `linked-versions` plugin to `.github/release-please-config.json` grouping all seven released components, (b) hardens AGENTS.md §4 rule #12 + §6.5 + this row, (c) rewrites `.github/RELEASE-PLEASE.md` (wire-protocol section, new "Linked versions" + "Manual version bumps are forbidden" sections, corrected `bootstrap-sha` semantics, removed `cargo-workspace` plugin references). After it merges, close the seven stale per-component release PRs; release-please regenerates them as **one combined release PR** that downgrades every `Cargo.toml` to the target version, updates the manifest, and writes the CHANGELOG entries. Refresh both `Cargo.lock`s on that combined PR (`cargo update --workspace --locked` at the repo root and `cargo update --locked` in `crates/pico-de-gallo-firmware/`) and merge. The seven tags (`internal-v0.6.0`, `library-v0.6.0`, `hal-v0.6.0`, `ffi-v0.7.0`, `application-v0.7.0`, `pyco-v0.3.0`, `firmware-v0.10.0`) and GitHub Releases are created by release-please automatically; `release-crates.yml` / `release-pyco.yml` / `release-firmware.yml` fire from those tags. Going forward: never edit `[package].version` by hand — see §4 rule #12. The repo now uses release-please with both `cargo-workspace` and `linked-versions` plugins so dep specs and version numbers stay in lockstep automatically across the host workspace; only the firmware's `pico-de-gallo-internal` dep spec needs a manual touch-up per release (see §6.5 and `.github/RELEASE-PLEASE.md`). |
+| 2026-06-11 | Plan-Z infra-only PR scoped to add `linked-versions` plugin alone. | release-please's `linked-versions` plugin only coordinates version *numbers*; it does not rewrite cross-crate `version = "..."` dep specs. After internal 0.5.0 → 0.6.0, every dependent's `pico-de-gallo-internal = { version = "0.5.0", path = "..." }` spec would be stale: local `cargo build` fails between release-please merges, and `lib 0.6.0` published to crates.io would resolve `internal ^0.5.0` (silent wire mismatch). | Hoisted host workspace manifest from `crates/Cargo.toml` to repo-root `Cargo.toml` (chore(repo)! commit) so release-please's `cargo-workspace` plugin can find it. Added `cargo-workspace` plugin with `"merge": false` alongside `linked-versions`. Combined plugins now auto-bump every host-side dep spec; firmware is excluded from the host workspace, so its `pico-de-gallo-internal` dep spec is manually edited and its `Cargo.lock` is refreshed per release PR (documented in AGENTS.md §6.5 and RELEASE-PLEASE.md "Firmware dep-spec edit"). |
 
 ---
 
