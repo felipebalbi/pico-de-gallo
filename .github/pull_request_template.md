@@ -52,9 +52,9 @@ firmware + host releases plus a `pico-de-gallo-internal` minor bump (pre-1.0).
 
 <!-- What did you run and on what hardware? Be specific. -->
 
-- [ ] `cd crates && cargo fmt --check`
-- [ ] `cd crates && cargo clippy --all-targets --locked -- -D warnings`
-- [ ] `cd crates && cargo test --locked`
+- [ ] `cargo fmt --check`
+- [ ] `cargo clippy --all-targets --locked -- -D warnings`
+- [ ] `cargo test --locked`
 - [ ] Firmware: `cd crates/pico-de-gallo-firmware && cargo build --release --locked --target thumbv8m.main-none-eabihf` (both `hw-rev1` and `hw-rev2` if applicable)
 - [ ] Firmware: `cargo clippy --target thumbv8m.main-none-eabihf -- -D warnings`
 - [ ] Tested on real hardware (describe below)

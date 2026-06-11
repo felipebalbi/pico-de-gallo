@@ -98,7 +98,7 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           package: pico-de-gallo-internal
-          manifest-path: crates/Cargo.toml
+          manifest-path: Cargo.toml
 
   doc:
     # run docs generation on nightly rather than stable. This enables features like
@@ -225,7 +225,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - workspace: crates
+          - workspace: .
             extra-flags: ""
           - workspace: crates/pico-de-gallo-firmware
             extra-flags: "--target thumbv8m.main-none-eabihf"
@@ -275,7 +275,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        workspace: [crates, crates/pico-de-gallo-firmware]
+        workspace: [., crates/pico-de-gallo-firmware]
 
     steps:
       - uses: actions/checkout@v6

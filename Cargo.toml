@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pico-de-gallo-app",
+    "crates/pico-de-gallo-ffi",
+    "crates/pico-de-gallo-hal",
+    "crates/pico-de-gallo-internal",
+    "crates/pico-de-gallo-lib",
+    "crates/pyco-de-gallo",
+]
+exclude = [ "crates/pico-de-gallo-firmware" ]
