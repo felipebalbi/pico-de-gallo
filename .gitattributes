@@ -24,6 +24,24 @@
 *.c             text eol=lf
 *.lock          text eol=lf
 
+# --- KiCad project files (S-expressions / JSON, text) ---------------
+#
+# KiCad's PCB, schematic, project, symbol, footprint, design-rules,
+# and project-local files are line-oriented text (S-expressions for
+# .kicad_pcb/.kicad_sch/.kicad_sym/.kicad_mod/.kicad_dru, JSON for
+# .kicad_pro/.kicad_prl). Treating them as text gives us real diffs,
+# three-way merge, and `git blame` on hardware changes. Force LF on
+# checkin and checkout so a contributor with core.autocrlf=true on
+# Windows doesn't trigger a whole-file rewrite the next time KiCad
+# saves the project.
+*.kicad_sch     text eol=lf
+*.kicad_pcb     text eol=lf
+*.kicad_pro     text eol=lf
+*.kicad_sym     text eol=lf
+*.kicad_mod     text eol=lf
+*.kicad_dru     text eol=lf
+*.kicad_prl     text eol=lf
+
 # --- Binary files (never touch line endings) -------------------------
 *.png           binary
 *.jpg           binary
@@ -43,16 +61,6 @@
 *.tar           binary
 *.gz            binary
 *.whl           binary
-
-# KiCad files are S-expressions (text), but treating them as binary
-# avoids accidental whitespace churn from editors / format-on-save.
-*.kicad_sch     binary
-*.kicad_pcb     binary
-*.kicad_pro     binary
-*.kicad_sym     binary
-*.kicad_mod     binary
-*.kicad_dru     binary
-*.kicad_prl     binary
 *.step          binary
 *.stp           binary
 *.stl           binary

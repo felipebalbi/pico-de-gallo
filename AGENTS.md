@@ -97,8 +97,12 @@ dos2unix path/to/your/new-file.yml
 Linux/macOS the editor will usually do the right thing, but it costs
 nothing to run `dos2unix` anyway.
 
-`.kicad_*`, `.FCStd`, `.uf2`, `.elf`, `.so`, `.dll`, `.dylib`,
-`.png`, `.pdf`, etc. are marked **binary** — never line-end them.
+`.FCStd`, `.uf2`, `.elf`, `.so`, `.dll`, `.dylib`, `.png`, `.pdf`,
+etc. are marked **binary** — never line-end them. `.kicad_*` files
+are S-expressions / JSON and are tracked as **text with forced LF**
+so `git diff`, `git blame`, and three-way merge work on hardware
+changes; run `dos2unix` on any KiCad file you somehow ended up
+editing on Windows with CRLF.
 
 ---
 
