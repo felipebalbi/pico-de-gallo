@@ -23,7 +23,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: cargo-bins/cargo-binstall@main
 
@@ -50,7 +50,7 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-deploy
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download built book
         uses: actions/download-artifact@v8

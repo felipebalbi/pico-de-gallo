@@ -37,7 +37,7 @@ jobs:
     name: stable / fmt
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -69,7 +69,7 @@ jobs:
         pyco-de-gallo]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -89,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     name: stable / semver
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Install stable
@@ -115,7 +115,7 @@ jobs:
         pyco-de-gallo]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -142,7 +142,7 @@ jobs:
         pyco-de-gallo]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -170,7 +170,7 @@ jobs:
         pyco-de-gallo]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -199,7 +199,7 @@ jobs:
     name: ubuntu / ${{ matrix.msrv }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -231,7 +231,7 @@ jobs:
             extra-flags: "--target thumbv8m.main-none-eabihf"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -255,7 +255,7 @@ jobs:
     name: ubuntu / actionlint
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: actionlint
         uses: docker://rhysd/actionlint:latest
@@ -278,7 +278,7 @@ jobs:
         workspace: [., crates/pico-de-gallo-firmware]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
