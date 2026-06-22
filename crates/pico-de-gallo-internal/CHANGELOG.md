@@ -5,29 +5,30 @@ All notable changes to `pico-de-gallo-internal` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] — 2026-06-22
 
 ### Breaking Changes (2026-06-03 — Category A hotfix)
 
 - `GpioWaitRequest` gained a `timeout_ms: u32` field, used by all
   five `gpio/wait-*` endpoints (`gpio/wait-high`, `wait-low`,
   `wait-rising`, `wait-falling`, `wait-any`). A value of `0`
-  preserves pre-0.7 wait-forever behavior; non-zero bounds the
+  preserves pre-0.6 wait-forever behavior; non-zero bounds the
   firmware-side wait and returns `GpioError::Timeout` on expiry.
 - `GpioError::Timeout` variant appended at end of enum (safe wire-
   protocol addition per AGENTS.md §6.1).
 - Schema version bumps via the `pico-de-gallo-internal` version
-  bump (`0.6.0` → `0.7.0`); under the pre-1.0 schema-versioning
+  bump (`0.5.0` → `0.6.0`); under the pre-1.0 schema-versioning
   rule this is a breaking schema bump, so hosts and firmware must
-  be upgraded together. Lockstep version bumps planned:
-  `pico-de-gallo-internal` `0.6.0` → `0.7.0`, `pico-de-gallo-lib`
-  `0.6.0` → `0.7.0`, `pico-de-gallo-hal` `0.7.0` → `0.8.0`,
-  `pico-de-gallo-ffi` `0.7.0` → `0.8.0`, `gallo` (CLI) `0.7.0` →
-  `0.8.0`, `pyco-de-gallo` `0.3.0` → `0.4.0`,
-  `pico-de-gallo-firmware` `0.10.0` → `0.11.0`. Closes Category A
-  finding #2 (reliability subagent B1: GPIO `wait_for_*` on a
-  never-transitioning pin previously wedged the entire firmware
-  dispatcher).
+  be upgraded together. This work ships in the same `0.6.0`
+  release as the `system/reset-subscriptions` change below.
+  Lockstep version bumps: `pico-de-gallo-internal` `0.5.0` →
+  `0.6.0`, `pico-de-gallo-lib` `0.5.0` → `0.6.0`,
+  `pico-de-gallo-hal` `0.5.0` → `0.6.0`, `pico-de-gallo-ffi`
+  `0.6.0` → `0.7.0`, `gallo` (CLI) `0.6.0` → `0.7.0`,
+  `pyco-de-gallo` `0.2.0` → `0.4.2`, `pico-de-gallo-firmware`
+  `0.9.0` → `0.10.0`. Closes Category A finding #2 (reliability
+  subagent B1: GPIO `wait_for_*` on a never-transitioning pin
+  previously wedged the entire firmware dispatcher).
 
 ### Breaking Changes
 
@@ -39,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pico-de-gallo-internal` `0.5.0` → `0.6.0`, `pico-de-gallo-lib`
   `0.5.0` → `0.6.0`, `pico-de-gallo-hal` `0.5.0` → `0.6.0`,
   `pico-de-gallo-ffi` `0.6.0` → `0.7.0`, `gallo` (CLI) `0.6.0` →
-  `0.7.0`, `pyco-de-gallo` `0.2.0` → `0.3.0`,
+  `0.7.0`, `pyco-de-gallo` `0.2.0` → `0.4.2`,
   `pico-de-gallo-firmware` `0.9.0` → `0.10.0`. ([REVIEW-2026-05-29
   P1-3])
 

@@ -5,13 +5,13 @@ All notable changes to `pico-de-gallo-firmware` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] — 2026-06-22
 
 ### Added (2026-06-03 — Category A hotfix)
 
 - `gpio_wait_for_*` handlers now honor the per-request `timeout_ms`
-  field added in `pico-de-gallo-internal` 0.7. A value of `0`
-  preserves the pre-0.7 wait-forever behavior. Non-zero wraps the
+  field added in `pico-de-gallo-internal` 0.6. A value of `0`
+  preserves the pre-0.6 wait-forever behavior. Non-zero wraps the
   embassy `wait_for_*_edge()` future in
   `embassy_time::with_timeout(Duration::from_millis(timeout_ms))`
   and returns `GpioError::Timeout` on expiry.
@@ -45,13 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Lockstep
 
-- Coupled to `pico-de-gallo-internal` 0.7.0 (schema minor bump
+- Coupled to `pico-de-gallo-internal` 0.6.0 (schema minor bump
   adding `timeout_ms` to `GpioWaitRequest` and `GpioError::Timeout`
   variant). See AGENTS.md §6.5.
 
-## [Unreleased — earlier]
-
-### Added
+### Added (system/reset-subscriptions)
 
 - `system/reset-subscriptions` endpoint handler. Firmware iterates
   its GPIO monitor slots, signals stop on each live one, awaits the

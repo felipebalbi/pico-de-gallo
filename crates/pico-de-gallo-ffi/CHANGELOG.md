@@ -5,7 +5,7 @@ All notable changes to `pico-de-gallo-ffi` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] — 2026-06-22
 
 ### Added (2026-06-04 — Category A hotfix host-only PR)
 
@@ -20,24 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (2026-06-04 — Category A hotfix host-only PR)
 
-- Bumped `pico-de-gallo-lib` dependency to 0.7.1 (validate() now
+- Bumped `pico-de-gallo-lib` dependency to 0.6.0 (validate() now
   also checks `schema_major`, so the new `gallo_init_strict`
   surfaces major-version skew that the previous validation
   silently accepted).
 
-### Added (2026-06-03 — Category A hotfix wire PR, already on main as 0.8.0)
+### Added (2026-06-03 — Category A hotfix wire PR)
 
 - `gallo_gpio_wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout_ms`
   C functions. `timeout_ms == 0` preserves wait-forever behavior;
   non-zero bounds the firmware-side wait and returns
   `Status::GpioTimeout` on expiry. Available on firmware schema
-  0.7+; older firmware returns `Status::SchemaMismatch`.
+  0.6+; older firmware returns `Status::SchemaMismatch`.
 - `Status::GpioTimeout = -70` enum variant (appended at end of
   `Status` enum; preserves stable C ABI per AGENTS.md §8).
 
-### Changed (2026-06-03 — Category A hotfix wire PR, already on main as 0.8.0)
+### Changed (2026-06-03 — Category A hotfix wire PR)
 
-- Bumped `pico-de-gallo-lib` dependency to 0.7.0 for the
+- Bumped `pico-de-gallo-lib` dependency to 0.6.0 for the
   `gpio_wait_for_*_with_timeout` host methods.
 
 ### Added

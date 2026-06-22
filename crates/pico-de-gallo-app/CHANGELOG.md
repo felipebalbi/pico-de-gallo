@@ -5,7 +5,7 @@ All notable changes to `gallo` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] — 2026-06-22
 
 ### Fixed (2026-06-04 — Category A hotfix host-only PR)
 
@@ -26,16 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (2026-06-04 — Category A hotfix host-only PR)
 
-- Bumped `pico-de-gallo-lib` dependency to 0.7.1 (validate() now
+- Bumped `pico-de-gallo-lib` dependency to 0.6.0 (validate() now
   also checks `schema_major`, so any future major-version skew
   surfaces immediately rather than silently mis-decoding wire
   bytes).
 
-### Changed (2026-06-03 — Category A hotfix wire PR, already on main as 0.8.0)
+### Changed (2026-06-03 — Category A hotfix wire PR)
 
-- Bumped `pico-de-gallo-lib` dependency to 0.7.0. Required for
+- Bumped `pico-de-gallo-lib` dependency to 0.6.0. Required for
   lockstep release with the wire-protocol schema bump in
-  `pico-de-gallo-internal` 0.7.0 / `pico-de-gallo-firmware` 0.11.0
+  `pico-de-gallo-internal` 0.6.0 / `pico-de-gallo-firmware` 0.10.0
   (`timeout_ms` field on `GpioWaitRequest`, `GpioError::Timeout`
   variant).
 - Existing `gallo` CLI behavior is unchanged in this release: the

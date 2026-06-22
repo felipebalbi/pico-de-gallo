@@ -5,7 +5,7 @@ All notable changes to `pico-de-gallo-hal` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] — 2026-06-22
 
 ### Added (2026-06-04 — Category A hotfix host-only PR)
 
@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (2026-06-04 — Category A hotfix host-only PR)
 
-- Bumped `pico-de-gallo-lib` dependency to 0.7.1 (validate() now
+- Bumped `pico-de-gallo-lib` dependency to 0.6.0 (validate() now
   also checks `schema_major`).
 - Updated `docs/ai-agents/pico-de-gallo-hal-examples.md`:
   - §4 Cargo setup: removed the "not re-exported by the HAL"
@@ -51,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - §6.9 ADC snippet/HIL/gotchas: switched `AdcChannel` import
     to the HAL re-export; historical note preserved.
 
-### Added (2026-06-03 — Category A hotfix wire PR, already on main as 0.7.0)
+### Added (2026-06-03 — Category A hotfix wire PR)
 
 - `Gpio::wait_for_{high,low,rising_edge,falling_edge,any_edge}_with_timeout`
   async methods accept a `std::time::Duration` and return
@@ -61,9 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for production code; the trait methods retain their wait-forever
   semantics for compatibility with existing drivers.
 
-### Changed (2026-06-03 — Category A hotfix wire PR, already on main as 0.7.0)
+### Changed (2026-06-03 — Category A hotfix wire PR)
 
-- Bumped `pico-de-gallo-lib` dependency to 0.7.0.
+- Bumped `pico-de-gallo-lib` dependency to 0.6.0.
 - Updated `docs/ai-agents/pico-de-gallo-hal-examples.md` §6.6 Gotchas
   to recommend the bounded `_with_timeout` variants for production
   use.
