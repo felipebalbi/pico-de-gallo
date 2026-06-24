@@ -7,7 +7,18 @@ a USB bridge for I2C, SPI, and GPIO access.
 
 ```console
 $ rustup target add thumbv8m.main-none-eabihf
+```
+
+For rev1 hardware:
+
+```console
 $ cargo build --release --manifest-path crates/pico-de-gallo-firmware/Cargo.toml --target thumbv8m.main-none-eabihf
+```
+
+For rev2 hardware:
+
+```console
+$ cargo build --release --manifest-path crates/pico-de-gallo-firmware/Cargo.toml --target thumbv8m.main-none-eabihf --no-default-features --features hw-rev2
 ```
 
 ## Flashing
@@ -15,7 +26,7 @@ $ cargo build --release --manifest-path crates/pico-de-gallo-firmware/Cargo.toml
 Convert the ELF to UF2 and copy to the Pico 2 in BOOTSEL mode:
 
 ```console
-$ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/pico-de-gallo-firmware -t elf firmware.uf2
+$ picotool uf2 convert crates/pico-de-gallo-firmware/target/thumbv8m.main-none-eabihf/release/pico-de-gallo-firmware -t elf firmware.uf2
 $ picotool load firmware.uf2
 ```
 
