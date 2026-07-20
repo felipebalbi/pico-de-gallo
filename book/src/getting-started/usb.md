@@ -13,7 +13,7 @@ to Pico de Gallo, drop a udev rule:
 
 ```text
 # /etc/udev/rules.d/99-pico-de-gallo.rules
-SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="ffff", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="067d", MODE="0666"
 ```
 
 Then reload udev:
@@ -28,10 +28,11 @@ without `sudo`.
 
 > [!NOTE]
 >
-> The VID `045e` (Microsoft) and PID `ffff` are placeholders
-> used by the firmware — Microsoft's vendor block reserves `ffff`
-> for prototyping. They are not registered for Pico de Gallo and
-> should not be considered stable across firmware versions.
+> The device enumerates with VID `045e` (Microsoft) and PID
+> `067d`, defined by the firmware (`MICROSOFT_VID` /
+> `PICO_DE_GALLO_PID` in `pico-de-gallo-internal`). They may
+> change across firmware versions, so avoid hard-coding them in
+> long-lived tooling.
 
 ## Windows
 

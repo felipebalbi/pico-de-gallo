@@ -18,7 +18,7 @@
    to user space.
 5. Check `dmesg` (Linux), Device Manager (Windows), or
    `system_profiler SPUSBDataType` (macOS) for VID `045E` and
-   PID `B33C`.
+   PID `067D`.
 
 ### `gallo ping` fails with a comms error
 
