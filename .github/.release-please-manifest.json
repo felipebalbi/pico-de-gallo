@@ -3,7 +3,7 @@
   "crates/pico-de-gallo-lib": "0.6.0",
   "crates/pico-de-gallo-hal": "0.6.0",
   "crates/pico-de-gallo-ffi": "0.7.0",
-  "crates/pico-de-gallo-app": "0.7.0",
+  "crates/pico-de-gallo-app": "0.7.1",
   "crates/pyco-de-gallo": "0.4.2",
   "crates/pico-de-gallo-firmware": "0.10.0"
 }

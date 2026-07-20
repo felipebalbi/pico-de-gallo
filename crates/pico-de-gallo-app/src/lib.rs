@@ -589,13 +589,13 @@ impl Cli {
     /// mismatch is surfaced with a clear, actionable error message
     /// rather than as a confusing `CommsFailed` on the first RPC.
     ///
-    /// Called at the top of [`Cli::run`] for every subcommand except
-    /// `list` (no device needed) and `version` (the diagnostic
-    /// subcommand that explicitly reports the schema skew).
+    /// Validation runs on the shared connection opened by [`Cli::run`],
+    /// for every subcommand except `list` (no device needed) and
+    /// `version` (the diagnostic subcommand that explicitly reports the
+    /// schema skew).
     ///
     /// Closes Category A finding #4 (reviewer R4) at the CLI layer.
-    async fn validate_firmware(&self) -> Result<()> {
-        let pg = self.connect();
+    async fn validate_firmware(&self, pg: &PicoDeGallo) -> Result<()> {
         pg.validate().await.map(|_info| ()).map_err(|e| {
             eyre!(
                 "firmware validation failed: {e}\n\n\
@@ -610,79 +610,99 @@ impl Cli {
     ///
     /// Dispatches to the appropriate handler based on the parsed subcommand.
     /// Returns `Ok(())` on success or an error via `color_eyre`.
+    ///
+    /// A single USB connection is opened here and shared by reference with
+    /// every device-touching handler. Opening a second connection while the
+    /// first is still tearing down its background `nusb` worker triggers a
+    /// WinUSB `Access is denied` error on Windows, where WinUSB grants
+    /// exclusive access to one session per interface. Sharing one `pg`
+    /// avoids that race. See the `CHANGELOG.md` entry for the regression.
     pub async fn run(&self) -> Result<()> {
-        // Validate schema up-front for every subcommand that touches
-        // the device, except `list` (no device needed) and `version`
-        // (the diagnostic subcommand that reports schema skew itself).
-        // Without this, a schema mismatch would manifest as a confusing
-        // CommsFailed on the first RPC. See Category A finding #4.
-        match &self.command {
-            Commands::List | Commands::Version => {}
-            _ => self.validate_firmware().await?,
+        // `list` enumerates devices without opening (claiming) any of
+        // them, so handle it before establishing a connection — it must
+        // work with zero or multiple devices attached.
+        if let Commands::List = &self.command {
+            return Self::list_devices();
+        }
+
+        // Open exactly one connection for the whole invocation.
+        let pg = self.connect();
+
+        // Validate the firmware schema up-front for every subcommand that
+        // touches the device, except `version` (the diagnostic subcommand
+        // that reports schema skew itself). Without this, a schema mismatch
+        // would manifest as a confusing CommsFailed on the first RPC.
+        // See Category A finding #4.
+        if !matches!(self.command, Commands::Version) {
+            self.validate_firmware(&pg).await?;
         }
 
         match &self.command {
-            Commands::List => Self::list_devices(),
-            Commands::Version => self.version().await,
+            Commands::List => unreachable!("handled before connecting"),
+            Commands::Version => self.version(&pg).await,
             Commands::I2c { command } => match command {
-                I2cCommands::Scan { reserved } => self.i2c_scan(*reserved).await,
-                I2cCommands::Read { address, count } => self.i2c_read(address, count).await,
-                I2cCommands::Write { address, bytes } => self.i2c_write(address, bytes).await,
+                I2cCommands::Scan { reserved } => self.i2c_scan(&pg, *reserved).await,
+                I2cCommands::Read { address, count } => self.i2c_read(&pg, address, count).await,
+                I2cCommands::Write { address, bytes } => self.i2c_write(&pg, address, bytes).await,
                 I2cCommands::WriteRead { address, bytes, count } => {
-                    self.i2c_write_then_read(address, bytes, count).await
+                    self.i2c_write_then_read(&pg, address, bytes, count).await
                 }
-                I2cCommands::SetConfig { frequency } => self.i2c_set_config((*frequency).into()).await,
-                I2cCommands::GetConfig => self.i2c_get_config().await,
-                I2cCommands::Batch { address, op } => self.i2c_batch(*address, op).await,
+                I2cCommands::SetConfig { frequency } => self.i2c_set_config(&pg, (*frequency).into()).await,
+                I2cCommands::GetConfig => self.i2c_get_config(&pg).await,
+                I2cCommands::Batch { address, op } => self.i2c_batch(&pg, *address, op).await,
             },
             Commands::Spi { command } => match command {
-                SpiCommands::Read { count } => self.spi_read(count).await,
-                SpiCommands::Write { bytes } => self.spi_write(bytes).await,
-                SpiCommands::Transfer { bytes } => self.spi_transfer(bytes).await,
-                SpiCommands::WriteRead { count, bytes } => self.spi_write_then_read(bytes, count).await,
+                SpiCommands::Read { count } => self.spi_read(&pg, count).await,
+                SpiCommands::Write { bytes } => self.spi_write(&pg, bytes).await,
+                SpiCommands::Transfer { bytes } => self.spi_transfer(&pg, bytes).await,
+                SpiCommands::WriteRead { count, bytes } => self.spi_write_then_read(&pg, bytes, count).await,
                 SpiCommands::SetConfig {
                     frequency,
                     first_transition,
                     idle_low,
-                } => self.spi_set_config(*frequency, *first_transition, *idle_low).await,
-                SpiCommands::GetConfig => self.spi_get_config().await,
-                SpiCommands::Batch { cs, op } => self.spi_batch(*cs, op).await,
+                } => self.spi_set_config(&pg, *frequency, *first_transition, *idle_low).await,
+                SpiCommands::GetConfig => self.spi_get_config(&pg).await,
+                SpiCommands::Batch { cs, op } => self.spi_batch(&pg, *cs, op).await,
             },
             Commands::Gpio { command } => match command {
-                GpioCommands::Get { pin } => self.gpio_get(*pin).await,
-                GpioCommands::Put { pin, high } => self.gpio_put(*pin, *high).await,
-                GpioCommands::SetConfig { pin, direction, pull } => self.gpio_set_config(*pin, *direction, *pull).await,
-                GpioCommands::Monitor { pin, edge } => self.gpio_monitor(*pin, *edge).await,
+                GpioCommands::Get { pin } => self.gpio_get(&pg, *pin).await,
+                GpioCommands::Put { pin, high } => self.gpio_put(&pg, *pin, *high).await,
+                GpioCommands::SetConfig { pin, direction, pull } => {
+                    self.gpio_set_config(&pg, *pin, *direction, *pull).await
+                }
+                GpioCommands::Monitor { pin, edge } => self.gpio_monitor(&pg, *pin, *edge).await,
             },
             Commands::Uart { command } => match command {
-                UartCommands::Read { count, timeout } => self.uart_read(*count, *timeout).await,
-                UartCommands::Write { bytes } => self.uart_write(bytes).await,
-                UartCommands::Flush => self.uart_flush().await,
-                UartCommands::SetConfig { baud_rate } => self.uart_set_config(*baud_rate).await,
-                UartCommands::GetConfig => self.uart_get_config().await,
+                UartCommands::Read { count, timeout } => self.uart_read(&pg, *count, *timeout).await,
+                UartCommands::Write { bytes } => self.uart_write(&pg, bytes).await,
+                UartCommands::Flush => self.uart_flush(&pg).await,
+                UartCommands::SetConfig { baud_rate } => self.uart_set_config(&pg, *baud_rate).await,
+                UartCommands::GetConfig => self.uart_get_config(&pg).await,
             },
             Commands::Pwm { command } => match command {
-                PwmCommands::SetDuty { channel, duty } => self.pwm_set_duty(*channel, *duty).await,
-                PwmCommands::GetDuty { channel } => self.pwm_get_duty(*channel).await,
-                PwmCommands::Enable { channel } => self.pwm_enable(*channel).await,
-                PwmCommands::Disable { channel } => self.pwm_disable(*channel).await,
+                PwmCommands::SetDuty { channel, duty } => self.pwm_set_duty(&pg, *channel, *duty).await,
+                PwmCommands::GetDuty { channel } => self.pwm_get_duty(&pg, *channel).await,
+                PwmCommands::Enable { channel } => self.pwm_enable(&pg, *channel).await,
+                PwmCommands::Disable { channel } => self.pwm_disable(&pg, *channel).await,
                 PwmCommands::SetConfig {
                     channel,
                     frequency,
                     phase_correct,
-                } => self.pwm_set_config(*channel, *frequency, *phase_correct).await,
-                PwmCommands::GetConfig { channel } => self.pwm_get_config(*channel).await,
+                } => self.pwm_set_config(&pg, *channel, *frequency, *phase_correct).await,
+                PwmCommands::GetConfig { channel } => self.pwm_get_config(&pg, *channel).await,
             },
             Commands::Adc { command } => match command {
-                AdcCommands::Read { channel } => self.adc_read(*channel).await,
-                AdcCommands::Info => self.adc_get_info().await,
+                AdcCommands::Read { channel } => self.adc_read(&pg, *channel).await,
+                AdcCommands::Info => self.adc_get_info(&pg).await,
             },
             Commands::OneWire { command } => match command {
-                OneWireCommands::Reset => self.onewire_reset().await,
-                OneWireCommands::Read { len } => self.onewire_read(*len).await,
-                OneWireCommands::Write { data } => self.onewire_write(data).await,
-                OneWireCommands::WritePullup { data, duration } => self.onewire_write_pullup(data, *duration).await,
-                OneWireCommands::Search => self.onewire_search().await,
+                OneWireCommands::Reset => self.onewire_reset(&pg).await,
+                OneWireCommands::Read { len } => self.onewire_read(&pg, *len).await,
+                OneWireCommands::Write { data } => self.onewire_write(&pg, data).await,
+                OneWireCommands::WritePullup { data, duration } => {
+                    self.onewire_write_pullup(&pg, data, *duration).await
+                }
+                OneWireCommands::Search => self.onewire_search(&pg).await,
             },
         }
     }
@@ -702,9 +722,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn version(&self) -> Result<()> {
-        let pg = self.connect();
-
+    async fn version(&self, pg: &PicoDeGallo) -> Result<()> {
         // Try the new device/info endpoint first; fall back to legacy version.
         match pg.device_info().await {
             Ok(info) => {
@@ -752,9 +770,7 @@ impl Cli {
         }
     }
 
-    async fn i2c_scan(&self, reserved: bool) -> Result<()> {
-        let pg = self.connect();
-
+    async fn i2c_scan(&self, pg: &PicoDeGallo, reserved: bool) -> Result<()> {
         let addresses = pg
             .i2c_scan(reserved)
             .await
@@ -798,9 +814,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn i2c_read(&self, address: &u8, count: &usize) -> Result<()> {
-        let pg = self.connect();
-
+    async fn i2c_read(&self, pg: &PicoDeGallo, address: &u8, count: &usize) -> Result<()> {
         let buf = match pg.i2c_read(*address, *count as u16).await {
             Ok(data) => data,
             Err(e) => return Err(eyre!("{:?}", e).wrap_err("i2c_read failed")),
@@ -811,17 +825,13 @@ impl Cli {
         Ok(())
     }
 
-    async fn i2c_write(&self, address: &u8, bytes: &[u8]) -> Result<()> {
-        let pg = self.connect();
-
+    async fn i2c_write(&self, pg: &PicoDeGallo, address: &u8, bytes: &[u8]) -> Result<()> {
         pg.i2c_write(*address, bytes)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("i2c_write failed"))
     }
 
-    async fn i2c_write_then_read(&self, address: &u8, bytes: &[u8], count: &usize) -> Result<()> {
-        let pg = self.connect();
-
+    async fn i2c_write_then_read(&self, pg: &PicoDeGallo, address: &u8, bytes: &[u8], count: &usize) -> Result<()> {
         let buf = match pg.i2c_write_read(*address, bytes, *count as u16).await {
             Ok(data) => data,
             Err(e) => return Err(eyre!("{:?}", e).wrap_err("i2c_write_read failed")),
@@ -832,9 +842,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn spi_read(&self, count: &usize) -> Result<()> {
-        let pg = self.connect();
-
+    async fn spi_read(&self, pg: &PicoDeGallo, count: &usize) -> Result<()> {
         let buf = match pg.spi_read(*count as u16).await {
             Ok(data) => data,
             Err(e) => return Err(eyre!("{:?}", e).wrap_err("spi_read failed")),
@@ -845,17 +853,13 @@ impl Cli {
         Ok(())
     }
 
-    async fn spi_write(&self, bytes: &[u8]) -> Result<()> {
-        let pg = self.connect();
-
+    async fn spi_write(&self, pg: &PicoDeGallo, bytes: &[u8]) -> Result<()> {
         pg.spi_write(bytes)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("spi_write failed"))
     }
 
-    async fn spi_transfer(&self, bytes: &[u8]) -> Result<()> {
-        let pg = self.connect();
-
+    async fn spi_transfer(&self, pg: &PicoDeGallo, bytes: &[u8]) -> Result<()> {
         let buf = pg
             .spi_transfer(bytes)
             .await
@@ -866,22 +870,18 @@ impl Cli {
         Ok(())
     }
 
-    async fn spi_write_then_read(&self, bytes: &[u8], count: &usize) -> Result<()> {
-        self.spi_write(bytes).await?;
-        self.spi_read(count).await
+    async fn spi_write_then_read(&self, pg: &PicoDeGallo, bytes: &[u8], count: &usize) -> Result<()> {
+        self.spi_write(pg, bytes).await?;
+        self.spi_read(pg, count).await
     }
 
-    async fn i2c_set_config(&self, frequency: I2cFrequency) -> Result<()> {
-        let pg = self.connect();
-
+    async fn i2c_set_config(&self, pg: &PicoDeGallo, frequency: I2cFrequency) -> Result<()> {
         pg.i2c_set_config(frequency)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("i2c set-config failed"))
     }
 
-    async fn i2c_get_config(&self) -> Result<()> {
-        let pg = self.connect();
-
+    async fn i2c_get_config(&self, pg: &PicoDeGallo) -> Result<()> {
         let freq = pg
             .i2c_get_config()
             .await
@@ -896,9 +896,13 @@ impl Cli {
         Ok(())
     }
 
-    async fn spi_set_config(&self, frequency: u32, first_transition: bool, idle_low: bool) -> Result<()> {
-        let pg = self.connect();
-
+    async fn spi_set_config(
+        &self,
+        pg: &PicoDeGallo,
+        frequency: u32,
+        first_transition: bool,
+        idle_low: bool,
+    ) -> Result<()> {
         let spi_polarity = if idle_low {
             SpiPolarity::IdleLow
         } else {
@@ -916,9 +920,7 @@ impl Cli {
             .map_err(|e| eyre!("{:?}", e).wrap_err("spi set-config failed"))
     }
 
-    async fn spi_get_config(&self) -> Result<()> {
-        let pg = self.connect();
-
+    async fn spi_get_config(&self, pg: &PicoDeGallo) -> Result<()> {
         let info = pg
             .spi_get_config()
             .await
@@ -938,10 +940,9 @@ impl Cli {
         Ok(())
     }
 
-    async fn i2c_batch(&self, address: u8, ops: &[String]) -> Result<()> {
+    async fn i2c_batch(&self, pg: &PicoDeGallo, address: u8, ops: &[String]) -> Result<()> {
         use pico_de_gallo_lib::I2cBatchOp;
 
-        let pg = self.connect();
         let batch_ops = parse_i2c_batch_ops(ops)?;
         let refs: Vec<I2cBatchOp<'_>> = batch_ops
             .iter()
@@ -965,10 +966,9 @@ impl Cli {
         Ok(())
     }
 
-    async fn spi_batch(&self, cs: u8, ops: &[String]) -> Result<()> {
+    async fn spi_batch(&self, pg: &PicoDeGallo, cs: u8, ops: &[String]) -> Result<()> {
         use pico_de_gallo_lib::SpiBatchOp;
 
-        let pg = self.connect();
         let batch_ops = parse_spi_batch_ops(ops)?;
         let refs: Vec<SpiBatchOp<'_>> = batch_ops
             .iter()
@@ -994,9 +994,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn gpio_get(&self, pin: u8) -> Result<()> {
-        let pg = self.connect();
-
+    async fn gpio_get(&self, pg: &PicoDeGallo, pin: u8) -> Result<()> {
         let level = pg
             .gpio_get(pin)
             .await
@@ -1010,9 +1008,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn gpio_put(&self, pin: u8, high: bool) -> Result<()> {
-        let pg = self.connect();
-
+    async fn gpio_put(&self, pg: &PicoDeGallo, pin: u8, high: bool) -> Result<()> {
         let state = if high { GpioState::High } else { GpioState::Low };
         pg.gpio_put(pin, state)
             .await
@@ -1022,9 +1018,13 @@ impl Cli {
         Ok(())
     }
 
-    async fn gpio_set_config(&self, pin: u8, direction: GpioDirectionArg, pull: GpioPullArg) -> Result<()> {
-        let pg = self.connect();
-
+    async fn gpio_set_config(
+        &self,
+        pg: &PicoDeGallo,
+        pin: u8,
+        direction: GpioDirectionArg,
+        pull: GpioPullArg,
+    ) -> Result<()> {
         pg.gpio_set_config(pin, direction.into(), pull.into())
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("gpio set-config failed"))?;
@@ -1033,9 +1033,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn gpio_monitor(&self, pin: u8, edge: GpioEdgeArg) -> Result<()> {
-        let pg = self.connect();
-
+    async fn gpio_monitor(&self, pg: &PicoDeGallo, pin: u8, edge: GpioEdgeArg) -> Result<()> {
         pg.gpio_subscribe(pin, edge.into())
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("gpio subscribe failed"))?;
@@ -1076,9 +1074,7 @@ impl Cli {
         result
     }
 
-    async fn uart_read(&self, count: u16, timeout_ms: u32) -> Result<()> {
-        let pg = self.connect();
-
+    async fn uart_read(&self, pg: &PicoDeGallo, count: u16, timeout_ms: u32) -> Result<()> {
         let data = pg
             .uart_read(count, timeout_ms)
             .await
@@ -1092,9 +1088,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn uart_write(&self, bytes: &[u8]) -> Result<()> {
-        let pg = self.connect();
-
+    async fn uart_write(&self, pg: &PicoDeGallo, bytes: &[u8]) -> Result<()> {
         pg.uart_write(bytes)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("uart write failed"))?;
@@ -1103,9 +1097,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn uart_flush(&self) -> Result<()> {
-        let pg = self.connect();
-
+    async fn uart_flush(&self, pg: &PicoDeGallo) -> Result<()> {
         pg.uart_flush()
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("uart flush failed"))?;
@@ -1114,9 +1106,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn uart_set_config(&self, baud_rate: u32) -> Result<()> {
-        let pg = self.connect();
-
+    async fn uart_set_config(&self, pg: &PicoDeGallo, baud_rate: u32) -> Result<()> {
         pg.uart_set_config(baud_rate)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("uart set-config failed"))?;
@@ -1125,9 +1115,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn uart_get_config(&self) -> Result<()> {
-        let pg = self.connect();
-
+    async fn uart_get_config(&self, pg: &PicoDeGallo) -> Result<()> {
         let info = pg
             .uart_get_config()
             .await
@@ -1141,8 +1129,7 @@ impl Cli {
     // PWM
     // -----------------------------------------------------------------------
 
-    async fn pwm_set_duty(&self, channel: u8, duty: u16) -> Result<()> {
-        let pg = self.connect();
+    async fn pwm_set_duty(&self, pg: &PicoDeGallo, channel: u8, duty: u16) -> Result<()> {
         pg.pwm_set_duty_cycle(channel, duty)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("pwm set-duty failed"))?;
@@ -1150,8 +1137,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn pwm_get_duty(&self, channel: u8) -> Result<()> {
-        let pg = self.connect();
+    async fn pwm_get_duty(&self, pg: &PicoDeGallo, channel: u8) -> Result<()> {
         let info = pg
             .pwm_get_duty_cycle(channel)
             .await
@@ -1163,8 +1149,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn pwm_enable(&self, channel: u8) -> Result<()> {
-        let pg = self.connect();
+    async fn pwm_enable(&self, pg: &PicoDeGallo, channel: u8) -> Result<()> {
         pg.pwm_enable(channel)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("pwm enable failed"))?;
@@ -1172,8 +1157,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn pwm_disable(&self, channel: u8) -> Result<()> {
-        let pg = self.connect();
+    async fn pwm_disable(&self, pg: &PicoDeGallo, channel: u8) -> Result<()> {
         pg.pwm_disable(channel)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("pwm disable failed"))?;
@@ -1181,8 +1165,13 @@ impl Cli {
         Ok(())
     }
 
-    async fn pwm_set_config(&self, channel: u8, frequency_hz: u32, phase_correct: bool) -> Result<()> {
-        let pg = self.connect();
+    async fn pwm_set_config(
+        &self,
+        pg: &PicoDeGallo,
+        channel: u8,
+        frequency_hz: u32,
+        phase_correct: bool,
+    ) -> Result<()> {
         pg.pwm_set_config(channel, frequency_hz, phase_correct)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("pwm set-config failed"))?;
@@ -1190,8 +1179,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn pwm_get_config(&self, channel: u8) -> Result<()> {
-        let pg = self.connect();
+    async fn pwm_get_config(&self, pg: &PicoDeGallo, channel: u8) -> Result<()> {
         let info = pg
             .pwm_get_config(channel)
             .await
@@ -1203,7 +1191,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn adc_read(&self, channel: u8) -> Result<()> {
+    async fn adc_read(&self, pg: &PicoDeGallo, channel: u8) -> Result<()> {
         let adc_channel = match channel {
             0 => AdcChannel::Adc0,
             1 => AdcChannel::Adc1,
@@ -1211,7 +1199,6 @@ impl Cli {
             3 => AdcChannel::Adc3,
             _ => return Err(eyre!("invalid ADC channel {channel}: expected 0–3")),
         };
-        let pg = self.connect();
         let raw = pg
             .adc_read(adc_channel)
             .await
@@ -1221,8 +1208,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn adc_get_info(&self) -> Result<()> {
-        let pg = self.connect();
+    async fn adc_get_info(&self, pg: &PicoDeGallo) -> Result<()> {
         let info = pg
             .adc_get_config()
             .await
@@ -1236,8 +1222,7 @@ impl Cli {
 
     // ---- 1-Wire methods ----
 
-    async fn onewire_reset(&self) -> Result<()> {
-        let pg = self.connect();
+    async fn onewire_reset(&self, pg: &PicoDeGallo) -> Result<()> {
         let present = pg
             .onewire_reset()
             .await
@@ -1250,8 +1235,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn onewire_read(&self, len: u16) -> Result<()> {
-        let pg = self.connect();
+    async fn onewire_read(&self, pg: &PicoDeGallo, len: u16) -> Result<()> {
         let data = pg
             .onewire_read(len)
             .await
@@ -1260,8 +1244,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn onewire_write(&self, data: &[u8]) -> Result<()> {
-        let pg = self.connect();
+    async fn onewire_write(&self, pg: &PicoDeGallo, data: &[u8]) -> Result<()> {
         pg.onewire_write(data)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("1-Wire write failed"))?;
@@ -1269,8 +1252,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn onewire_write_pullup(&self, data: &[u8], duration_ms: u16) -> Result<()> {
-        let pg = self.connect();
+    async fn onewire_write_pullup(&self, pg: &PicoDeGallo, data: &[u8], duration_ms: u16) -> Result<()> {
         pg.onewire_write_pullup(data, duration_ms)
             .await
             .map_err(|e| eyre!("{:?}", e).wrap_err("1-Wire write-pullup failed"))?;
@@ -1278,9 +1260,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn onewire_search(&self) -> Result<()> {
-        let pg = self.connect();
-
+    async fn onewire_search(&self, pg: &PicoDeGallo) -> Result<()> {
         let mut rom_ids = Vec::new();
 
         // First search

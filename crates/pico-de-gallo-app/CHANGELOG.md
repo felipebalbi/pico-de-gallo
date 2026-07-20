@@ -5,6 +5,28 @@ All notable changes to `gallo` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-07-20
+
+### Fixed
+
+- `gallo` now opens a **single** USB connection per invocation and
+  shares it (by reference) across schema validation and the command
+  handler. Previously every subcommand except `list`/`version`
+  opened one connection to run `validate()`, dropped it, then opened
+  a second connection for the operation (`spi write-read` opened a
+  third). On Windows, WinUSB grants exclusive access to one session
+  per interface, and the first connection's background `nusb` worker
+  had not released the handle before the second `claim_interface`,
+  so the operation panicked with
+  `Failed claiming interface: … Access is denied`. Commands such as
+  `gallo i2c scan`, `i2c get-config`, and `adc info` failed
+  deterministically on Windows, while `version`/`list` (single/zero
+  connections) worked — making it look like a driver or permissions
+  problem. Linux and macOS release the interface synchronously on
+  drop, so CI never caught it. Regression from the 2026-06-04
+  up-front `validate()` change (Category A finding #4). No CLI
+  surface changed.
+
 ## [0.7.0] — 2026-06-22
 
 ### Fixed (2026-06-04 — Category A hotfix host-only PR)
