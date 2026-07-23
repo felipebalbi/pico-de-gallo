@@ -42,7 +42,7 @@ the project — see §6.
 │   ├── DISCUSSION_TEMPLATE/         # Discussion forms
 │   ├── pull_request_template.md
 │   ├── copilot-instructions.md      # Detailed agent reference (read it)
-│   └── RELEASE-PLEASE.md            # release-please playbook
+│   └── RELEASE.md                   # manual release playbook
 ├── book/                            # mdBook → opendevicepartnership.github.io/pico-de-gallo/
 ├── hardware/                        # KiCad landing-board PCB
 ├── case/                            # FreeCAD enclosure
@@ -122,9 +122,8 @@ editing on Windows with CRLF.
    0.2.1).
 5. **Firmware logs with `defmt` only.** No `log`, no `println!`, no
    `eprintln!` — that crate is `no_std`.
-6. **Conventional Commits with a crate scope.** release-please
-   depends on this for versioning, CHANGELOG, and tag generation.
-   See §10.
+6. **Conventional Commits with a crate scope.** Used for readable
+   history, scoping, and CHANGELOG authoring. See §10.
 7. **AI-assisted commits include `Co-authored-by: Copilot` and
    `Assisted-by:` trailers; NEVER `Signed-off-by:`.** Only humans
    may certify the DCO.
@@ -142,23 +141,23 @@ editing on Windows with CRLF.
     matching `book/` update in the same logical change. See §15.1
     for the parity rule, the per-area mapping, and the reviewer
     checklist.
-12. **NEVER hand-edit `[package].version` in any `Cargo.toml`.**
-    Release-please owns every released crate's version (internal,
-    library, hal, ffi, application, pyco, firmware — all seven
-    grouped under `linked-versions`). Your job is to write a
-    Conventional Commit (`feat(scope): ...`, `fix(scope): ...`,
-    `feat(scope)!: ...`). Release-please will then open a PR that
-    bumps the `[package].version`, the `.github/.release-please-manifest.json`
-    entry, and the `CHANGELOG.md` in one coordinated change. Editing
-    the version by hand desyncs the manifest from the source tree,
-    silently disables release-please for that crate (the manifest
-    will already match the next target so no release PR is opened),
-    and the change ships locally but never reaches crates.io / PyPI
-    / GitHub Releases. **If you find yourself typing `version = "0.X.Y"`
-    in a `Cargo.toml` outside a release-please-authored PR, stop.**
-    The only exception is when release-please is itself broken and
-    a human-driven re-release is the documented recovery path — see
-    the §13.17 row 2026-06-11 for what that looks like, and ask first.
+12. **Version bumps are a deliberate, manual release step — never a
+    drive-by edit.** There is no release automation anymore
+    (release-please was removed; see §12 and `.github/RELEASE.md`).
+    A crate's `[package].version` in its own `Cargo.toml` is the sole
+    source of truth. Do **not** bump `[package].version` inside an
+    ordinary feature/fix PR — land the change with a Conventional
+    Commit and let a maintainer cut the release separately. When you
+    *are* deliberately cutting a release, a version bump is never
+    isolated: in the **same commit** you must also (a) bump the
+    matching `version = "..."` dep specs in every dependent crate
+    (`lib`→`internal`; `hal`/`ffi`/`application`/`pyco`→`lib`;
+    `firmware`→`internal`), (b) hand-write the `CHANGELOG.md`
+    entry, (c) regenerate **both** `Cargo.lock`s, and (d) after merge,
+    push the per-component tags that fire the publish workflows.
+    Bumping a version without its dep specs ships a crate to crates.io
+    that resolves a stale sibling; forgetting the firmware lock fails
+    CI's `lockfile` job. Follow the checklist in §12 / `.github/RELEASE.md`.
 
 ---
 
@@ -234,7 +233,6 @@ The release-mode firmware binary is named `pico-de-gallo-firmware`.
 | `check.yml`               | Push to `main`, PRs                | fmt, clippy, doc, hack (feature powerset), test, msrv, **lockfile drift**, **actionlint**, **cargo-deny**, **cargo-semver-checks** |
 | `nostd.yml`               | Push to `main`, PRs                | Firmware compiles + clippy for `thumbv8m.main-none-eabihf`, both `hw-rev1` and `hw-rev2`                    |
 | `gh-pages.yml`            | Push to `main`                     | Builds and deploys the mdBook docs to GitHub Pages                                                          |
-| `release-please.yml`      | Push to `main`                     | Opens / maintains one release PR per crate based on Conventional Commits                                    |
 | `release-application.yml` | `application-v*` tags              | Builds `gallo` for Linux/Windows/macOS                                                                      |
 | `release-ffi.yml`         | `ffi-v*` tags                      | Builds `.so` / `.dll` / `.dylib` + C header                                                                 |
 | `release-firmware.yml`    | `firmware-v*` tags **and PRs**     | Builds `.uf2` and `.elf`. PR runs are **build-only** (skip-upload) so tooling breakage is caught at PR time |
@@ -365,70 +363,59 @@ A wire-protocol change requires bumping in the **same release cycle**:
    `pico-de-gallo-app`, `pyco-de-gallo` (so every host surface sees
    the new types).
 
-**Version bumps are driven by release-please, not by hand.** All
-seven released crates (internal, library, hal, ffi, application,
-pyco, firmware) are grouped under the `linked-versions` plugin
-in `.github/release-please-config.json`, with the `cargo-workspace`
-plugin rewriting cross-crate dep specs in lockstep (see "Firmware
-dep-spec is manually refreshed each release" below for the firmware
-caveat). A Conventional Commit that
-bumps any one of them (e.g. `feat(internal)!: ...`) makes
-release-please open release PRs that bump **all seven** to the same
-new version. **Do not bump `[package].version` in any `Cargo.toml`
-manually** — that desyncs the in-repo version from the manifest and
-from crates.io, and the result is exactly the regression in
-§13.17 (row 2026-06-11): release-please thinks nothing has changed, the release PR
-never appears, and nothing ever gets published.
+**Version bumps are manual.** There is no release automation
+(release-please was removed — see §12 and `.github/RELEASE.md`). When
+the wire protocol changes, a maintainer cuts a release that, in one
+commit, bumps `[package].version` on **all seven** released crates
+(internal, library, hal, ffi, application, pyco, firmware) to the
+same new version (pre-1.0: a minor bump for any wire change), because
+they are wire-coupled and must never drift in version space.
 
-If you find the repo's `Cargo.toml` versions ahead of crates.io,
-**do not "fix" it by re-running release-please** — release-please
-sees the manifest already matches the Cargo.toml and proposes
-nothing. The fix is a single coordinated re-release PR that bumps
-the manifest *and* every `Cargo.toml` to the next target version,
-then manual tagging post-merge to fire the publish workflows. See
-the §13.17 row 2026-06-11 for the playbook.
+That single release commit must also:
 
-The `linked-versions` plugin enforces lockstep version *numbers*,
-but it does **not** know that `internal` ↔ `firmware` are
-wire-coupled at the bytes-on-the-wire level. A `feat!` on
-`internal` alone will bump every component's version in lockstep,
-but the firmware source itself still needs the schema-encoding
-change. That part remains on you (or your AI agent).
+- **Rewrite every cross-crate dep spec** by hand — nothing rewrites
+  them for you now. Each dependent's `pico-de-gallo-X = { version =
+  "Y.Z", path = "..." }` spec must point at the new version:
+  - `lib` → `internal`
+  - `hal`, `ffi`, `application`, `pyco` → `lib`
+  - `firmware` → `internal` (separate workspace — easy to forget)
+- **Hand-write the `CHANGELOG.md`** entries (Keep a Changelog).
+- **Regenerate both `Cargo.lock`s** (`cargo update --workspace` at
+  the repo root; `cargo update -p pico-de-gallo-internal` in
+  `crates/pico-de-gallo-firmware`) and verify with `cargo check
+  --locked` in both workspaces. CI's `lockfile` matrix fails if a
+  lock is out of sync.
 
-### Firmware dep-spec is manually refreshed each release
+After the release commit merges, push the per-component tags
+(`internal-v*`, `library-v*`, `hal-v*`, `ffi-v*`, `application-v*`,
+`pyco-v*`, `firmware-v*`) to fire the publish workflows. See §12 and
+`.github/RELEASE.md` for the full checklist.
 
-`release-please` uses two plugins (see `.github/RELEASE-PLEASE.md`):
+Nothing enforces wire coupling for you: bumping the version numbers
+does not change the firmware's schema encoding. The firmware source
+must carry the matching change, and `SCHEMA_VERSION_*` regenerates
+from `internal`'s version via `build.rs` (§6.2).
 
-- `cargo-workspace` rewrites cross-crate `version = "..."` dep
-  specs **inside the host workspace** (every dependent of a bumped
-  crate gets its `pico-de-gallo-X = { version = "Y.Z", path = "..." }`
-  spec updated automatically).
-- `linked-versions` groups all seven components (six host +
-  firmware) into one coordinated release PR.
+#### Don't forget the firmware (separate workspace)
 
-But firmware is **excluded** from the host workspace, so
-`cargo-workspace` does not see it. When the combined release PR
-proposes a new `pico-de-gallo-internal` minor, the firmware's
-`pico-de-gallo-internal = { version = "X", path = "..." }` spec
-is NOT auto-bumped.
-
-**Per-release manual step (one line + one lockfile refresh):**
+`crates/pico-de-gallo-firmware` is **excluded** from the host
+workspace (it targets `thumbv8m.main-none-eabihf` and is no_std), so
+its `pico-de-gallo-internal = { version = "X", path = "..." }` dep
+spec and its own `Cargo.lock` are entirely separate from the host
+workspace. In the same release commit:
 
 1. Edit `crates/pico-de-gallo-firmware/Cargo.toml` so the
-   `pico-de-gallo-internal` dep spec's `version = "..."` matches
-   the new internal target (e.g. `0.5.0` → `0.6.0`).
+   `pico-de-gallo-internal` dep spec's `version = "..."` matches the
+   new internal target (e.g. `0.6.0` → `0.7.0`), and bump the
+   firmware's own `[package].version`.
 2. Refresh the firmware lockfile:
    ```bash
    cd crates/pico-de-gallo-firmware
    cargo update -p pico-de-gallo-internal
    cargo check --locked --target thumbv8m.main-none-eabihf
    ```
-3. Push both edits into the release-please PR branch before
-   merging. CI's `lockfile` matrix will fail if either is missing.
-
-The release-please PR will automatically bump the firmware's own
-`[package].version` (firmware has its own component); only the
-*cross-crate dep spec* needs the manual touch-up.
+3. Stage both edits into the release commit. CI's `lockfile` matrix
+   will fail if either is missing.
 
 ---
 
@@ -576,40 +563,52 @@ Wire-protocol commits **must** be marked breaking (see §6.4).
 
 ---
 
-## 12. Release process (TL;DR — you usually don't touch this)
+## 12. Release process (manual — read `.github/RELEASE.md`)
 
-Releases are driven by
-[release-please](.github/RELEASE-PLEASE.md), not by hand.
+Releases are performed **by hand**. There is no release automation —
+release-please was removed (issue #83) because it caused more
+problems than it solved (version/manifest drift that silently
+disabled releases, seven-PR fan-out, plugin interaction bugs). A
+maintainer bumps versions, writes the CHANGELOG, merges, and pushes
+tags. The full checklist lives in
+[`.github/RELEASE.md`](.github/RELEASE.md); the summary:
 
-1. Land Conventional Commits on `main`.
-2. release-please opens/maintains one release PR per crate.
-3. Before merging a release PR, refresh `Cargo.lock`:
-   `cargo update --workspace --locked` (host) and
-   `cargo update --locked` (firmware).
-4. Merge the release PR. release-please creates the GitHub Release
-   and tag (e.g. `internal-v0.6.0`). The matching
-   `release-*.yml` workflow fires on the tag and produces binaries.
+1. Bump `[package].version` in each crate being released, and the
+   matching `version = "..."` dep specs in every dependent
+   (`lib`→`internal`; `hal`/`ffi`/`application`/`pyco`→`lib`;
+   `firmware`→`internal`).
+2. Hand-write the `CHANGELOG.md` entries (Keep a Changelog).
+3. Regenerate both `Cargo.lock`s and verify `cargo check --locked`
+   in the host workspace and firmware workspace.
+4. Commit (`chore(release): ...`), open a PR, get CI green, merge to
+   `main` (no squash).
+5. Tag the merged commit — one tag per component — and push the
+   tags. The tag-triggered `release-*.yml` workflows then publish to
+   crates.io / PyPI and build the binaries.
 
 **Tag prefix glossary** (common typos hurt):
 
-| Crate                    | release-please component | Tag prefix       |
-|--------------------------|--------------------------|------------------|
-| `pico-de-gallo-internal` | `internal`               | `internal-v*`    |
-| `pico-de-gallo-lib`      | `library`                | `library-v*`     |
-| `pico-de-gallo-hal`      | `hal`                    | `hal-v*`         |
-| `pico-de-gallo-ffi`      | `ffi`                    | `ffi-v*`         |
-| `gallo` (CLI)            | `application`            | `application-v*` |
-| `pyco-de-gallo`          | `pyco`                   | `pyco-v*`        |
-| `pico-de-gallo-firmware` | `firmware`               | `firmware-v*`    |
-| KiCad gerbers            | n/a (manual)             | `hardware-v*`    |
+| Crate                    | Tag prefix       | Publishes to         |
+|--------------------------|------------------|----------------------|
+| `pico-de-gallo-internal` | `internal-v*`    | crates.io            |
+| `pico-de-gallo-lib`      | `library-v*`     | crates.io            |
+| `pico-de-gallo-hal`      | `hal-v*`         | crates.io            |
+| `pico-de-gallo-ffi`      | `ffi-v*`         | crates.io            |
+| `gallo` (CLI)            | `application-v*` | crates.io + binaries |
+| `pyco-de-gallo`          | `pyco-v*`        | PyPI (wheels)        |
+| `pico-de-gallo-firmware` | `firmware-v*`    | `.uf2` / `.elf`      |
+| KiCad gerbers            | `hardware-v*`    | gerbers / PDF        |
 
 Common typos that have bitten us: `lib-v*` (it's `library-v*`),
 `app-v*` (it's `application-v*`), `fw-v*` (it's `firmware-v*`).
 
-If you ever do tag manually: **tag-triggered workflows use the
-workflow YAML as it existed at the tagged commit, not at the tip of
-main.** If you rewrite a release commit, you must delete and
-re-create the tag.
+For crates.io, push `internal-v*` first and let it index (~60s)
+before the dependent tags, or re-run the downstream publish jobs that
+lose the indexing race (see `release-crates.yml`).
+
+**Tag-triggered workflows use the workflow YAML as it existed at the
+tagged commit, not at the tip of main.** If you rewrite a release
+commit, you must delete and re-create the tag.
 
 ---
 
@@ -742,6 +741,7 @@ next agent doesn't repeat it.
 | 2026-06-11 | `Cargo.toml` `[package].version` edited by hand for the §13.17 6-03 fixes (internal/lib/hal 0.6→0.7, ffi/application 0.7→0.8, pyco 0.3→0.4, firmware 0.10→0.11), **without** going through a release-please PR. | Manifest (`.github/.release-please-manifest.json`) and crates.io were left at the previous release (internal/lib/hal 0.5.0, ffi 0.6.0, application 0.6.0, pyco 0.2.0, firmware 0.9.0). release-please then saw `Cargo.toml == manifest + N` for every crate and proposed **seven separate** release PRs (#60–#66) that each *downgrade* the in-repo `Cargo.toml` back to the next legitimate target (`crates.io + 0.1 minor`: internal/lib/hal 0.6.0, ffi/application 0.7.0, pyco 0.3.0, firmware 0.10.0). The schema-0.7 fixes built locally, ran in CI, and were **never published** to crates.io / PyPI / GitHub Releases. No `firmware-v0.10*` or `firmware-v0.11*` tag exists; only dev builds ever reported schema 0.7. Drift was invisible because `cargo install --git` and local builds happily used the in-repo versions. | Plan Z (the chosen path): do **not** hand-rewrite any `Cargo.toml`. Instead ship a small infra-only PR (this branch) that (a) adds the `linked-versions` plugin to `.github/release-please-config.json` grouping all seven released components, (b) hardens AGENTS.md §4 rule #12 + §6.5 + this row, (c) rewrites `.github/RELEASE-PLEASE.md` (wire-protocol section, new "Linked versions" + "Manual version bumps are forbidden" sections, corrected `bootstrap-sha` semantics, removed `cargo-workspace` plugin references). After it merges, close the seven stale per-component release PRs; release-please regenerates them as **one combined release PR** that downgrades every `Cargo.toml` to the target version, updates the manifest, and writes the CHANGELOG entries. Refresh both `Cargo.lock`s on that combined PR (`cargo update --workspace --locked` at the repo root and `cargo update --locked` in `crates/pico-de-gallo-firmware/`) and merge. The seven tags (`internal-v0.6.0`, `library-v0.6.0`, `hal-v0.6.0`, `ffi-v0.7.0`, `application-v0.7.0`, `pyco-v0.3.0`, `firmware-v0.10.0`) and GitHub Releases are created by release-please automatically; `release-crates.yml` / `release-pyco.yml` / `release-firmware.yml` fire from those tags. Going forward: never edit `[package].version` by hand — see §4 rule #12. The repo now uses release-please with both `cargo-workspace` and `linked-versions` plugins so dep specs and version numbers stay in lockstep automatically across the host workspace; only the firmware's `pico-de-gallo-internal` dep spec needs a manual touch-up per release (see §6.5 and `.github/RELEASE-PLEASE.md`). |
 | 2026-06-11 | Plan-Z infra-only PR scoped to add `linked-versions` plugin alone. | release-please's `linked-versions` plugin only coordinates version *numbers*; it does not rewrite cross-crate `version = "..."` dep specs. After internal 0.5.0 → 0.6.0, every dependent's `pico-de-gallo-internal = { version = "0.5.0", path = "..." }` spec would be stale: local `cargo build` fails between release-please merges, and `lib 0.6.0` published to crates.io would resolve `internal ^0.5.0` (silent wire mismatch). | Hoisted host workspace manifest from `crates/Cargo.toml` to repo-root `Cargo.toml` (chore(repo)! commit) so release-please's `cargo-workspace` plugin can find it. Added `cargo-workspace` plugin with `"merge": false` alongside `linked-versions`. Combined plugins now auto-bump every host-side dep spec; firmware is excluded from the host workspace, so its `pico-de-gallo-internal` dep spec is manually edited and its `Cargo.lock` is refreshed per release PR (documented in AGENTS.md §6.5 and RELEASE-PLEASE.md "Firmware dep-spec edit"). |
 | 2026-07-20 | `gallo` CLI opened a throwaway USB connection for the up-front `validate()` added 2026-06-04 (Category A #4), then opened a *second* connection for the actual subcommand (`spi write-read` opened a third). | On Windows every validated subcommand (`i2c scan`, `i2c get-config`, `adc info`, …) panicked at `postcard-rpc raw_nusb.rs:330` with `Failed claiming interface: … Access is denied` (`ACCESS_DENIED`). WinUSB grants exclusive access to one session per interface, and the first connection's background `nusb` worker had not released the handle before the second `claim_interface`. `version`/`list` (single/zero connections) always worked, so it looked like a driver/permissions problem; Linux/macOS release the interface synchronously on drop, so CI (Linux-only) never caught it. | Refactored `Cli::run` (approach A) to open exactly one `PicoDeGallo` per invocation, validate on it, and thread `&pg` into every device handler. `list` returns before connecting; `version` shares the one connection but skips validation. Verified on hardware (Windows, usbipd/VBoxUSBMon present): `i2c scan`/`i2c get-config`/`adc info` now succeed. Also corrected the book USB PID (`ffff`/`B33C` → `067d`) in `getting-started/usb.md` + `appendix/troubleshooting.md`. Host-only (`gallo`/application); no wire-protocol or CLI-surface change. |
+| 2026-07-23 | release-please retired (issue #83) after the recurring pain in the 2026-05-29 / 2026-06-11 rows (version↔manifest drift silently disabling releases, seven-PR fan-out, plugin collisions). | Not a regression — a deliberate policy change. Removed `.github/workflows/release-please.yml`, `.github/release-please-config.json`, `.github/.release-please-manifest.json`, and `.github/RELEASE-PLEASE.md`. | Releases are now **manual** (§12, `.github/RELEASE.md`): a maintainer hand-bumps every released crate's `[package].version` **and** the cross-crate `version = "..."` dep specs, hand-writes `CHANGELOG.md`, regenerates both `Cargo.lock`s, commits `chore(release): …`, merges, then pushes per-component tags (`internal-v*`, `library-v*`, `hal-v*`, `ffi-v*`, `application-v*`, `pyco-v*`, `firmware-v*`) that fire the unchanged `release-*.yml` publish workflows. §4 rule #12 flipped from "never hand-edit versions" to "hand-edit them, but only as a complete release commit". The old release-please rows above are kept as history; they describe tooling that no longer exists. |
 
 ---
 
@@ -816,7 +816,7 @@ update at least the chapter(s) on the right:
 | `pico-de-gallo-firmware/src/...` — peripheral behaviour     | `book/src/internals/firmware.md`, `book/src/interfaces/*`                |
 | `crates/pico-de-gallo-internal/build.rs` — schema version   | `book/src/internals/releases.md`, `book/src/internals/wire-protocol.md`  |
 | `hardware/` — KiCad changes (new revision, pin remap)       | `book/src/hardware/{overview,revisions,pinout}.md`                       |
-| `CHANGELOG.md`                                              | Add the entry; release-please will surface it in the GitHub Release.     |
+| `CHANGELOG.md`                                              | Hand-write the entry (Keep a Changelog); it is not auto-generated.       |
 
 **Reviewer checklist (humans *and* the GitHub Copilot reviewer).**
 For every PR, confirm:
@@ -840,11 +840,10 @@ For every PR, confirm:
 Reviewers, including the automated Copilot reviewer, should flag
 PRs that violate any of the above as a **blocker**, not a nit.
 
-## 16. Pre-release checklist (manual tags only)
+## 16. Pre-release checklist
 
-You usually don't need this — release-please handles releases. But
-if you must cut a tag manually (e.g. `hardware-v*`, or release-please
-is broken):
+Every release is cut by hand now (§12, `.github/RELEASE.md`). Before
+you push any `*-v*` tag:
 
 1. From a clean checkout, run the full preflight:
    ```bash
@@ -870,7 +869,7 @@ git --no-pager show <tag>:.github/workflows/release-firmware.yml \
 
 ## 17. Where to look next
 
-- **`.github/RELEASE-PLEASE.md`** — release-please playbook.
+- **`.github/RELEASE.md`** — manual release playbook.
 - **`CONTRIBUTING.md`** — human-facing contribution guide.
 - **`book/`** — user-facing documentation
   ([online](https://opendevicepartnership.github.io/pico-de-gallo/)).

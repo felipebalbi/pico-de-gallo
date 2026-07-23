@@ -45,9 +45,8 @@ yourself.
 - Change summarisation: turn a series of commits into a PR
   description, a changelog entry, or a release note.
 - Release preparation: tagging, version bumps, packaging. (Note
-  that pico-de-gallo releases are normally driven by
-  release-please; see `AGENTS.md` §12 before touching tags by
-  hand.)
+  that pico-de-gallo releases are **manual**; see `AGENTS.md` §12
+  and `.github/RELEASE.md` before touching versions or tags.)
 - Dependency awareness: notice when a change pulls in new
   transitive deps and flag it. Whenever a `Cargo.toml` changes,
   the matching `Cargo.lock` must change in the same commit

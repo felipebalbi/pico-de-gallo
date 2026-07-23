@@ -18,7 +18,7 @@ That file is the single source of truth. It covers:
   PyO3 / maturin conventions.
 - Conventional Commits + scope rules, AI-attribution trailers, and
   the no-`Signed-off-by`-from-AI rule.
-- release-please workflow, tag-prefix glossary, and the
+- The manual release process, tag-prefix glossary, and the
   GitHub-Actions-tag trap.
 - 16 documented common gotchas, including the past-regressions log.
 

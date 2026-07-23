@@ -17,9 +17,9 @@ pull request so that the project team can discuss the situation with you.
 ## Commit Message
 
 We use [Conventional Commits](https://www.conventionalcommits.org/)
-with a crate scope so that
-[release-please](.github/RELEASE-PLEASE.md) can automate versioning,
-CHANGELOG entries, and release tags.
+with a crate scope for readable history, scoping, and to guide the
+hand-written CHANGELOG at release time (see
+[`.github/RELEASE.md`](.github/RELEASE.md)).
 
 Format:
 
@@ -62,7 +62,7 @@ Any commit that changes wire types in `pico-de-gallo-internal`
   firmware bumps in lockstep with the schema version,
 - and ideally be accompanied by version bumps on every downstream
   crate (`lib`, `hal`, `ffi`, `application`, `pyco`) in the same PR
-  so the release-please PRs land together.
+  so the wire-coupled crates release together.
 
 ## PR Etiquette
 

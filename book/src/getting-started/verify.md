@@ -16,7 +16,7 @@ If you see that block, you're done. Success 🎉.
 
 | Field           | What it tells you                                        |
 |-----------------|----------------------------------------------------------|
-| `Pico de Gallo FW v...` | The firmware semver. Lockstepped with the wire crate via release-please. |
+| `Pico de Gallo FW v...` | The firmware semver. Lockstepped with the wire crate at release time. |
 | `Schema v...`   | The wire-protocol schema version. The host crate must understand this. |
 | `HW revision`   | `1` if you flashed `hw-rev1` firmware, `2` for `hw-rev2`. |
 | `Capabilities`  | Which peripherals **this firmware build** exposes. A `✗` means the endpoint returns `Unsupported`. |

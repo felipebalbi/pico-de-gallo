@@ -71,7 +71,7 @@ The book is laid out as six parts plus appendices:
    walkthrough showing the dev loop, the blocking/async parity, and
    how to write hardware-in-the-loop tests that run on your laptop.
 6. **Under the Hood** — the wire protocol, schema versioning,
-   firmware architecture, and the release-please cadence.
+   firmware architecture, and the release cadence.
 
 Read top-to-bottom for a tour, or jump straight to the chapter you
 need — each chapter stands on its own.
