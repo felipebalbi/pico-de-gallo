@@ -78,7 +78,7 @@ given specification or scoped task.
   `cargo fmt`, `cargo clippy --locked`, and `cargo test --locked`
   for the affected crate(s); for firmware, additionally
   `cargo build --target thumbv8m.main-none-eabihf`. Do **not** spin
-  up the full release-please / CI matrix uninvited.
+  up the full CI matrix or attempt a release uninvited.
 - When something is genuinely ambiguous and blocks progress, ask one
   precise question rather than guessing.
 

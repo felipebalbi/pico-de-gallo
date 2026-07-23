@@ -2,11 +2,12 @@ version: 2
 
 # Dependabot configuration.
 #
-# Pre-1.0 we let the wire-protocol-critical crates (internal, lib, hal,
-# ffi, application, pyco, firmware) drive their own bumps via release-please
-# and Conventional Commits; Dependabot here only updates *transitive*
-# Cargo.lock entries and our GitHub Actions pins, which is exactly the
-# class of update that surprised us on the embassy-usb-driver 0.2.1 break.
+# Pre-1.0 the wire-protocol-critical crates (internal, lib, hal,
+# ffi, application, pyco, firmware) are version-bumped by hand at
+# release time (see .github/RELEASE.md); Dependabot here only updates
+# *transitive* Cargo.lock entries and our GitHub Actions pins, which is
+# exactly the class of update that surprised us on the
+# embassy-usb-driver 0.2.1 break.
 #
 # Lockfile-only updates land as boring weekly PRs that CI's lockfile-guard
 # job validates end-to-end before review.

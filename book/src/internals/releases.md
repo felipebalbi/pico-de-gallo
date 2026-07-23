@@ -1,6 +1,6 @@
 # Releases & Compatibility
 
-Pico de Gallo releases are automated, but compatibility still depends on humans
+Pico de Gallo releases are cut by hand, and compatibility depends on humans
 understanding which pieces move together.
 
 ## Tag prefixes
@@ -20,13 +20,20 @@ Each published surface has its own release tag prefix:
 
 ## What drives a release?
 
-The project uses `release-please`. Day-to-day, contributors land Conventional
-Commits with crate scopes such as `feat(internal): ...` or `fix(firmware): ...`.
-From that history, release-please opens and maintains one release PR per crate.
+Releases are **manual**. A maintainer bumps each crate's
+`[package].version`, updates the cross-crate dependency specs and the
+`CHANGELOG.md`, merges to `main`, and then pushes one tag per component. The
+tag-triggered `release-*.yml` workflows publish to crates.io / PyPI and build
+the binary artifacts.
+
+Contributors still land Conventional Commits with crate scopes such as
+`feat(internal): ...` or `fix(firmware): ...` — that scoped history is what a
+maintainer reads when hand-writing the CHANGELOG and deciding which crates to
+bump.
 
 > [!TIP]
-> The scope is not decoration. It is part of how release automation decides what
-> to version and publish.
+> The scope is not decoration. It tells the release author what changed in each
+> crate and where the version bump belongs.
 
 ## Protocol changes are lockstep changes
 
@@ -45,8 +52,8 @@ That means coordinating:
 - `pyco-de-gallo`.
 
 > [!IMPORTANT]
-> `release-please` does not enforce wire coupling for you. If a protocol change
-> lands without its matching host and firmware updates, users will feel it.
+> Nothing enforces wire coupling for you. If a protocol change lands without its
+> matching host and firmware version bumps, users will feel it.
 
 ## How users check compatibility
 
@@ -83,7 +90,8 @@ flashed, or downgrade the firmware to the host release you are using.
 The workspace tracks Rust 1.90 as its MSRV, and CI checks it explicitly. That
 includes the host workspace and the firmware workspace.
 
-For contributor-only release details, including manual-tag edge cases, see
+For contributor-only release details, including the full manual-release
+checklist, see
 [`AGENTS.md`](https://github.com/OpenDevicePartnership/pico-de-gallo/blob/main/AGENTS.md)
 and the repository's
-[`RELEASE-PLEASE.md`](https://github.com/OpenDevicePartnership/pico-de-gallo/blob/main/.github/RELEASE-PLEASE.md).
+[`RELEASE.md`](https://github.com/OpenDevicePartnership/pico-de-gallo/blob/main/.github/RELEASE.md).

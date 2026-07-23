@@ -1,19 +1,21 @@
 name: Publish to crates.io
 
-# Triggered by release-please tags (one tag per crate). Publishes the
-# matching crate to crates.io with `cargo publish --locked`.
+# Triggered by manually-pushed release tags (one tag per crate; see
+# .github/RELEASE.md). Publishes the matching crate to crates.io with
+# `cargo publish --locked`.
 #
 # Dependency-ordering note:
 #   The library crates depend on each other:
 #     internal  ──►  lib  ──►  hal
 #                          └─►  ffi
 #                          └─►  application (gallo)
-#   When release-please cuts a coordinated multi-crate release, all the
-#   tags get pushed at roughly the same time and these jobs run in
+#   When a maintainer cuts a coordinated multi-crate release, the tags
+#   are typically pushed at roughly the same time and these jobs run in
 #   parallel. crates.io takes 30-60 seconds to index a new publish, so
 #   downstream publishes (lib/hal/ffi/application) can fail with
 #   "no version of pico-de-gallo-internal X.Y.Z found in registry".
-#   Re-run the failed job once the upstream publish has indexed.
+#   Push internal-v* first and wait for it to index, or re-run the
+#   failed job once the upstream publish has indexed.
 #
 # Token scope:
 #   CARGO_REGISTRY_TOKEN must have `publish-update` scope, restricted to

@@ -123,8 +123,8 @@ cycle must update:
 7. `pyco-de-gallo`.
 
 > [!IMPORTANT]
-> `release-please` does **not** know that the protocol crate and firmware are
-> wire-coupled. Lockstep is enforced by contributors, not by automation.
+> Nothing automated knows that the protocol crate and firmware are
+> wire-coupled. Lockstep is enforced by contributors, not by tooling.
 
 For contributor policy and the full compatibility rules, see
 [`AGENTS.md`](https://github.com/OpenDevicePartnership/pico-de-gallo/blob/main/AGENTS.md).
